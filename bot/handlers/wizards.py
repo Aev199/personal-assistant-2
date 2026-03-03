@@ -1285,7 +1285,11 @@ async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyn
         background_project_sync(int(inbox_id), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
         label="vault_sync",
     )
-    await state.clear()
+
+    # IMPORTANT: render into the existing wizard "screen" message.
+    # If we clear FSM state before rendering, wizard_render won't know which
+    # message to edit and will send a new message, leaving the wizard prompt
+    # hanging in chat.
     await wizard_render(
         bot=message.bot,
         state=state,
@@ -1295,6 +1299,7 @@ async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyn
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
         parse_mode="HTML",
     )
+    await state.clear()
 
 
 async def msg_quick_idea_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:

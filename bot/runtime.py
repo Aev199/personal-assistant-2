@@ -167,6 +167,118 @@ def create_app_webhook() -> web.Application:
     return app
 
 
+
+
+def create_app_polling_web() -> web.Application:
+    """Create aiohttp application for Render Free Web Service + polling mode.
+
+    Render Web Services require an open port. In this mode we expose the same
+    auxiliary endpoints (/health, /ping, /tick, /backup) and run aiogram
+    long-polling in a background task.
+    """
+
+    load_dotenv()
+    configure_logging(level=os.getenv("LOG_LEVEL", "INFO"), fmt=os.getenv("LOG_FORMAT", "json"))
+    cfg = load_config()
+    configure_logging(level=cfg.logging.level, fmt=cfg.logging.format)
+    log = get_logger("bot.runtime")
+
+    tz_name = (cfg.bot.timezone or os.getenv("TZ") or "Europe/Moscow")
+    admin_id = _admin_id(cfg.bot.admin_id)
+
+    bot, dp, cloud, vault, gtasks, icloud = build_core(
+        bot_token=cfg.bot.token,
+        admin_id=admin_id,
+        tz_name=tz_name,
+        google_client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
+        google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET", ""),
+        google_refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN", ""),
+        icloud_apple_id=os.getenv("ICLOUD_APPLE_ID", ""),
+        icloud_app_password=os.getenv("ICLOUD_APP_PASSWORD", ""),
+    )
+
+    deps = dp.workflow_data.get("deps")
+    if deps is None:
+        raise RuntimeError("Deps container not found in dispatcher workflow_data")
+
+    deps.logger = get_logger("bot")
+    deps.error_notify_user = bool(cfg.error_handler.notify_user)
+    deps.error_notify_admin = bool(cfg.error_handler.notify_admin)
+    if deps.admin_id <= 0:
+        deps.error_notify_admin = False
+    deps.error_handler = create_error_handler(
+        bot=bot,
+        admin_id=deps.admin_id,
+        logger=get_logger("bot.error_handler"),
+        max_notifications_per_minute=int(cfg.error_handler.rate_limit or 5),
+    )
+
+    database_url = cfg.database.url
+
+    # Lifecycle (no webhook in polling mode)
+    dp.startup.register(
+        make_on_startup(
+            dp=dp,
+            cloud=cloud,
+            gtasks=gtasks,
+            icloud=icloud,
+            database_url=database_url,
+            webhook_url="",
+            webhook_path="",
+            webhook_keeper_every_sec=0,
+            maybe_refresh_webhook=lambda: None,
+        )
+    )
+    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud))
+
+    app = web.Application()
+
+    tick_lock = asyncio.Lock()
+    backup_lock = asyncio.Lock()
+
+    ctx = HttpContext(
+        bot=bot,
+        deps=deps,
+        database_url=database_url,
+        tick_secret=os.getenv("TICK_SECRET", ""),
+        allow_public_tick=os.getenv("ALLOW_PUBLIC_TICK", "").lower() in ("1", "true", "yes"),
+        tick_timeout_sec=float(os.getenv("TICK_TIMEOUT_SEC", "25")),
+        tick_send_timeout_sec=float(os.getenv("TICK_SEND_TIMEOUT_SEC", "8")),
+        icloud_enabled=bool(os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", "")),
+        backup_storage_backend=os.getenv("BACKUP_STORAGE_BACKEND", ""),
+        backup_retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
+        aws_s3_bucket=os.getenv("AWS_S3_BUCKET", ""),
+        aws_s3_region=os.getenv("AWS_S3_REGION", "us-east-1"),
+        dropbox_access_token=os.getenv("DROPBOX_ACCESS_TOKEN", ""),
+        dropbox_backup_path=os.getenv("DROPBOX_BACKUP_PATH", "/backups"),
+        gcs_bucket=os.getenv("GCS_BUCKET", ""),
+        gcs_project_id=os.getenv("GCS_PROJECT_ID", ""),
+        gcs_credentials_json=os.getenv("GCS_CREDENTIALS_JSON", ""),
+        refresh_webhook=lambda: None,
+        started_at_ts=time.time(),
+        tick_lock=tick_lock,
+        backup_lock=backup_lock,
+    )
+    attach_routes(app, ctx)
+
+    async def _start(_app: web.Application) -> None:
+        log.info("starting polling background task (web-service mode)")
+        _app["polling_task"] = asyncio.create_task(dp.start_polling(bot))
+
+    async def _stop(_app: web.Application) -> None:
+        task = _app.get("polling_task")
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    app.on_startup.append(_start)
+    app.on_shutdown.append(_stop)
+
+    return app
+
 async def run_polling() -> None:
     """Run aiogram long-polling (no web server required).
 

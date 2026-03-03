@@ -1205,6 +1205,16 @@ async def cb_quick_task(callback: CallbackQuery, state: FSMContext, db_pool: asy
         parse_mode="HTML",
     )
 
+    # Bind wizard message as current SPA UI anchor (important for reply-keyboard navigation)
+    try:
+        data = await state.get_data()
+        wiz_msg_id = data.get("wizard_msg_id")
+        if wiz_msg_id:
+            async with db_pool.acquire() as conn:
+                await ui_set_state(conn, int(callback.message.chat.id), ui_message_id=int(wiz_msg_id))
+    except Exception:
+        pass
+
 
 async def cb_quick_idea(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if not await _guard(callback, deps):
@@ -1225,6 +1235,16 @@ async def cb_quick_idea(callback: CallbackQuery, state: FSMContext, db_pool: asy
         reply_markup=_quick_cancel_kb(),
         parse_mode="HTML",
     )
+
+    # Bind wizard message as current SPA UI anchor (important for reply-keyboard navigation)
+    try:
+        data = await state.get_data()
+        wiz_msg_id = data.get("wizard_msg_id")
+        if wiz_msg_id:
+            async with db_pool.acquire() as conn:
+                await ui_set_state(conn, int(callback.message.chat.id), ui_message_id=int(wiz_msg_id))
+    except Exception:
+        pass
 
 
 async def cb_quick_cancel(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:

@@ -34,9 +34,28 @@ from bot.utils import canon, fmt_msk, h, safe_edit, try_delete_user_message, fmt
 from bot.keyboards import back_home_kb, main_menu_kb
 
 
+async def _cleanup_wizard_message_from_state(bot, state: FSMContext, *, fallback_chat_id: int | None = None) -> None:
+    """Remove wizard prompt message if any (tracked in FSM data as wizard_msg_id).
+
+    This is needed for reply-keyboard navigation: user presses a menu button, we render
+    a new SPA screen, but the wizard prompt message would otherwise stay in the chat.
+    """
+    try:
+        data = await state.get_data()
+        wiz_chat_id = int(data.get("wizard_chat_id") or (fallback_chat_id or 0))
+        wiz_msg_id = data.get("wizard_msg_id")
+        if not wiz_chat_id or not wiz_msg_id:
+            return
+        await bot.delete_message(chat_id=wiz_chat_id, message_id=int(wiz_msg_id))
+    except Exception:
+        return
+
+
+
 async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
     await try_delete_user_message(message)
     await ensure_main_menu(message, db_pool)
@@ -46,6 +65,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
 async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
     await try_delete_user_message(message)
     await ensure_main_menu(message, db_pool)
@@ -54,6 +74,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
 async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
 
     if db_pool is not None:
@@ -72,6 +93,7 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
 async def cmd_add_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
     await try_delete_user_message(message)
     await ui_render_add_menu(message, db_pool, force_new=True)
@@ -80,6 +102,7 @@ async def cmd_add_menu(message: Message, state: FSMContext, db_pool: asyncpg.Poo
 async def cmd_help_button_router(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
     await try_delete_user_message(message)
     await ui_render_help(message, db_pool, force_new=True)
@@ -329,7 +352,7 @@ async def cb_global_tails(callback: CallbackQuery, state: FSMContext, db_pool: a
     await callback.answer()
     await state.clear()
     try:
-        await _render_global_tails_screen(callback.message, db_pool, "nav:projects")
+        await _render_global_tails_screen(callback.message, db_pool, "nav:projects", deps)
     except Exception as e:
         await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
@@ -423,6 +446,7 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
 async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
     await try_delete_user_message(message)
     from bot.ui import ui_render_projects_portfolio
@@ -433,6 +457,7 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
 async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
     await try_delete_user_message(message)
     from bot.ui import ui_render_today
@@ -443,6 +468,7 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    await _cleanup_wizard_message_from_state(message.bot, state, fallback_chat_id=int(message.chat.id))
     await state.clear()
     await try_delete_user_message(message)
     from bot.ui import ui_render_overdue

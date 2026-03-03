@@ -318,7 +318,10 @@ async def ui_render_projects_portfolio(message: Message, db_pool: asyncpg.Pool, 
                 bot=message.bot,
                 db_pool=db_pool,
                 chat_id=chat_id,
-                text="📭 <b>Активных проектов пока нет.</b>
+                text = (
+                    "📭 <b>Активных проектов пока нет.</b>\n\n"
+                    "Создай первый проект, чтобы начать работу."
+                )
 
 Создайте первый проект 👇",
                 reply_markup=empty_kb,

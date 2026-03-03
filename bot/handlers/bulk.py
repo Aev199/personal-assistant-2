@@ -136,7 +136,7 @@ async def _render_bulk(msg: Message, db_pool: asyncpg.Pool, chat_id: int, deps: 
 
 
 async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
 
     await callback.answer()

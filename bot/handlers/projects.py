@@ -15,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 
 from bot.fsm import AddProjectWizard
 from bot.handlers.common import escape_hatch_menu_or_command
-from bot.db import db_add_event, get_current_project_id, set_current_project_id, db_log_error
+from bot.db import db_add_event, get_current_project_id, set_current_project_id
 from bot.services.background import fire_and_forget
 from bot.services.vault_sync import background_project_sync
 from bot.deps import AppDeps
@@ -61,7 +61,7 @@ def fmt_local(dt: datetime | None, tz: ZoneInfo) -> str:
 
 
 async def _guard(callback: CallbackQuery, deps: AppDeps) -> bool:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         await callback.answer("Недоступно", show_alert=True)
         return False
     return True
@@ -103,7 +103,7 @@ async def msg_proj_add_data(message: Message, state: FSMContext, db_pool: asyncp
     - запускает синхронизацию в Vault/Obsidian
     """
 
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
 
     if await escape_hatch_menu_or_command(message, state, db_pool):
@@ -171,9 +171,16 @@ async def msg_proj_add_data(message: Message, state: FSMContext, db_pool: asyncp
             }
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
 
+        vault = deps.vault
+
         # Trigger sync
         fire_and_forget(
-            background_project_sync(int(project_id), db_pool, vault, error_logger=lambda w,e,c: db_log_error(db_pool, w, e, c)),
+            background_project_sync(
+                int(project_id),
+                db_pool,
+                vault,
+                error_logger=deps.db_log_error,
+            ),
             label=f"sync:proj:{int(project_id)}",
         )
 
@@ -301,7 +308,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     await ui_set_state(conn, int(callback.message.chat.id), ui_screen="project_archived", ui_payload=payload)
 
                     fire_and_forget(
-                        background_project_sync(project_id, db_pool, vault, error_logger=lambda w,e,c: db_log_error(db_pool, w, e, c)),
+                        background_project_sync(project_id, db_pool, vault, error_logger=deps.db_log_error),
                         label=f"sync:archive:{code}",
                     )
 

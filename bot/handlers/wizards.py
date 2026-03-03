@@ -82,7 +82,7 @@ def fmt_local(dt_utc_or_naive: datetime | None, deps: AppDeps) -> str:
 
 
 async def _guard(callback: CallbackQuery, deps: AppDeps) -> bool:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         await callback.answer("Недоступно", show_alert=True)
         return False
     return True
@@ -325,7 +325,7 @@ async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_poo
 
 
 async def msg_add_task_title(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
 
 
@@ -405,7 +405,7 @@ async def cb_add_deadline(callback: CallbackQuery, state: FSMContext, db_pool: a
 
 
 async def msg_add_task_deadline(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
 
 
@@ -700,7 +700,7 @@ async def cb_add_reminder_time(callback: CallbackQuery, state: FSMContext, deps:
 
 
 async def msg_add_reminder_time(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return
@@ -745,7 +745,7 @@ async def msg_add_reminder_time(message: Message, state: FSMContext, db_pool: as
 
 
 async def msg_add_reminder_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return
@@ -1038,7 +1038,7 @@ async def cb_add_personal_start(callback: CallbackQuery, state: FSMContext, deps
 
 
 async def msg_personal_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return
@@ -1155,7 +1155,7 @@ async def cb_personal_deadline(callback: CallbackQuery, state: FSMContext, db_po
 
 
 async def msg_personal_deadline(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return
@@ -1236,7 +1236,7 @@ async def cb_quick_cancel(callback: CallbackQuery, state: FSMContext, db_pool: a
 
 
 async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     vault = deps.vault
     
@@ -1278,7 +1278,7 @@ async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyn
 
 
 async def msg_quick_idea_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     gtasks = deps.gtasks
     

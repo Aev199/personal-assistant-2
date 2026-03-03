@@ -59,7 +59,7 @@ def fmt_local(dt: datetime | None, tz: ZoneInfo) -> str:
 
 
 async def _guard(callback: CallbackQuery, deps: AppDeps) -> bool:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         await callback.answer("Недоступно", show_alert=True)
         return False
     return True
@@ -673,7 +673,7 @@ async def cb_task(
 
 
 async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
 
     vault = deps.vault

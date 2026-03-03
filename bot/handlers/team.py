@@ -42,7 +42,7 @@ def to_utc(dt: datetime | None) -> datetime | None:
 
 
 async def cmd_team_load(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -74,7 +74,7 @@ async def cb_team_add(callback: CallbackQuery, state: FSMContext, deps: AppDeps)
 
 
 async def msg_team_add(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return

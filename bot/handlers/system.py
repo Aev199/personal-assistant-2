@@ -35,7 +35,7 @@ from bot.keyboards import back_home_kb, main_menu_kb
 
 
 async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -44,7 +44,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
 
 
 async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -52,7 +52,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
 
 
 async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
 
@@ -70,7 +70,7 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
 
 
 async def cmd_add_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -78,7 +78,7 @@ async def cmd_add_menu(message: Message, state: FSMContext, db_pool: asyncpg.Poo
 
 
 async def cmd_help_button_router(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -421,7 +421,7 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
 
 
 async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -431,7 +431,7 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
 
 
 async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -441,7 +441,7 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
 
 
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     await state.clear()
     await try_delete_user_message(message)
@@ -451,7 +451,7 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
 
 
 async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
-    if not message.from_user or message.from_user.id != deps.admin_id:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
 
     await state.clear()

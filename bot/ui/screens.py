@@ -304,12 +304,24 @@ async def ui_render_projects_portfolio(message: Message, db_pool: asyncpg.Pool, 
 
         rows = list(rows or [])
         if not rows:
+            # Empty portfolio: still allow creating the first project
+            empty_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="➕ Новый проект", callback_data="proj:add:start"),
+                        InlineKeyboardButton(text="➕ Задача", callback_data="add:task"),
+                    ],
+                    [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                ]
+            )
             return await ui_render(
                 bot=message.bot,
                 db_pool=db_pool,
                 chat_id=chat_id,
-                text="📭 <b>Активных проектов пока нет.</b>",
-                reply_markup=back_home_kb(),
+                text="📭 <b>Активных проектов пока нет.</b>
+
+Создайте первый проект 👇",
+                reply_markup=empty_kb,
                 screen="projects",
                 payload={"mode": "portfolio"},
                 fallback_message=message,

@@ -26,7 +26,7 @@ from bot.ui.screens import (
 
 
 async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()
@@ -34,7 +34,7 @@ async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: async
 
 
 async def cb_nav_close_inline(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()
@@ -42,7 +42,7 @@ async def cb_nav_close_inline(callback: CallbackQuery, state: FSMContext, db_poo
 
 
 async def cb_nav_projects(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()
@@ -50,7 +50,7 @@ async def cb_nav_projects(callback: CallbackQuery, state: FSMContext, db_pool: a
 
 
 async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()
@@ -58,7 +58,7 @@ async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyn
 
 
 async def cb_nav_overdue(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()
@@ -66,7 +66,7 @@ async def cb_nav_overdue(callback: CallbackQuery, state: FSMContext, db_pool: as
 
 
 async def cb_nav_add(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()
@@ -74,7 +74,7 @@ async def cb_nav_add(callback: CallbackQuery, state: FSMContext, db_pool: asyncp
 
 
 async def cb_nav_help(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()
@@ -82,7 +82,7 @@ async def cb_nav_help(callback: CallbackQuery, state: FSMContext, db_pool: async
 
 
 async def cb_nav_team(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     await state.clear()

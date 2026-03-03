@@ -18,14 +18,14 @@ from bot.utils import try_delete_user_message
 
 
 async def cb_rem_close(callback: CallbackQuery, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return
     await callback.answer()
     await try_delete_user_message(callback.message)
 
 
 async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if callback.from_user and callback.from_user.id != deps.admin_id:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return
     try:
         parts = callback.data.split(":")

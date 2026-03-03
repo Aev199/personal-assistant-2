@@ -12,7 +12,13 @@ from bot.services.logger import get_logger
 log = get_logger("bot.services.vault_sync")
 
 
-async def background_project_sync(project_id: int, db_pool: asyncpg.Pool, vault) -> None:
+async def background_project_sync(
+    project_id: int,
+    db_pool: asyncpg.Pool,
+    vault,
+    *,
+    error_logger=None,
+) -> None:
     """Sync a single project file into the Obsidian Vault (WebDAV).
 
     Updates sync_status so the UI can display health.
@@ -70,6 +76,11 @@ async def background_project_sync(project_id: int, db_pool: asyncpg.Pool, vault)
             error_message=str(e),
             project_id=project_id,
         )
+        if error_logger is not None:
+            try:
+                await error_logger("vault_sync", e, {"project_id": project_id})
+            except Exception:
+                pass
         try:
             async with db_pool.acquire() as conn:
                 await conn.execute(
@@ -80,3 +91,26 @@ async def background_project_sync(project_id: int, db_pool: asyncpg.Pool, vault)
                 )
         except Exception:
             pass
+
+
+async def background_log_event(
+    event_text: str,
+    vault,
+    *,
+    error_logger=None,
+) -> None:
+    """Append an entry into the daily vault log."""
+
+    try:
+        await vault.log_event(str(event_text))
+    except Exception as e:
+        log.warning(
+            "vault daily log failed",
+            error_type=type(e).__name__,
+            error_message=str(e),
+        )
+        if error_logger is not None:
+            try:
+                await error_logger("vault_log", e, {"text": str(event_text)[:2000]})
+            except Exception:
+                pass

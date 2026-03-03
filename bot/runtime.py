@@ -36,8 +36,8 @@ def _admin_id(cfg_admin_id: int | None = None) -> int:
         return int(cfg_admin_id or 0)
 
 
-def create_app() -> web.Application:
-    """Create aiohttp application and register aiogram webhook handler + HTTP routes."""
+def create_app_webhook() -> web.Application:
+    """Create aiohttp application for webhook mode."""
 
     load_dotenv()
 
@@ -87,10 +87,7 @@ def create_app() -> web.Application:
     webhook_url = (cfg.bot.webhook_url or "").rstrip("/")
     webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
     if not webhook_url:
-        raise RuntimeError(
-            "WEBHOOK_URL is not configured. Set WEBHOOK_URL (public base url) "
-            "or switch to a dedicated polling worker."
-        )
+        raise RuntimeError("WEBHOOK_URL is not configured for webhook mode")
 
     log.info(
         "runtime configured",
@@ -170,8 +167,78 @@ def create_app() -> web.Application:
     return app
 
 
+async def run_polling() -> None:
+    """Run aiogram long-polling (no web server required).
+
+    This is the recommended mode for Render Background Worker.
+    """
+
+    load_dotenv()
+    configure_logging(level=os.getenv("LOG_LEVEL", "INFO"), fmt=os.getenv("LOG_FORMAT", "json"))
+    cfg = load_config()
+    configure_logging(level=cfg.logging.level, fmt=cfg.logging.format)
+
+    tz_name = (cfg.bot.timezone or os.getenv("TZ") or "Europe/Moscow")
+    admin_id = _admin_id(cfg.bot.admin_id)
+
+    bot, dp, cloud, vault, gtasks, icloud = build_core(
+        bot_token=cfg.bot.token,
+        admin_id=admin_id,
+        tz_name=tz_name,
+        google_client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
+        google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET", ""),
+        google_refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN", ""),
+        icloud_apple_id=os.getenv("ICLOUD_APPLE_ID", ""),
+        icloud_app_password=os.getenv("ICLOUD_APP_PASSWORD", ""),
+    )
+
+    deps = dp.workflow_data.get("deps")
+    if deps is None:
+        raise RuntimeError("Deps container not found in dispatcher workflow_data")
+
+    deps.logger = get_logger("bot")
+    deps.error_notify_user = bool(cfg.error_handler.notify_user)
+    deps.error_notify_admin = bool(cfg.error_handler.notify_admin)
+    if deps.admin_id <= 0:
+        deps.error_notify_admin = False
+    deps.error_handler = create_error_handler(
+        bot=bot,
+        admin_id=deps.admin_id,
+        logger=get_logger("bot.error_handler"),
+        max_notifications_per_minute=int(cfg.error_handler.rate_limit or 5),
+    )
+
+    database_url = cfg.database.url
+    # We intentionally skip webhook setup in polling mode.
+    dp.startup.register(
+        make_on_startup(
+            dp=dp,
+            cloud=cloud,
+            gtasks=gtasks,
+            icloud=icloud,
+            database_url=database_url,
+            webhook_url="",
+            webhook_path="",
+            webhook_keeper_every_sec=0,
+            maybe_refresh_webhook=lambda: None,
+        )
+    )
+    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud))
+
+    await dp.start_polling(bot)
+
+
 def main() -> None:
-    app = create_app()
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "10000"))
-    web.run_app(app, host=host, port=port)
+    # Mode selection:
+    # - If WEBHOOK_URL (or config bot.webhook_url) is set -> webhook web service.
+    # - Otherwise -> polling (best for Render Background Worker).
+    load_dotenv()
+    cfg = load_config()
+    webhook_url = (cfg.bot.webhook_url or "").rstrip("/")
+    if webhook_url:
+        app = create_app_webhook()
+        host = os.getenv("HOST", "0.0.0.0")
+        port = int(os.getenv("PORT", "10000"))
+        web.run_app(app, host=host, port=port)
+    else:
+        asyncio.run(run_polling())

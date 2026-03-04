@@ -253,9 +253,10 @@ async def cb_event_toggle_project(callback: CallbackQuery, state: FSMContext, de
     )
 
 
-async def msg_event_title(message: Message, state: FSMContext, deps: AppDeps) -> None:
+async def msg_event_title(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    # Allow menu/commands during the wizard.
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return
     await try_delete_user_message(message)
@@ -360,7 +361,7 @@ async def cb_event_choose_date(callback: CallbackQuery, state: FSMContext, deps:
     )
 
 
-async def msg_event_date_manual(message: Message, state: FSMContext, deps: AppDeps) -> None:
+async def msg_event_date_manual(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):
@@ -449,7 +450,7 @@ async def cb_event_choose_time(callback: CallbackQuery, state: FSMContext, deps:
     )
 
 
-async def msg_event_time_manual(message: Message, state: FSMContext, deps: AppDeps) -> None:
+async def msg_event_time_manual(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):
@@ -533,7 +534,7 @@ async def cb_event_choose_duration(callback: CallbackQuery, state: FSMContext, d
     await _event_render_confirm(callback.message, state, deps=deps)
 
 
-async def msg_event_duration_manual(message: Message, state: FSMContext, deps: AppDeps) -> None:
+async def msg_event_duration_manual(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
     if await escape_hatch_menu_or_command(message, state, db_pool):

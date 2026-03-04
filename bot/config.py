@@ -8,6 +8,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional, Literal
 
+from bot.tz import resolve_tz_name
+
 
 @dataclass
 class BotConfig:
@@ -173,7 +175,8 @@ def load_config() -> Config:
         token=bot_token,
         admin_id=int(admin_id_str or "0"),
         webhook_url=webhook_url,
-        timezone=os.getenv("TZ", "Europe/Moscow"),
+        # Prefer explicit app timezone variables to avoid provider defaults (TZ=UTC).
+        timezone=resolve_tz_name("Europe/Moscow"),
     )
     
     # Database configuration

@@ -50,7 +50,8 @@ def create_app_webhook() -> web.Application:
     configure_logging(level=cfg.logging.level, fmt=cfg.logging.format)
     log = get_logger("bot.runtime")
 
-    tz_name = (cfg.bot.timezone or os.getenv("TZ") or "Europe/Moscow")
+    # tz is resolved in config (prefers BOT_TIMEZONE/APP_TIMEZONE over TZ)
+    tz_name = (cfg.bot.timezone or "Europe/Moscow")
     admin_id = _admin_id(cfg.bot.admin_id)
 
     bot, dp, cloud, vault, gtasks, icloud = build_core(
@@ -183,7 +184,7 @@ def create_app_polling_web() -> web.Application:
     configure_logging(level=cfg.logging.level, fmt=cfg.logging.format)
     log = get_logger("bot.runtime")
 
-    tz_name = (cfg.bot.timezone or os.getenv("TZ") or "Europe/Moscow")
+    tz_name = (cfg.bot.timezone or "Europe/Moscow")
     admin_id = _admin_id(cfg.bot.admin_id)
 
     bot, dp, cloud, vault, gtasks, icloud = build_core(
@@ -290,7 +291,7 @@ async def run_polling() -> None:
     cfg = load_config()
     configure_logging(level=cfg.logging.level, fmt=cfg.logging.format)
 
-    tz_name = (cfg.bot.timezone or os.getenv("TZ") or "Europe/Moscow")
+    tz_name = (cfg.bot.timezone or "Europe/Moscow")
     admin_id = _admin_id(cfg.bot.admin_id)
 
     bot, dp, cloud, vault, gtasks, icloud = build_core(

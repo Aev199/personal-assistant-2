@@ -35,9 +35,9 @@ def main() -> None:
     os.environ.setdefault("WEBHOOK_URL", "https://example.com")
     os.environ.setdefault("WEBHOOK_PATH", "/webhook")
 
-    from bot.runtime import create_app
+    from bot.runtime import create_app_webhook
 
-    app = create_app()
+    app = create_app_webhook()
     paths = _route_paths(app)
 
     required = {"/ping", "/health", "/tick", "/backup"}

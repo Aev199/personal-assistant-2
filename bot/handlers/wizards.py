@@ -782,36 +782,6 @@ async def msg_add_reminder_text(message: Message, state: FSMContext, db_pool: as
     )
 
 
-def _next_repeat_time_utc(remind_at_dt: datetime, repeat: str) -> datetime | None:
-    """Compute next remind_at (UTC naive for DB storage) based on current remind_at."""
-    if remind_at_dt.tzinfo is None:
-        base_utc = remind_at_dt.replace(tzinfo=UTC)
-    else:
-        base_utc = remind_at_dt.astimezone(UTC)
-    base_local = base_utc.astimezone(_tz_from_deps(deps))
-
-    if repeat == "daily":
-        nxt_local = base_local + timedelta(days=1)
-    elif repeat == "weekly":
-        nxt_local = base_local + timedelta(days=7)
-    elif repeat == "workdays":
-        nxt_local = base_local + timedelta(days=1)
-        while nxt_local.weekday() >= 5:
-            nxt_local += timedelta(days=1)
-    elif repeat == "monthly":
-        y = base_local.year
-        mo = base_local.month + 1
-        if mo == 13:
-            y += 1
-            mo = 1
-        last_day = calendar.monthrange(y, mo)[1]
-        day = min(base_local.day, last_day)
-        nxt_local = base_local.replace(year=y, month=mo, day=day)
-    else:
-        return None
-
-    return nxt_local.astimezone(UTC).replace(tzinfo=None)
-
 
 async def cb_add_reminder_repeat(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if not await _guard(callback, deps):

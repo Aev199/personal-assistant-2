@@ -13,6 +13,8 @@ import os
 
 import dateparser
 
+from bot.tz import resolve_tz_name
+
 
 _quick_time_re = re.compile(r"\b(\d{1,2})[:.](\d{2})\b")
 _quick_rel_re = re.compile(r"\b(сегодня|завтра|послезавтра)\b", re.IGNORECASE)
@@ -146,7 +148,7 @@ def fmt_msk(dt: datetime | None) -> str:
     """Format a datetime in app timezone (defaults to TZ env / Europe/Moscow)."""
     if dt is None:
         return "—"
-    tz_name = os.getenv("TZ") or "Europe/Moscow"
+    tz_name = resolve_tz_name("Europe/Moscow")
     try:
         tz = ZoneInfo(tz_name)
     except Exception:

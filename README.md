@@ -20,7 +20,8 @@ python bot.py
 
 - `WEBHOOK_PATH` — путь вебхука (по умолчанию `/webhook`)
 - `ADMIN_ID` — Telegram user id админа (0 = отключено)
-- `TZ` — таймзона (по умолчанию `Europe/Moscow`)
+- `BOT_TIMEZONE` — таймзона приложения (по умолчанию `Europe/Moscow`) ✅
+- `TZ` — fallback таймзона (используется только если не `UTC`; некоторые хостинги ставят `TZ=UTC` по умолчанию)
 
 ## HTTP эндпоинты
 

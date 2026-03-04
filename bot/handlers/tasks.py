@@ -7,6 +7,7 @@ existing callback_data format.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -315,6 +316,47 @@ async def cb_task(
         if not gtasks.enabled():
             await callback.answer("❌ Google Tasks не настроен", show_alert=True)
             return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+
+        tz = _tz_from_deps(deps)
+
+        def _is_not_found(err: BaseException) -> bool:
+            # Adapter raises RuntimeError("Google Tasks error (404): ...")
+            msg = str(err)
+            return ("(404)" in msg) or ("(410)" in msg) or ("notFound" in msg) or ("Not Found" in msg) or ("Resource Not Found" in msg)
+
+        async def _clear_task_mapping() -> None:
+            async with db_pool.acquire() as conn:
+                await conn.execute("UPDATE tasks SET g_task_id=NULL, g_task_list_id=NULL WHERE id=$1", task_id)
+
+        async def _forget_list_mapping(name: str) -> None:
+            async with db_pool.acquire() as conn:
+                await conn.execute("DELETE FROM g_tasks_lists WHERE name=$1", name)
+
+        async def _create_task_with_list_retry(list_name: str, list_id: str, title: str, notes: str, due_utc) -> str | None:
+            cur_list_id = list_id
+            for attempt in range(2):
+                try:
+                    created = await gtasks.create_task(cur_list_id, title, notes=notes, due=due_utc)
+                    gtid = created.get("id")
+                    if gtid:
+                        async with db_pool.acquire() as conn:
+                            await conn.execute(
+                                "UPDATE tasks SET g_task_id=$2, g_task_list_id=$3 WHERE id=$1",
+                                task_id,
+                                str(gtid),
+                                str(cur_list_id),
+                            )
+                        return str(gtid)
+                    return None
+                except Exception as e:
+                    # If the tasklist was deleted, refresh mapping and retry once.
+                    if attempt == 0 and _is_not_found(e):
+                        await _forget_list_mapping(list_name)
+                        cur_list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
+                        continue
+                    raise
+            return None
+
         try:
             async with db_pool.acquire() as conn:
                 row = await conn.fetchrow(
@@ -335,35 +377,41 @@ async def cb_task(
 
             list_name = (row["project_code"] or "").strip() or os.getenv("GTASKS_WORK_FALLBACK_LIST", "Работа")
             list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
-            title = (
-                f"[{row['project_code']}] #{task_id} {row['title']}" if row["project_code"] else f"#{task_id} {row['title']}"
-            )
-            dl = fmt_local(row["deadline"], _tz()) if row["deadline"] else "—"
+
+            title = f"[{row['project_code']}] #{task_id} {row['title']}" if row["project_code"] else f"#{task_id} {row['title']}"
+            dl = fmt_local(row["deadline"], tz) if row["deadline"] else "—"
             notes = f"Проект: {row['project_code']}\nИсполнитель: {row['assignee']}\nДедлайн: {dl}\nID: {task_id}"
 
             due_utc = None
             if row["deadline"]:
-                due_utc = due_from_local_date(to_local(row["deadline"], _tz()), _tz())
+                due_utc = due_from_local_date(to_local(row["deadline"], tz), tz)
 
             if row["g_task_id"] and row["g_task_list_id"]:
-                await gtasks.patch_task(str(row["g_task_list_id"]), str(row["g_task_id"]), title=title, notes=notes, due=due_utc)
-                await callback.answer("✅ Google Tasks: обновлено")
+                try:
+                    await gtasks.patch_task(str(row["g_task_list_id"]), str(row["g_task_id"]), title=title, notes=notes, due=due_utc)
+                    await callback.answer("✅ Google Tasks: обновлено")
+                except Exception as e:
+                    # Common case: task was deleted manually from Google Tasks.
+                    if _is_not_found(e):
+                        await _clear_task_mapping()
+                        gtid = await _create_task_with_list_retry(list_name, list_id, title, notes, due_utc)
+                        if gtid:
+                            await callback.answer("✅ Google Tasks: отправлено заново")
+                        else:
+                            await callback.answer("✅ Google Tasks: отправлено")
+                    else:
+                        raise
             else:
-                created = await gtasks.create_task(list_id, title, notes=notes, due=due_utc)
-                gtid = created.get("id")
+                gtid = await _create_task_with_list_retry(list_name, list_id, title, notes, due_utc)
                 if gtid:
-                    async with db_pool.acquire() as conn:
-                        await conn.execute(
-                            "UPDATE tasks SET g_task_id=$2, g_task_list_id=$3 WHERE id=$1",
-                            task_id,
-                            str(gtid),
-                            str(list_id),
-                        )
-                await callback.answer("✅ Google Tasks: отправлено")
+                    await callback.answer("✅ Google Tasks: отправлено")
+                else:
+                    await callback.answer("✅ Google Tasks: отправлено")
         except Exception as e:
             await callback.answer("❌ Ошибка Google Tasks", show_alert=True)
             await db_log_error(db_pool, "cb_task_gtasks", e, {"task_id": task_id})
         return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+
 
     # -----------------
     # Status updates

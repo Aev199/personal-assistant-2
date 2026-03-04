@@ -12,6 +12,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from bot.tz import resolve_tz_name
+
 import asyncpg
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
@@ -84,7 +86,7 @@ async def ensure_main_menu(message: Message, db_pool: asyncpg.Pool) -> None:
 
 
 def _tz_name() -> str:
-    return os.getenv("TZ") or "Europe/Moscow"
+    return resolve_tz_name("Europe/Moscow")
 
 
 UTC = ZoneInfo("UTC")

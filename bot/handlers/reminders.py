@@ -12,6 +12,7 @@ from aiogram import Dispatcher, F
 from aiogram.types import CallbackQuery
 
 from bot.deps import AppDeps
+from bot.tz import to_db_utc
 
 from bot.utils import try_delete_user_message
 
@@ -37,11 +38,16 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
     async with db_pool.acquire() as conn:
         text = await conn.fetchval("SELECT text FROM reminders WHERE id=$1", rem_id)
         if text:
-            new_time = (datetime.now(timezone.utc) + timedelta(minutes=mins)).replace(tzinfo=None)
+            new_time = datetime.now(timezone.utc) + timedelta(minutes=mins)
+            new_time_db = to_db_utc(
+                new_time,
+                tz_name=deps.tz_name,
+                store_tz=bool(getattr(deps, 'db_reminders_remind_at_timestamptz', False)),
+            )
             await conn.execute(
                 "INSERT INTO reminders (text, remind_at, repeat) VALUES ($1, $2, 'none')",
                 text,
-                new_time,
+                new_time_db,
             )
 
     await callback.answer(f"Отложено на {mins} мин.")

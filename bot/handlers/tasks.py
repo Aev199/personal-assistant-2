@@ -28,6 +28,7 @@ from bot.services.gtasks_service import get_or_create_list_id, due_from_local_da
 from bot.services.vault_sync import background_project_sync
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _undo_active, _now_ts
 from bot.ui.task_card import task_card_kb, task_deadline_kb
+from bot.tz import to_db_utc
 from bot.utils import h, safe_edit, kb_columns
 
 
@@ -711,9 +712,13 @@ async def cb_task(
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
             )
 
-        deadline_utc_naive = None
+        deadline_db = None
         if deadline_local is not None:
-            deadline_utc_naive = deadline_local.astimezone(UTC).replace(tzinfo=None)
+            deadline_db = to_db_utc(
+                deadline_local,
+                tz_name=deps.tz_name,
+                store_tz=bool(getattr(deps, 'db_tasks_deadline_timestamptz', False)),
+            )
 
         async with db_pool.acquire() as conn:
             info = await conn.fetchrow(
@@ -721,7 +726,7 @@ async def cb_task(
                 task_id,
             )
             pid = int(info["project_id"]) if info else None
-            await conn.execute("UPDATE tasks SET deadline=$2 WHERE id=$1", task_id, deadline_utc_naive)
+            await conn.execute("UPDATE tasks SET deadline=$2 WHERE id=$1", task_id, deadline_db)
             dl_txt = "без срока" if deadline_local is None else deadline_local.strftime("%d.%m %H:%M")
             if info:
                 await db_add_event(conn, "task_deadline_changed", pid, task_id, f"🗓 Срок → {dl_txt} | [{info['project_code']}] #{task_id} {info['title']}")
@@ -756,14 +761,18 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=_tz_from_deps(deps))
 
-    deadline_utc = parsed.astimezone(UTC).replace(tzinfo=None)
+    deadline_db = to_db_utc(
+        parsed,
+        tz_name=deps.tz_name,
+        store_tz=bool(getattr(deps, 'db_tasks_deadline_timestamptz', False)),
+    )
     async with db_pool.acquire() as conn:
         info = await conn.fetchrow(
             "SELECT t.project_id, p.code as project_code, t.title FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=$1",
             int(task_id),
         )
         pid = int(info["project_id"]) if info else None
-        await conn.execute("UPDATE tasks SET deadline=$2 WHERE id=$1", int(task_id), deadline_utc)
+        await conn.execute("UPDATE tasks SET deadline=$2 WHERE id=$1", int(task_id), deadline_db)
         if info:
             dl_txt = parsed.astimezone(_tz_from_deps(deps)).strftime("%d.%m %H:%M")
             await db_add_event(conn, "task_deadline_changed", pid, int(task_id), f"🗓 Срок → {dl_txt} | [{info['project_code']}] #{task_id} {info['title']}")

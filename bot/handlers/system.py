@@ -87,7 +87,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
     await ensure_main_menu(message, db_pool)
 
 
-async def cmd_tz(message: Message, deps: AppDeps):
+async def cmd_tz(message: Message, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
     """Show runtime timezone diagnostics (admin-only)."""
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
@@ -120,6 +120,30 @@ async def cmd_tz(message: Message, deps: AppDeps):
         f"now_utc={now_utc.isoformat()}\n\n"
         f"sample_utc_naive=2026-03-04 15:00 → local={sample_local.isoformat() if sample_local else '—'}\n"
     )
+
+    # DB diagnostics (optional)
+    if db_pool is not None:
+        try:
+            async with db_pool.acquire() as conn:
+                db_tz = await conn.fetchval("SHOW TIME ZONE")
+                cols = await conn.fetch(
+                    "SELECT table_name, column_name, data_type "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema='public' "
+                    "AND ((table_name='tasks' AND column_name='deadline') "
+                    "  OR (table_name='reminders' AND column_name='remind_at'))"
+                )
+            ct = {(r['table_name'], r['column_name']): (r['data_type'] or '') for r in cols}
+            txt += (
+                "\n<b>DB</b>\n"
+                f"db_session_tz={h(str(db_tz or '—'))}\n"
+                f"tasks.deadline={h(ct.get(('tasks','deadline'),'—'))}\n"
+                f"reminders.remind_at={h(ct.get(('reminders','remind_at'),'—'))}\n"
+                f"deps.db_tasks_deadline_timestamptz={getattr(deps,'db_tasks_deadline_timestamptz', False)}\n"
+                f"deps.db_reminders_remind_at_timestamptz={getattr(deps,'db_reminders_remind_at_timestamptz', False)}\n"
+            )
+        except Exception:
+            pass
     await message.answer(txt, parse_mode="HTML")
 
 

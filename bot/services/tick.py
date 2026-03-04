@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from datetime import timezone
+
 import asyncpg
 from aiogram import Bot
 
@@ -20,6 +22,7 @@ from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter
 from bot.services.icloud_retry import retry_pending_icloud_events
 from bot.services.logger import StructuredLogger, get_logger
 from bot.services.reminders import next_repeat_time_utc_naive, send_reminder
+from bot.tz import to_db_utc
 
 
 async def do_tick(
@@ -40,10 +43,21 @@ async def do_tick(
 
     # Step 1: fetch due reminders WITHOUT holding conn while doing network IO
     async with pool.acquire() as conn:
+        # Support both TIMESTAMP (UTC-naive) and TIMESTAMPTZ schemas.
+        remind_dtype = None
+        try:
+            remind_dtype = await conn.fetchval(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='reminders' AND column_name='remind_at'"
+            )
+        except Exception:
+            remind_dtype = None
+        remind_is_timestamptz = (remind_dtype == 'timestamp with time zone')
+        now_expr = "NOW()" if remind_is_timestamptz else "(now() AT TIME ZONE 'UTC')"
         records = await conn.fetch(
             "SELECT id, text, remind_at, COALESCE(repeat,'none') AS repeat "
             "FROM reminders "
-            "WHERE remind_at <= (now() AT TIME ZONE 'UTC') AND is_sent = FALSE "
+            f"WHERE remind_at <= {now_expr} AND is_sent = FALSE "
             "ORDER BY remind_at ASC "
             "LIMIT 50"
         )
@@ -77,7 +91,13 @@ async def do_tick(
             if nxt is None:
                 mark_sent_ids.append(rid)
             else:
-                repeat_updates.append((rid, nxt))
+                # `nxt` is UTC-naive by convention; adapt to actual column type.
+                nxt_db = to_db_utc(
+                    nxt.replace(tzinfo=timezone.utc),
+                    tz_name=tz_name,
+                    store_tz=bool(remind_is_timestamptz),
+                )
+                repeat_updates.append((rid, nxt_db))
         else:
             mark_sent_ids.append(rid)
 

@@ -12,6 +12,40 @@ from __future__ import annotations
 import asyncpg
 
 
+async def _column_data_type(conn: asyncpg.Connection, table: str, column: str) -> str | None:
+    try:
+        return await conn.fetchval(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=$1 AND column_name=$2",
+            table,
+            column,
+        )
+    except Exception:
+        return None
+
+
+async def _try_migrate_timestamptz_to_timestamp_utc(conn: asyncpg.Connection, table: str, column: str) -> None:
+    """Best-effort migration: TIMESTAMPTZ -> TIMESTAMP (UTC naive).
+
+    Project convention is to store deadlines/reminders as UTC-naive TIMESTAMP.
+    Some historical deployments created these columns as TIMESTAMPTZ.
+
+    If the column is TIMESTAMPTZ, we convert it to TIMESTAMP using
+    `col AT TIME ZONE 'UTC'` (preserving the same instant).
+    """
+
+    dtype = await _column_data_type(conn, table, column)
+    if dtype != "timestamp with time zone":
+        return
+    try:
+        await conn.execute(
+            f"ALTER TABLE {table} ALTER COLUMN {column} TYPE TIMESTAMP USING ({column} AT TIME ZONE 'UTC')"
+        )
+    except Exception:
+        # Non-fatal: if migration fails, runtime will adapt.
+        return
+
+
 async def ensure_schema(conn: asyncpg.Connection) -> None:
     """Create/patch core schema (best-effort)."""
 
@@ -77,6 +111,10 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline)")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status)")
 
+    # Best-effort compatibility: migrate TIMESTAMPTZ columns to TIMESTAMP (UTC naive).
+    # If this fails, the runtime has additional safeguards.
+    await _try_migrate_timestamptz_to_timestamp_utc(conn, "tasks", "deadline")
+
     # events (history)
     await conn.execute(
         """
@@ -121,6 +159,11 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         )
         """
     )
+
+    await _try_migrate_timestamptz_to_timestamp_utc(conn, "reminders", "remind_at")
+
+    # projects.deadline is rarely used but keep it consistent.
+    await _try_migrate_timestamptz_to_timestamp_utc(conn, "projects", "deadline")
 
     # Compatibility for DBs created with older/experimental schema.
     # The runtime inserts into (text, remind_at, repeat) and selects by is_sent.

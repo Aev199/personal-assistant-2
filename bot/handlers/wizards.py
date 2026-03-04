@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from bot.tz import resolve_tz_name
+from bot.tz import to_db_utc
 
 import asyncpg
 import dateparser
@@ -75,11 +76,20 @@ def _tz_from_deps(deps: AppDeps) -> ZoneInfo:
         return ZoneInfo("Europe/Moscow")
 
 
-def to_utc_naive(dt_local: datetime, deps: AppDeps) -> datetime:
-    """Convert aware local datetime to naive UTC for DB TIMESTAMP columns."""
+def to_deadline_db(dt_local: datetime, deps: AppDeps) -> datetime:
+    """Convert local deadline to DB representation (UTC naive or UTC aware).
+
+    - TIMESTAMP schema: store naive UTC
+    - TIMESTAMPTZ schema: store aware UTC to avoid session-TZ casts
+    """
+
     if dt_local.tzinfo is None:
         dt_local = dt_local.replace(tzinfo=_tz_from_deps(deps))
-    return dt_local.astimezone(UTC).replace(tzinfo=None)
+    return to_db_utc(
+        dt_local,
+        tz_name=deps.tz_name,
+        store_tz=bool(getattr(deps, 'db_tasks_deadline_timestamptz', False)),
+    )
 
 
 def fmt_local(dt_utc_or_naive: datetime | None, deps: AppDeps) -> str:
@@ -493,7 +503,7 @@ async def create_task_from_wizard(
             reply_markup=main_menu_kb(),
         )
 
-    deadline_utc = to_utc_naive(deadline_local, deps) if deadline_local else None
+    deadline_utc = to_deadline_db(deadline_local, deps) if deadline_local else None
 
     try:
         async with db_pool.acquire() as conn:
@@ -821,13 +831,17 @@ async def cb_add_reminder_repeat(callback: CallbackQuery, state: FSMContext, db_
         if remind_at_dt.tzinfo is None:
             remind_at_dt = remind_at_dt.replace(tzinfo=UTC)
 
-        remind_at_utc_naive = remind_at_dt.astimezone(UTC).replace(tzinfo=None)
+        remind_at_db = to_db_utc(
+            remind_at_dt,
+            tz_name=deps.tz_name,
+            store_tz=bool(getattr(deps, 'db_reminders_remind_at_timestamptz', False)),
+        )
 
         async with db_pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO reminders (text, remind_at, repeat) VALUES ($1, $2, $3)",
                 text_part,
-                remind_at_utc_naive,
+                remind_at_db,
                 repeat,
             )
             await db_add_event(conn, "reminder_created", None, None, f"Создано напоминание ({repeat}): {text_part}")
@@ -1249,7 +1263,7 @@ async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyn
             "INSERT INTO tasks (project_id, title, assignee_id, deadline) VALUES ($1,$2,NULL,$3) RETURNING id",
             inbox_id,
             raw,
-            to_utc_naive(deadline_local, deps) if deadline_local else None,
+            to_deadline_db(deadline_local, deps) if deadline_local else None,
         )
         await db_add_event(conn, "task_created", inbox_id, int(task_id), f"🆕 INBOX #{task_id} {raw}")
 

@@ -96,3 +96,24 @@ def to_local(dt_utc_naive: datetime | None, tzinfo=None, *, default: str = "Euro
 def fmt_local(dt_utc_naive: datetime | None, tzinfo=None, *, default: str = "Europe/Moscow", fmt: str = "%d.%m %H:%M") -> str:
     d = to_local(dt_utc_naive, tzinfo, default=default)
     return d.strftime(fmt) if d else "—"
+
+
+def to_db_utc(dt_local: datetime | None, *, tz_name: str, store_tz: bool) -> datetime | None:
+    """Convert a local datetime to the DB storage representation.
+
+    The project historically stored UTC-naive TIMESTAMP values in DB.
+    Some deployments have TIMESTAMPTZ columns; for those we store UTC-aware
+    datetimes to avoid session-timezone casts.
+    """
+
+    if dt_local is None:
+        return None
+
+    if getattr(dt_local, "tzinfo", None) is None:
+        try:
+            dt_local = dt_local.replace(tzinfo=ZoneInfo(tz_name))
+        except Exception:
+            dt_local = dt_local.replace(tzinfo=timezone.utc)
+
+    utc = dt_local.astimezone(timezone.utc)
+    return utc if store_tz else utc.replace(tzinfo=None)

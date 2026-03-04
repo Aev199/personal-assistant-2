@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from bot.tz import resolve_tz_name
+from bot.tz import resolve_tz_name, to_db_utc
 
 import asyncpg
 from aiogram import Dispatcher, F
@@ -214,7 +214,11 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                         now_local = datetime.now(ZoneInfo(deps.tz_name or "Europe/Moscow"))
                         d = (now_local + timedelta(days=1)).date()
                         dt_local = datetime(d.year, d.month, d.day, 10, 0, tzinfo=ZoneInfo(deps.tz_name or "Europe/Moscow"))
-                        dl = dt_local.astimezone(UTC).replace(tzinfo=None)
+                        dl = to_db_utc(
+                            dt_local,
+                            tz_name=deps.tz_name,
+                            store_tz=bool(getattr(deps, 'db_tasks_deadline_timestamptz', False)),
+                        )
                         await conn.execute(
                             "UPDATE tasks SET deadline=$2, status='todo' WHERE id=ANY($1::bigint[]) AND status!='done'",
                             list(sel),

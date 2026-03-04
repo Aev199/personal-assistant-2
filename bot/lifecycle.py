@@ -137,6 +137,43 @@ def make_on_startup(
         try:
             async with pool.acquire() as conn:
                 await ensure_schema(conn)
+
+                # Detect actual column types (some deployments may still have TIMESTAMPTZ).
+                try:
+                    col_types = await conn.fetch(
+                        "SELECT table_name, column_name, data_type "
+                        "FROM information_schema.columns "
+                        "WHERE table_schema='public' "
+                        "AND ((table_name='tasks' AND column_name='deadline') "
+                        "  OR (table_name='reminders' AND column_name='remind_at') "
+                        "  OR (table_name='projects' AND column_name='deadline'))"
+                    )
+                    ct = {(r['table_name'], r['column_name']): (r['data_type'] or '') for r in col_types}
+                    tasks_deadline_tz = ct.get(('tasks', 'deadline'), '') == 'timestamp with time zone'
+                    rem_remind_tz = ct.get(('reminders', 'remind_at'), '') == 'timestamp with time zone'
+                    proj_deadline_tz = ct.get(('projects', 'deadline'), '') == 'timestamp with time zone'
+
+                    if deps is not None:
+                        deps.db_tasks_deadline_timestamptz = bool(tasks_deadline_tz)
+                        deps.db_reminders_remind_at_timestamptz = bool(rem_remind_tz)
+                        deps.db_projects_deadline_timestamptz = bool(proj_deadline_tz)
+
+                    dp.workflow_data.update(
+                        {
+                            'db_tasks_deadline_timestamptz': bool(tasks_deadline_tz),
+                            'db_reminders_remind_at_timestamptz': bool(rem_remind_tz),
+                            'db_projects_deadline_timestamptz': bool(proj_deadline_tz),
+                        }
+                    )
+                    log.info(
+                        'DB column types',
+                        tasks_deadline=ct.get(('tasks', 'deadline'), '—'),
+                        reminders_remind_at=ct.get(('reminders', 'remind_at'), '—'),
+                        projects_deadline=ct.get(('projects', 'deadline'), '—'),
+                    )
+                except Exception:
+                    pass
+
                 try:
                     tz_name = await conn.fetchval("SHOW TIME ZONE")
                     log.info("DB session time zone", tz=tz_name)

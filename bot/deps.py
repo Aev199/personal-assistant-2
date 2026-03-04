@@ -44,6 +44,12 @@ class AppDeps:
     db_pool: Optional[asyncpg.Pool] = None
     db_log_error: Optional[DbLogErrorFn] = None
 
+    # DB schema compatibility flags (filled during startup)
+    # Some historical deployments used TIMESTAMPTZ for deadline/remind_at.
+    db_tasks_deadline_timestamptz: bool = False
+    db_reminders_remind_at_timestamptz: bool = False
+    db_projects_deadline_timestamptz: bool = False
+
     # Optional runtime services
     logger: Optional["StructuredLogger"] = None
     error_handler: Optional["ErrorHandler"] = None

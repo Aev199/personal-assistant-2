@@ -86,12 +86,31 @@ def make_on_startup(
 
         # DB pool
         mn, mx, timeout = _db_pool_params()
+
+        async def _db_init(conn: asyncpg.Connection) -> None:
+            """Per-connection init.
+
+            Critical: force Postgres session TZ to UTC.
+
+            Some historical deployments created `deadline`/`remind_at` as TIMESTAMPTZ.
+            The app stores UTC timestamps as naive datetimes. If the session TZ is not UTC,
+            Postgres will interpret those naive values as local time and shift them.
+            Setting the session TZ to UTC makes both TIMESTAMP and TIMESTAMPTZ schemas
+            behave consistently.
+            """
+
+            try:
+                await conn.execute("SET TIME ZONE 'UTC'")
+            except Exception:
+                # Do not fail startup if the DB rejects session settings.
+                pass
         pool = await asyncpg.create_pool(
             database_url,
             min_size=mn,
             max_size=mx,
             command_timeout=timeout,
             statement_cache_size=0,
+            init=_db_init,
         )
         dp.workflow_data.update({"db_pool": pool})
 
@@ -118,6 +137,11 @@ def make_on_startup(
         try:
             async with pool.acquire() as conn:
                 await ensure_schema(conn)
+                try:
+                    tz_name = await conn.fetchval("SHOW TIME ZONE")
+                    log.info("DB session time zone", tz=tz_name)
+                except Exception:
+                    pass
             log.info("DB schema is ready")
         except Exception as e:
             log.error(

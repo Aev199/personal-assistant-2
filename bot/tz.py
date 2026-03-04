@@ -12,6 +12,11 @@ when it looks intentionally set by the user.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+
+_UTC_NAMES = {"UTC", "ETC/UTC", "GMT", "ETC/GMT"}
 
 
 def resolve_tz_name(default: str = "Europe/Moscow") -> str:
@@ -29,7 +34,65 @@ def resolve_tz_name(default: str = "Europe/Moscow") -> str:
             return v
 
     tz = (os.getenv("TZ") or "").strip()
-    if tz and tz.upper() not in {"UTC", "ETC/UTC", "GMT", "ETC/GMT"}:
+    if tz and tz.upper() not in _UTC_NAMES:
         return tz
 
     return default
+
+
+def resolve_tzinfo(default: str = "Europe/Moscow"):
+    """Resolve application tzinfo.
+
+    Defensive approach:
+    - Prefer explicit app env vars (via :func:`resolve_tz_name`).
+    - If ZoneInfo is unavailable for the requested name (missing tzdata),
+      fall back to the *system local timezone* when it's non-UTC.
+    - Otherwise fall back to UTC.
+    """
+
+    name = resolve_tz_name(default)
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        sys_tz = datetime.now().astimezone().tzinfo
+        try:
+            if sys_tz is not None:
+                off = sys_tz.utcoffset(datetime.now())
+                if off and off.total_seconds() != 0:
+                    return sys_tz
+        except Exception:
+            pass
+        return timezone.utc
+
+
+def to_utc_aware(dt: datetime | None) -> datetime | None:
+    """Normalize datetime to timezone-aware UTC.
+
+    Project convention:
+    - DB stores deadlines/reminders as *naive UTC* timestamps (TIMESTAMP without TZ).
+    - For display and scheduling we always treat naive values as UTC.
+    """
+
+    if dt is None:
+        return None
+    if getattr(dt, "tzinfo", None) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def to_local(dt_utc_naive: datetime | None, tzinfo=None, *, default: str = "Europe/Moscow") -> datetime | None:
+    """Convert a UTC-naive (or any aware) datetime to local tzinfo."""
+
+    d = to_utc_aware(dt_utc_naive)
+    if d is None:
+        return None
+    tzinfo = tzinfo or resolve_tzinfo(default)
+    try:
+        return d.astimezone(tzinfo)
+    except Exception:
+        return d
+
+
+def fmt_local(dt_utc_naive: datetime | None, tzinfo=None, *, default: str = "Europe/Moscow", fmt: str = "%d.%m %H:%M") -> str:
+    d = to_local(dt_utc_naive, tzinfo, default=default)
+    return d.strftime(fmt) if d else "—"

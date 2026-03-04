@@ -9,6 +9,8 @@ from __future__ import annotations
 import html
 from datetime import datetime
 
+from bot.utils.datetime import fmt_msk
+
 
 def h(s: str) -> str:
     """HTML-escape a string for Telegram HTML parse_mode."""
@@ -23,7 +25,8 @@ def fmt_task_line_html(title: str, project: str, assignee: str, deadline_dt: dat
     if assignee:
         meta.append(h(assignee))
     if deadline_dt is not None:
-        meta.append(f"до {h(deadline_dt.strftime('%d.%m %H:%M'))}")
+        # deadline_dt is stored as naive UTC in DB; format in app timezone.
+        meta.append(f"до {h(fmt_msk(deadline_dt))}")
     meta_txt = " • ".join(meta)
     if meta_txt:
         return f"<b>{h(title)}</b>\n<i>{meta_txt}</i>"

@@ -4,7 +4,7 @@ import os
 import re
 from collections import defaultdict
 from zoneinfo import ZoneInfo
-from bot.tz import resolve_tz_name
+from bot.tz import resolve_tz_name, resolve_tzinfo
 from typing import Iterable, Mapping, Any, Optional, List, Dict, Tuple
 
 
@@ -35,7 +35,8 @@ class VaultManager:
     ) -> None:
         self.cloud = cloud_adapter
         # Prefer explicit app timezone env vars over constructor arg.
-        self.tz = ZoneInfo(resolve_tz_name(tz))
+        # Also fall back to system local tz when tzdata is missing.
+        self.tz = resolve_tzinfo(resolve_tz_name(tz))
         # Serialize remote writes to reduce conflicts and rate-limit pressure.
         self.lock = asyncio.Lock()
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from bot.tz import resolve_tz_name
+from bot.tz import resolve_tzinfo
 
 import asyncpg
 from aiogram import Dispatcher, F
@@ -32,20 +32,13 @@ from bot.keyboards import back_home_kb
 
 
 
-UTC = ZoneInfo("UTC")
+UTC = timezone.utc
 
 
-def _tz_from_deps(deps: AppDeps) -> ZoneInfo:
-    """Resolve app timezone.
+def _tz_from_deps(deps: AppDeps):
+    """Resolve app tzinfo for UI (prefer env; fallback to system local)."""
 
-    Always prefer explicit env vars (BOT_TIMEZONE/APP_TIMEZONE/BOT_TZ),
-    then fall back to deps.tz_name.
-    """
-    name = resolve_tz_name((deps.tz_name or "Europe/Moscow"))
-    try:
-        return ZoneInfo(name)
-    except Exception:
-        return ZoneInfo("Europe/Moscow")
+    return resolve_tzinfo(deps.tz_name or "Europe/Moscow")
 
 
 def to_utc(dt: datetime | None) -> datetime | None:

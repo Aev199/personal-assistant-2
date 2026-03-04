@@ -8,10 +8,10 @@ existing callback_data format.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from bot.tz import resolve_tz_name
+from bot.tz import resolve_tzinfo
 
 import asyncpg
 import dateparser
@@ -34,20 +34,13 @@ from bot.utils import h, safe_edit, kb_columns
 
 
 
-UTC = ZoneInfo("UTC")
+UTC = timezone.utc
 
 
-def _tz_from_deps(deps: AppDeps) -> ZoneInfo:
-    """Resolve app timezone.
+def _tz_from_deps(deps: AppDeps):
+    """Resolve app tzinfo for UI (prefer env; fallback to system local)."""
 
-    Always prefer explicit env vars (BOT_TIMEZONE/APP_TIMEZONE/BOT_TZ),
-    then fall back to deps.tz_name.
-    """
-    name = resolve_tz_name((deps.tz_name or "Europe/Moscow"))
-    try:
-        return ZoneInfo(name)
-    except Exception:
-        return ZoneInfo("Europe/Moscow")
+    return resolve_tzinfo(deps.tz_name or "Europe/Moscow")
 
 
 def to_utc(dt: datetime | None) -> datetime | None:
@@ -105,7 +98,22 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         payload = _ui_payload_get(ui_state)
         undo = _undo_active(payload, task_id=task_id)
 
+    # Convert stored naive-UTC deadline to local time for display.
     dl = fmt_local(row["deadline"], tz)
+    if getattr(deps, "logger", None):
+        try:
+            raw = row["deadline"]
+            loc = to_local(raw, tz)
+            deps.logger.info(
+                "task card tz debug",
+                task_id=int(task_id),
+                deps_tz=getattr(deps, "tz_name", None),
+                tz=str(tz),
+                deadline_raw=str(raw),
+                deadline_local=str(loc) if loc else None,
+            )
+        except Exception:
+            pass
     status = (row["status"] or "todo").lower()
     status_map = {
         "todo": "к выполнению",

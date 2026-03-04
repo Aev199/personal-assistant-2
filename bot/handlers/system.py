@@ -6,9 +6,10 @@ and a few utility screens (sync status, Today pick/done, global tails).
 
 from __future__ import annotations
 
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from bot.tz import resolve_tz_name
+from bot.tz import resolve_tz_name, resolve_tzinfo, to_local
 
 import asyncpg
 from bot.deps import AppDeps
@@ -84,6 +85,42 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
     await state.clear()
     await try_delete_user_message(message)
     await ensure_main_menu(message, db_pool)
+
+
+async def cmd_tz(message: Message, deps: AppDeps):
+    """Show runtime timezone diagnostics (admin-only)."""
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+
+    env_bot_tz = (os.getenv("BOT_TIMEZONE") or "").strip()
+    env_tz = (os.getenv("TZ") or "").strip()
+    dep_tz = (getattr(deps, "tz_name", "") or "").strip()
+
+    resolved_name = resolve_tz_name(dep_tz or "Europe/Moscow")
+    tzinfo = resolve_tzinfo(dep_tz or "Europe/Moscow")
+    now_sys = datetime.now().astimezone()
+    now_utc = datetime.now(timezone.utc)
+
+    sample = datetime(2026, 3, 4, 15, 0, 0)  # naive UTC sample
+    sample_local = to_local(sample, tzinfo)
+    off = None
+    try:
+        off = tzinfo.utcoffset(now_sys) if tzinfo else None
+    except Exception:
+        off = None
+
+    txt = (
+        "🕰 <b>TZ debug</b>\n"
+        f"BOT_TIMEZONE={env_bot_tz or '—'}\n"
+        f"TZ={env_tz or '—'}\n"
+        f"deps.tz_name={dep_tz or '—'}\n"
+        f"resolve_tz_name(...)={resolved_name}\n"
+        f"tzinfo={type(tzinfo).__name__} offset={off}\n\n"
+        f"now_sys={now_sys.isoformat()}\n"
+        f"now_utc={now_utc.isoformat()}\n\n"
+        f"sample_utc_naive=2026-03-04 15:00 → local={sample_local.isoformat() if sample_local else '—'}\n"
+    )
+    await message.answer(txt, parse_mode="HTML")
 
 
 async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -533,6 +570,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
 def register(dp: Dispatcher) -> None:
     dp.message.register(cmd_start, CommandStart())
     dp.message.register(cmd_menu, Command("menu"))
+    dp.message.register(cmd_tz, Command("tz"))
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_add_menu, lambda m: m.text and canon(m.text) in {"добавить", "➕ добавить"})
     dp.message.register(cmd_help_button_router, lambda m: m.text and canon(m.text) in {"help", "помощь"})

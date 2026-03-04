@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from bot.tz import resolve_tz_name
+from bot.tz import resolve_tz_name, resolve_tzinfo
 
 import asyncpg
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
@@ -89,7 +89,7 @@ def _tz_name() -> str:
     return resolve_tz_name("Europe/Moscow")
 
 
-UTC = ZoneInfo("UTC")
+UTC = timezone.utc
 
 
 def to_utc(dt: datetime | None) -> datetime | None:
@@ -119,7 +119,7 @@ async def ui_render_home(message: Message | None, db_pool: asyncpg.Pool, *, tz_n
         return
     chat_id = int(message.chat.id)
     tz_name = tz_name or _tz_name()
-    tz = ZoneInfo(tz_name)
+    tz = resolve_tzinfo(tz_name)
 
     try:
         async with db_pool.acquire() as conn:
@@ -411,7 +411,7 @@ async def ui_render_projects_portfolio(message: Message, db_pool: asyncpg.Pool, 
 async def ui_render_team(message: Message, db_pool: asyncpg.Pool, *, force_new: bool = False) -> None:
     """Render Team dashboard (load by active tasks)."""
     chat_id = int(message.chat.id)
-    tz = ZoneInfo(_tz_name())
+    tz = resolve_tzinfo(_tz_name())
     now_utc = datetime.now(UTC)
     today_local = datetime.now(tz).date()
     week_end_utc = now_utc + timedelta(days=7)
@@ -524,7 +524,7 @@ async def ui_render_team(message: Message, db_pool: asyncpg.Pool, *, force_new: 
 
 async def ui_render_today(message: Message, db_pool: asyncpg.Pool, *, tz_name: str | None = None, force_new: bool = False) -> None:
     tz_name = tz_name or _tz_name()
-    tz = ZoneInfo(tz_name)
+    tz = resolve_tzinfo(tz_name)
     try:
         async with db_pool.acquire() as conn:
             tasks = await conn.fetch(
@@ -613,7 +613,7 @@ async def ui_render_today(message: Message, db_pool: asyncpg.Pool, *, tz_name: s
 async def ui_render_overdue(message: Message, db_pool: asyncpg.Pool, *, tz_name: str | None = None, force_new: bool = False) -> None:
     """Render ALL overdue tasks (no paging) + compact 2-column task buttons."""
     tz_name = tz_name or _tz_name()
-    tz = ZoneInfo(tz_name)
+    tz = resolve_tzinfo(tz_name)
     async with db_pool.acquire() as conn:
         total = await conn.fetchval(
             "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND deadline IS NOT NULL AND deadline < (NOW() AT TIME ZONE 'UTC')"

@@ -54,6 +54,10 @@ async def background_project_sync(
                 "SELECT created_at, text FROM events WHERE project_id = $1 ORDER BY created_at DESC LIMIT 30",
                 project_id,
             )
+        try:
+            log.info("vault tz debug", tz=str(getattr(vault, "tz", None)))
+        except Exception:
+            pass
 
         await vault.sync_project_file(p["name"], tasks, events, project_status=p["status"])
 

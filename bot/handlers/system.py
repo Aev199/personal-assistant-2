@@ -31,6 +31,20 @@ from bot.ui import (
 )
 from bot.ui.state import _ui_payload_get, _now_ts
 from bot.utils import canon, fmt_msk, h, safe_edit, try_delete_user_message, fmt_task_line_html
+
+
+UTC = ZoneInfo("UTC")
+
+
+def _to_local(dt_utc_naive, tz_name: str):
+    if dt_utc_naive is None:
+        return None
+    try:
+        if getattr(dt_utc_naive, 'tzinfo', None) is None:
+            dt_utc_naive = dt_utc_naive.replace(tzinfo=UTC)
+        return dt_utc_naive.astimezone(ZoneInfo(tz_name))
+    except Exception:
+        return dt_utc_naive
 from bot.keyboards import back_home_kb, main_menu_kb
 
 
@@ -205,7 +219,7 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
                 FROM tasks t
                 WHERE t.status NOT IN ('done', 'postponed')
                   AND t.deadline IS NOT NULL
-                  AND t.deadline::date = (now() AT TIME ZONE $1)::date
+                  AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
                 """,
                 tz_name,
             )
@@ -217,7 +231,7 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
                 LEFT JOIN team tm ON t.assignee_id = tm.id
                 WHERE t.status NOT IN ('done', 'postponed')
                   AND t.deadline IS NOT NULL
-                  AND t.deadline::date = (now() AT TIME ZONE $1)::date
+                  AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
                 ORDER BY t.deadline ASC
                 LIMIT $2 OFFSET $3
                 """,
@@ -241,7 +255,7 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
                         r.get("title") or "",
                         r.get("project") or "",
                         r.get("assignee") or "—",
-                        r.get("deadline"),
+                        (_to_local(r.get("deadline"), tz_name)),
                     )
                 )
 
@@ -405,7 +419,7 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
                         r.get("title") or "",
                         r.get("project") or "",
                         r.get("assignee") or "—",
-                        r.get("deadline"),
+                        (_to_local(r.get("deadline"), tz_name)),
                     )
                 )
 

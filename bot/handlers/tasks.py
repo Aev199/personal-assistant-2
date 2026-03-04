@@ -697,7 +697,7 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
         pid = int(info["project_id"]) if info else None
         await conn.execute("UPDATE tasks SET deadline=$2 WHERE id=$1", int(task_id), deadline_utc)
         if info:
-            dl_txt = parsed.astimezone(_tz()).strftime("%d.%m %H:%M")
+            dl_txt = parsed.astimezone(_tz_from_deps(deps)).strftime("%d.%m %H:%M")
             await db_add_event(conn, "task_deadline_changed", pid, int(task_id), f"🗓 Срок → {dl_txt} | [{info['project_code']}] #{task_id} {info['title']}")
 
     if pid:
@@ -707,7 +707,7 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
         )
     await state.clear()
     await message.answer("✅ Срок обновлён.")
-    return await show_task_card(message, db_pool, int(task_id, deps=deps))
+    return await show_task_card(message, db_pool, int(task_id), deps=deps)
 
 
 async def asyncio_to_thread_parse(text: str, tz_name: str) -> datetime | None:

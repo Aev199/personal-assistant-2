@@ -159,7 +159,7 @@ async def ui_render_home(message: Message | None, db_pool: asyncpg.Pool, *, tz_n
 
             today = await conn.fetchval(
                 "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND deadline IS NOT NULL "
-                "AND deadline::date = (now() AT TIME ZONE $1)::date",
+                "AND (deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date",
                 tz_name,
             )
 
@@ -533,7 +533,7 @@ async def ui_render_today(message: Message, db_pool: asyncpg.Pool, *, tz_name: s
                 LEFT JOIN team tm ON t.assignee_id = tm.id
                 WHERE t.status NOT IN ('done', 'postponed')
                   AND t.deadline IS NOT NULL
-                  AND t.deadline::date = (now() AT TIME ZONE $1)::date
+                  AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
                 ORDER BY t.deadline ASC
                 """,
                 tz_name,

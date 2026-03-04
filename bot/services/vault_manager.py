@@ -270,10 +270,22 @@ class VaultManager:
         """
         async with self.lock:
             folder = self._objects_folder_for_project_status(project_status)
-            remote_path = f"{self.objects_root}/{folder}/{project_name}.md"
 
-            # Try new structure first
+            active_path = f"{self.objects_root}/{self.active_folder}/{project_name}.md"
+            archive_path = f"{self.objects_root}/{self.archive_folder}/{project_name}.md"
+            remote_path = archive_path if folder == self.archive_folder else active_path
+
+            # Try target path first
             content = await self.cloud.read_file(remote_path)
+
+            # If we're moving between Active/Archive, preserve user-authored content:
+            # - when archiving, base on the Active note if Archive is missing
+            # - when unarchiving, base on the Archive note if Active is missing
+            if not content:
+                if remote_path == archive_path:
+                    content = await self.cloud.read_file(active_path)
+                elif remote_path == active_path:
+                    content = await self.cloud.read_file(archive_path)
 
             # Legacy fallback: objects were previously stored under year folders
             if not content:
@@ -309,6 +321,17 @@ class VaultManager:
             )
 
             await self.cloud.upload_file(remote_path, content)
+
+            # Cleanup stale counterpart file so the project doesn't appear in both folders.
+            deleter = getattr(self.cloud, "delete_file", None)
+            if callable(deleter):
+                stale_path = active_path if remote_path == archive_path else archive_path
+                if stale_path != remote_path:
+                    try:
+                        await deleter(stale_path)
+                    except Exception:
+                        # Non-fatal: deletion may fail on some servers/permissions.
+                        pass
 
     async def log_event(self, event_text: str) -> None:
         """

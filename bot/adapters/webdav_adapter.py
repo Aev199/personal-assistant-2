@@ -124,3 +124,15 @@ class WebDavAdapter:
             await self._req("MKCOL", current)
 
         await self._req("PUT", remote_path, data=data)
+
+    async def delete_file(self, remote_path: str) -> None:
+        """Delete a remote file.
+
+        WebDAV servers typically support DELETE for files.
+        Treat 404 as success (already deleted).
+        """
+        status, _ = await self._req("DELETE", remote_path)
+        if status in (200, 202, 204, 404):
+            return
+        # Some servers might respond with 207/301 etc for edge cases; ignore hard-fail.
+        logger.warning("WebDAV delete returned %s for %s", status, remote_path)

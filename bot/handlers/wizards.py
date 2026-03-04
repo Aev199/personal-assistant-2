@@ -353,7 +353,7 @@ async def msg_add_task_title(message: Message, state: FSMContext, db_pool: async
             dt = dt.replace(tzinfo=_tz_from_deps(deps))
         await state.update_data(deadline_msk=dt.astimezone(_tz_from_deps(deps)).isoformat())
         await state.set_state(AddTaskWizard.confirming)
-        return await _task_render_confirm(message, state, db_pool)
+        return await _task_render_confirm(message, state, db_pool, deps)
 
     await state.set_state(AddTaskWizard.choosing_deadline)
     await wizard_render(
@@ -401,7 +401,7 @@ async def cb_add_deadline(callback: CallbackQuery, state: FSMContext, db_pool: a
 
     await state.update_data(deadline_msk=(deadline_local.isoformat() if deadline_local else None))
     await state.set_state(AddTaskWizard.confirming)
-    return await _task_render_confirm(callback.message, state, db_pool)
+    return await _task_render_confirm(callback.message, state, db_pool, deps)
 
 
 async def msg_add_task_deadline(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -431,7 +431,7 @@ async def msg_add_task_deadline(message: Message, state: FSMContext, db_pool: as
     dl_local = parsed.astimezone(tz)
     await state.update_data(deadline_msk=dl_local.isoformat())
     await state.set_state(AddTaskWizard.confirming)
-    return await _task_render_confirm(message, state, db_pool)
+    return await _task_render_confirm(message, state, db_pool, deps)
 
 
 async def cb_add_edit_deadline(callback: CallbackQuery, state: FSMContext, deps: AppDeps) -> None:

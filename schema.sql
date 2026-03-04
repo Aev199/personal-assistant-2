@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     parent_task_id BIGINT REFERENCES tasks(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     g_task_id TEXT,
-    g_task_list_id TEXT
+    g_task_list_id TEXT,
+    g_task_hash TEXT,
+    g_task_synced_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);

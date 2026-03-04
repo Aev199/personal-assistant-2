@@ -39,6 +39,7 @@ def task_card_kb(
     status: str,
     *,
     in_gtasks: bool = False,
+    gtasks_dirty: bool = False,
     expanded: bool = False,
     subtasks: list[tuple[int, str]] | None = None,
 ) -> InlineKeyboardMarkup:
@@ -101,7 +102,9 @@ def task_card_kb(
         rows.append(rel_row)
 
         # Export to Google Tasks (fallback)
-        if in_gtasks:
+        if in_gtasks and gtasks_dirty:
+            rows.append([InlineKeyboardButton(text="🔄 Обновить Google Tasks", callback_data=f"task:{task_id}:gtasks")])
+        elif in_gtasks:
             rows.append([InlineKeyboardButton(text="✅ Google Tasks", callback_data=f"task:{task_id}:gtasks")])
         else:
             rows.append([InlineKeyboardButton(text="📤 В Google Tasks", callback_data=f"task:{task_id}:gtasks")])
@@ -145,7 +148,9 @@ def task_card_kb(
         if parent_task_id:
             rows.append([InlineKeyboardButton(text="⛓ Отвязать", callback_data=f"task:{task_id}:detach")])
 
-    if in_gtasks:
+    if in_gtasks and gtasks_dirty:
+        rows.append([InlineKeyboardButton(text="🔄 Обновить Google Tasks", callback_data=f"task:{task_id}:gtasks")])
+    elif in_gtasks:
         rows.append([InlineKeyboardButton(text="✅ Google Tasks", callback_data=f"task:{task_id}:gtasks")])
     else:
         rows.append([InlineKeyboardButton(text="📤 В Google Tasks", callback_data=f"task:{task_id}:gtasks")])

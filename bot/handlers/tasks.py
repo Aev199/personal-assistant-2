@@ -8,6 +8,7 @@ existing callback_data format.
 from __future__ import annotations
 
 import os
+import hashlib
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -61,6 +62,25 @@ def fmt_local(dt: datetime | None, tz: ZoneInfo) -> str:
     d = to_local(dt, tz)
     return d.strftime("%d.%m %H:%M") if d else "—"
 
+def _gtasks_fingerprint(*, project_code: str | None, title: str | None, assignee: str | None, status: str | None, deadline: datetime | None) -> str:
+    """Stable fingerprint of a work task for Google Tasks sync UI.
+
+    We store the fingerprint in DB after export. If any of these fields change,
+    the export becomes "dirty" and the UI shows a refresh button.
+    """
+
+    dl = to_utc(deadline)
+    dl_s = dl.isoformat() if dl else ""
+    raw = "|".join([
+        (project_code or "").strip(),
+        (title or "").strip(),
+        (assignee or "").strip(),
+        (status or "").strip(),
+        dl_s,
+    ])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 
 async def _guard(callback: CallbackQuery, deps: AppDeps) -> bool:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
@@ -76,7 +96,7 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         row = await conn.fetchrow(
             """
             SELECT t.id, t.title, t.status, t.deadline, t.parent_task_id,
-                   t.g_task_id, t.g_task_list_id,
+                   t.g_task_id, t.g_task_list_id, t.g_task_hash,
                    p.id AS project_id, p.code AS project_code,
                    COALESCE(tm.name, '—') AS assignee
             FROM tasks t
@@ -152,12 +172,23 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
             lines.append(f"…и ещё {len(subs)-10}")
 
     active_subs = [(int(s["id"]), str(s["title"])) for s in (subs or []) if (s.get("status") != "done")]
+
+    in_gtasks = bool(row.get("g_task_id"))
+    fp = _gtasks_fingerprint(
+        project_code=str(row.get("project_code") or ""),
+        title=str(row.get("title") or ""),
+        assignee=str(row.get("assignee") or ""),
+        status=str(row.get("status") or ""),
+        deadline=row.get("deadline"),
+    )
+    gtasks_dirty = bool(in_gtasks and (not row.get("g_task_hash") or str(row.get("g_task_hash")) != fp))
     kb = task_card_kb(
         int(task_id),
         int(row["project_id"]),
         int(row["parent_task_id"]) if row["parent_task_id"] else None,
         str(status),
-        in_gtasks=bool(row.get("g_task_id")),
+        in_gtasks=in_gtasks,
+        gtasks_dirty=gtasks_dirty,
         expanded=expanded,
         subtasks=active_subs,
     )
@@ -343,13 +374,13 @@ async def cb_task(
 
         async def _clear_task_mapping() -> None:
             async with db_pool.acquire() as conn:
-                await conn.execute("UPDATE tasks SET g_task_id=NULL, g_task_list_id=NULL WHERE id=$1", task_id)
+                await conn.execute("UPDATE tasks SET g_task_id=NULL, g_task_list_id=NULL, g_task_hash=NULL, g_task_synced_at=NULL WHERE id=$1", task_id)
 
         async def _forget_list_mapping(name: str) -> None:
             async with db_pool.acquire() as conn:
                 await conn.execute("DELETE FROM g_tasks_lists WHERE name=$1", name)
 
-        async def _create_task_with_list_retry(list_name: str, list_id: str, title: str, notes: str, due_utc) -> str | None:
+        async def _create_task_with_list_retry(list_name: str, list_id: str, title: str, notes: str, due_utc, fp: str) -> str | None:
             cur_list_id = list_id
             for attempt in range(2):
                 try:
@@ -358,10 +389,11 @@ async def cb_task(
                     if gtid:
                         async with db_pool.acquire() as conn:
                             await conn.execute(
-                                "UPDATE tasks SET g_task_id=$2, g_task_list_id=$3 WHERE id=$1",
+                                "UPDATE tasks SET g_task_id=$2, g_task_list_id=$3, g_task_hash=$4, g_task_synced_at=NOW() WHERE id=$1",
                                 task_id,
                                 str(gtid),
                                 str(cur_list_id),
+                                str(fp),
                             )
                         return str(gtid)
                     return None
@@ -378,7 +410,7 @@ async def cb_task(
             async with db_pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT t.id, t.title, t.deadline, t.status, t.g_task_id, t.g_task_list_id,
+                    SELECT t.id, t.title, t.deadline, t.status, t.g_task_id, t.g_task_list_id, t.g_task_hash,
                            p.code AS project_code,
                            COALESCE(tm.name,'—') AS assignee
                     FROM tasks t
@@ -391,6 +423,14 @@ async def cb_task(
             if not row:
                 await callback.answer("❌ Задача не найдена", show_alert=True)
                 return
+
+            fp = _gtasks_fingerprint(
+                project_code=str(row.get("project_code") or ""),
+                title=str(row.get("title") or ""),
+                assignee=str(row.get("assignee") or ""),
+                status=str(row.get("status") or ""),
+                deadline=row.get("deadline"),
+            )
 
             list_name = (row["project_code"] or "").strip() or os.getenv("GTASKS_WORK_FALLBACK_LIST", "Работа")
             list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
@@ -406,12 +446,14 @@ async def cb_task(
             if row["g_task_id"] and row["g_task_list_id"]:
                 try:
                     await gtasks.patch_task(str(row["g_task_list_id"]), str(row["g_task_id"]), title=title, notes=notes, due=due_utc)
+                    async with db_pool.acquire() as conn:
+                        await conn.execute("UPDATE tasks SET g_task_hash=$2, g_task_synced_at=NOW() WHERE id=$1", task_id, fp)
                     await callback.answer("✅ Google Tasks: обновлено")
                 except Exception as e:
                     # Common case: task was deleted manually from Google Tasks.
                     if _is_not_found(e):
                         await _clear_task_mapping()
-                        gtid = await _create_task_with_list_retry(list_name, list_id, title, notes, due_utc)
+                        gtid = await _create_task_with_list_retry(list_name, list_id, title, notes, due_utc, fp)
                         if gtid:
                             await callback.answer("✅ Google Tasks: отправлено заново")
                         else:
@@ -419,7 +461,7 @@ async def cb_task(
                     else:
                         raise
             else:
-                gtid = await _create_task_with_list_retry(list_name, list_id, title, notes, due_utc)
+                gtid = await _create_task_with_list_retry(list_name, list_id, title, notes, due_utc, fp)
                 if gtid:
                     await callback.answer("✅ Google Tasks: отправлено")
                 else:

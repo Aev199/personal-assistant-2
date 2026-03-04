@@ -206,6 +206,8 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
     try:
         await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS g_task_id TEXT")
         await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS g_task_list_id TEXT")
+        await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS g_task_hash TEXT")
+        await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS g_task_synced_at TIMESTAMPTZ")
     except Exception:
         pass
 

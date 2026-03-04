@@ -435,9 +435,23 @@ async def cb_task(
             list_name = (row["project_code"] or "").strip() or os.getenv("GTASKS_WORK_FALLBACK_LIST", "Работа")
             list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
 
-            title = f"[{row['project_code']}] #{task_id} {row['title']}" if row["project_code"] else f"#{task_id} {row['title']}"
+            # Make updates visible in the Google Tasks list view:
+            # include assignee + local deadline in title (can be disabled via env).
             dl = fmt_local(row["deadline"], tz) if row["deadline"] else "—"
-            notes = f"Проект: {row['project_code']}\nИсполнитель: {row['assignee']}\nДедлайн: {dl}\nID: {task_id}"
+            assignee = str(row.get("assignee") or "—")
+
+            show_meta = (os.getenv("GTASKS_TITLE_META", "1").strip() not in {"0", "false", "False"})
+            meta_parts: list[str] = []
+            if show_meta:
+                if assignee and assignee != "—":
+                    meta_parts.append(assignee)
+                if dl and dl != "—":
+                    meta_parts.append(dl)
+            meta = f" • {' • '.join(meta_parts)}" if meta_parts else ""
+
+            base = f"[{row['project_code']}] #{task_id} {row['title']}" if row["project_code"] else f"#{task_id} {row['title']}"
+            title = f"{base}{meta}"
+            notes = f"Проект: {row['project_code']}\nИсполнитель: {assignee}\nДедлайн: {dl}\nID: {task_id}"
 
             due_utc = None
             if row["deadline"]:
@@ -445,7 +459,35 @@ async def cb_task(
 
             if row["g_task_id"] and row["g_task_list_id"]:
                 try:
-                    await gtasks.patch_task(str(row["g_task_list_id"]), str(row["g_task_id"]), title=title, notes=notes, due=due_utc)
+                    list_id_existing = str(row["g_task_list_id"])
+                    task_id_existing = str(row["g_task_id"])
+
+                    # 1) Try PATCH
+                    await gtasks.patch_task(list_id_existing, task_id_existing, title=title, notes=notes, due=due_utc)
+
+                    # 2) Verify (some tenants/UIs are flaky with PATCH)
+                    try:
+                        got = await gtasks.get_task(list_id_existing, task_id_existing)
+                        exp_due = gtasks._fmt_due(due_utc) if due_utc else None
+                        got_due = got.get("due")
+                        if (got.get("title") != title) or (got.get("notes") != notes) or (exp_due and got_due != exp_due):
+                            body = {
+                                "kind": got.get("kind") or "tasks#task",
+                                "id": got.get("id") or task_id_existing,
+                                "title": title,
+                                "notes": notes,
+                                "status": got.get("status") or "needsAction",
+                            }
+                            if exp_due:
+                                body["due"] = exp_due
+                            # Preserve completion timestamp if present
+                            if got.get("completed"):
+                                body["completed"] = got.get("completed")
+                            await gtasks.update_task(list_id_existing, task_id_existing, body)
+                    except Exception:
+                        # Verification is best-effort; do not fail the UX.
+                        pass
+
                     async with db_pool.acquire() as conn:
                         await conn.execute("UPDATE tasks SET g_task_hash=$2, g_task_synced_at=NOW() WHERE id=$1", task_id, fp)
                     await callback.answer("✅ Google Tasks: обновлено")

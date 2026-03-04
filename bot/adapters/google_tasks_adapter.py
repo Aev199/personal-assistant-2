@@ -135,11 +135,18 @@ class GoogleTasksAdapter:
         if notes:
             body["notes"] = notes
         if due:
-            # RFC3339
-            if due.tzinfo is None:
-                due = due.replace(tzinfo=timezone.utc)
-            body["due"] = due.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            body["due"] = self._fmt_due(due)
         return await self._request("POST", f"/lists/{list_id}/tasks", json=body)
+
+    async def get_task(self, list_id: str, task_id: str) -> dict:
+        return await self._request("GET", f"/lists/{list_id}/tasks/{task_id}")
+
+    async def update_task(self, list_id: str, task_id: str, body: dict) -> dict:
+        """Full update via PUT.
+
+        Some clients/tenants appear to be flaky with PATCH; PUT tends to be reliable.
+        """
+        return await self._request("PUT", f"/lists/{list_id}/tasks/{task_id}", json=body)
 
     async def patch_task(self, list_id: str, task_id: str, *, title: str | None = None, notes: str | None = None, due: datetime | None = None, completed: bool | None = None) -> dict:
         body: dict[str, Any] = {}
@@ -148,9 +155,7 @@ class GoogleTasksAdapter:
         if notes is not None:
             body["notes"] = notes
         if due is not None:
-            if due.tzinfo is None:
-                due = due.replace(tzinfo=timezone.utc)
-            body["due"] = due.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            body["due"] = self._fmt_due(due)
         if completed is not None:
             if completed:
                 body["status"] = "completed"
@@ -161,3 +166,10 @@ class GoogleTasksAdapter:
 
         # Tasks API doesn't support PATCH everywhere reliably; use PUT with partial? We'll use PATCH endpoint.
         return await self._request("PATCH", f"/lists/{list_id}/tasks/{task_id}", json=body)
+
+    @staticmethod
+    def _fmt_due(due: datetime) -> str:
+        """Format datetime as RFC3339 UTC (Z) for Google Tasks."""
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        return due.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

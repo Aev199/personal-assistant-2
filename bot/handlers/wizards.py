@@ -210,7 +210,7 @@ async def cb_add_task_start(callback: CallbackQuery, state: FSMContext, db_pool:
     if forced_project_id:
         await state.update_data(project_id=int(forced_project_id))
         await state.set_state(AddTaskWizard.choosing_assignee)
-        return await show_assignee_picker(callback.message, db_pool)
+        return await show_assignee_picker(callback.message, db_pool, deps)
 
     kb_rows: list[list[InlineKeyboardButton]] = []
     if current_id:
@@ -279,7 +279,7 @@ async def cb_add_set_project(callback: CallbackQuery, state: FSMContext, db_pool
     await state.update_data(project_id=project_id)
 
     await state.set_state(AddTaskWizard.choosing_assignee)
-    return await show_assignee_picker(callback.message, db_pool)
+    return await show_assignee_picker(callback.message, db_pool, deps)
 
 
 async def show_assignee_picker(msg: Message, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -579,7 +579,7 @@ async def cb_add_subtask(callback: CallbackQuery, state: FSMContext, db_pool: as
         wizard_msg_id=int(callback.message.message_id),
     )
     await state.set_state(AddTaskWizard.choosing_assignee)
-    return await show_assignee_picker(callback.message, db_pool)
+    return await show_assignee_picker(callback.message, db_pool, deps)
 
 
 # ---------------------------------------------------------------------------

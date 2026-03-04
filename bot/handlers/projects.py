@@ -307,6 +307,8 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     }
                     await ui_set_state(conn, int(callback.message.chat.id), ui_screen="project_archived", ui_payload=payload)
 
+                    vault = deps.vault
+
                     fire_and_forget(
                         background_project_sync(project_id, db_pool, vault, error_logger=deps.db_log_error),
                         label=f"sync:archive:{code}",

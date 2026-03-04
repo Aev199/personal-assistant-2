@@ -150,7 +150,7 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
         if action == "start":
             page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
             bulk_sessions[chat_id] = {"selected": set(), "page": page}
-            return await _render_bulk(callback.message, db_pool, chat_id, page, deps=deps)
+            return await _render_bulk(callback.message, db_pool, chat_id, deps, page=page)
 
         sess = bulk_sessions.get(chat_id) or {"selected": set(), "page": 0}
 
@@ -165,11 +165,11 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                     sel.add(tid)
                 sess["selected"] = sel
                 bulk_sessions[chat_id] = sess
-            return await _render_bulk(callback.message, db_pool, chat_id, page, deps=deps)
+            return await _render_bulk(callback.message, db_pool, chat_id, deps, page=page)
 
         if action == "page":
             page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
-            return await _render_bulk(callback.message, db_pool, chat_id, page, deps=deps)
+            return await _render_bulk(callback.message, db_pool, chat_id, deps, page=page)
 
         if action == "cancel":
             bulk_sessions.pop(chat_id, None)

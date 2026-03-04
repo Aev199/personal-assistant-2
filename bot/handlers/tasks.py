@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 import dateparser
+from bot.utils.datetime import parse_datetime_ru
 from aiogram import Dispatcher, F
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -688,6 +689,9 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
     if not parsed:
         return await message.answer("Не понял дату. Пример: 26.02 14:00 или 26.02.")
 
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_tz_from_deps(deps))
+
     deadline_utc = parsed.astimezone(UTC).replace(tzinfo=None)
     async with db_pool.acquire() as conn:
         info = await conn.fetchrow(
@@ -714,12 +718,7 @@ async def asyncio_to_thread_parse(text: str, tz_name: str) -> datetime | None:
     # Keep the parsing in a thread to avoid blocking the event loop.
     import asyncio
 
-    return await asyncio.to_thread(
-        dateparser.parse,
-        text,
-        languages=["ru"],
-        settings={"TIMEZONE": tz_name, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"},
-    )
+    return await asyncio.to_thread(parse_datetime_ru, text, tz_name, prefer_future=True)
 
 
 def register(dp: Dispatcher) -> None:

@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 import dateparser
+from bot.utils.datetime import parse_datetime_ru
 from aiogram import Dispatcher, F
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -413,12 +414,7 @@ async def msg_add_task_deadline(message: Message, state: FSMContext, db_pool: as
         return
     await try_delete_user_message(message)
     raw = (message.text or "").strip()
-    parsed = await asyncio.to_thread(
-        dateparser.parse,
-        raw,
-        languages=["ru"],
-        settings={"TIMEZONE": deps.tz_name, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"},
-    )
+    parsed = await asyncio.to_thread(parse_datetime_ru, raw, deps.tz_name, prefer_future=True)
     if not parsed:
         return await wizard_render(
             bot=message.bot,
@@ -428,6 +424,8 @@ async def msg_add_task_deadline(message: Message, state: FSMContext, db_pool: as
             text="Не понял дату. Пример: 26.02 14:00",
         )
     tz = _tz_from_deps(deps)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz)
     dl_local = parsed.astimezone(tz)
     await state.update_data(deadline_msk=dl_local.isoformat())
     await state.set_state(AddTaskWizard.confirming)
@@ -705,12 +703,7 @@ async def msg_add_reminder_time(message: Message, state: FSMContext, db_pool: as
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return
     await try_delete_user_message(message)
-    parsed = await asyncio.to_thread(
-        dateparser.parse,
-        message.text,
-        languages=["ru"],
-        settings={"TIMEZONE": deps.tz_name, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"},
-    )
+    parsed = await asyncio.to_thread(parse_datetime_ru, message.text or "", deps.tz_name, prefer_future=True)
     if not parsed:
         return await wizard_render(
             bot=message.bot,
@@ -720,6 +713,9 @@ async def msg_add_reminder_time(message: Message, state: FSMContext, db_pool: as
             text="Не понял дату. Пример: 26.02 14:00 или завтра 9:00.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
         )
+    tz = _tz_from_deps(deps)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz)
     remind_utc = parsed.astimezone(UTC)
     if remind_utc <= datetime.now(UTC):
         return await wizard_render(
@@ -1161,12 +1157,7 @@ async def msg_personal_deadline(message: Message, state: FSMContext, db_pool: as
         return
     await try_delete_user_message(message)
     raw = (message.text or "").strip()
-    parsed = await asyncio.to_thread(
-        dateparser.parse,
-        raw,
-        languages=["ru"],
-        settings={"TIMEZONE": deps.tz_name, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"},
-    )
+    parsed = await asyncio.to_thread(parse_datetime_ru, raw, deps.tz_name, prefer_future=True)
     if not parsed:
         return await wizard_render(
             bot=message.bot,
@@ -1176,7 +1167,10 @@ async def msg_personal_deadline(message: Message, state: FSMContext, db_pool: as
             text="Не понял дату. Пример: 26.02 или 26.02 14:00",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
         )
-    due_local = parsed.astimezone(_tz_from_deps(deps))
+    tz = _tz_from_deps(deps)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz)
+    due_local = parsed.astimezone(tz)
     return await _create_personal_in_gtasks(message, state, db_pool, deps, due_local)
 
 

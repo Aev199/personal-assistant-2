@@ -19,6 +19,51 @@ _quick_rel_re = re.compile(r"\b(сегодня|завтра|послезавтр
 _quick_dur_re = re.compile(r"\b(\d{1,3})\s*(?:мин(?:ут)?|m)\b", re.IGNORECASE)
 
 
+
+def _safe_zone(tz_name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def ensure_tz(dt: datetime, tz_name: str) -> datetime:
+    """Ensure datetime is timezone-aware in tz_name.
+
+    dateparser sometimes returns naive datetime even with RETURN_AS_TIMEZONE_AWARE.
+    On servers running in UTC this produces a stable ±TZ offset bug.
+    """
+    tz = _safe_zone(tz_name)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=tz)
+    try:
+        return dt.astimezone(tz)
+    except Exception:
+        return dt
+
+
+def parse_datetime_ru(text: str, tz_name: str, *, prefer_future: bool = True) -> datetime | None:
+    """Parse RU datetime using dateparser and return tz-aware datetime in tz_name."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = dateparser.parse(
+            raw,
+            languages=["ru"],
+            settings={
+                "TIMEZONE": tz_name,
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "PREFER_DATES_FROM": "future" if prefer_future else "current_period",
+                "DATE_ORDER": "DMY",
+            },
+        )
+    except Exception:
+        return None
+    if not dt:
+        return None
+    return ensure_tz(dt, tz_name)
+
 def quick_parse_datetime_ru(text: str, tz_name: str, *, prefer_future: bool = True) -> datetime | None:
     """Best-effort datetime parser for Quick Add (RU).
 
@@ -73,11 +118,8 @@ def quick_parse_datetime_ru(text: str, tz_name: str, *, prefer_future: bool = Tr
     if not dt:
         return None
 
-    # dateparser may return naive dt depending on settings; normalize to aware if possible.
-    if dt.tzinfo is None:
-        # Keep as naive; caller decides how to store.
-        return dt
-    return dt
+    # dateparser may return naive dt even with RETURN_AS_TIMEZONE_AWARE; normalize to tz-aware.
+    return ensure_tz(dt, tz_name)
 
 
 def quick_parse_duration_min(text: str) -> int | None:

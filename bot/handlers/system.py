@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from bot.tz import resolve_tz_name
 
 import asyncpg
 from bot.deps import AppDeps
@@ -73,7 +74,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
     await state.clear()
     await try_delete_user_message(message)
     await ensure_main_menu(message, db_pool)
-    await ui_render_home(message, db_pool, tz_name=deps.tz_name, force_new=True)
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=True)
 
 
 async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -194,7 +195,7 @@ async def cb_sync_retry(callback: CallbackQuery, state: FSMContext, db_pool: asy
         vault = deps.vault
         if pid and vault:
             fire_and_forget(background_project_sync(int(pid), db_pool, vault), label=f"sync:retry:{pid}")
-        await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name, force_new=False)
+        await ui_render_home(callback.message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
     except Exception as e:
         await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
@@ -210,7 +211,7 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
         if len(parts) >= 4 and parts[3].isdigit():
             page = max(0, int(parts[3]))
         page_size = 8
-        tz_name = deps.tz_name
+        tz_name = resolve_tz_name(deps.tz_name)
 
         async with db_pool.acquire() as conn:
             total = await conn.fetchval(
@@ -293,7 +294,7 @@ async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asy
     await callback.answer()
     await state.clear()
     try:
-        tz_name = deps.tz_name
+        tz_name = resolve_tz_name(deps.tz_name)
         async with db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -465,7 +466,7 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
     await try_delete_user_message(message)
     from bot.ui import ui_render_projects_portfolio
 
-    await ui_render_projects_portfolio(message, db_pool, tz_name=deps.tz_name, force_new=True)
+    await ui_render_projects_portfolio(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=True)
 
 
 async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -476,7 +477,7 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
     await try_delete_user_message(message)
     from bot.ui import ui_render_today
 
-    await ui_render_today(message, db_pool, tz_name=deps.tz_name, force_new=True)
+    await ui_render_today(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=True)
 
 
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -487,7 +488,7 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
     await try_delete_user_message(message)
     from bot.ui import ui_render_overdue
 
-    await ui_render_overdue(message, db_pool, tz_name=deps.tz_name, force_new=True)
+    await ui_render_overdue(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=True)
 
 
 async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -526,7 +527,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
     except Exception:
         pass
 
-    await ui_render_home(message, db_pool, tz_name=deps.tz_name, force_new=False)
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
 
 
 def register(dp: Dispatcher) -> None:

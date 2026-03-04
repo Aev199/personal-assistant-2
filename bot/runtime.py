@@ -23,6 +23,7 @@ from bot.lifecycle import make_on_shutdown, make_on_startup
 from bot.services.error_handler import create_error_handler
 from bot.services.logger import configure_logging, get_logger
 from bot.services.webhook import make_maybe_refresh_webhook
+from bot.tz import resolve_tz_name
 
 
 def _admin_id(cfg_admin_id: int | None = None) -> int:
@@ -69,6 +70,12 @@ def create_app_webhook() -> web.Application:
     if deps is None:
         raise RuntimeError("Deps container not found in dispatcher workflow_data")
 
+    # Normalize timezone: always prefer explicit env vars over defaults.
+    deps.tz_name = resolve_tz_name(deps.tz_name or tz_name)
+
+    # Normalize timezone: always prefer explicit env vars over defaults.
+    deps.tz_name = resolve_tz_name(deps.tz_name or tz_name)
+
     # Attach runtime services to deps
     deps.logger = get_logger("bot")
     deps.error_notify_user = bool(cfg.error_handler.notify_user)
@@ -97,6 +104,7 @@ def create_app_webhook() -> web.Application:
         webhook_url=webhook_url,
         admin_id=admin_id,
         tz_name=tz_name,
+        deps_tz_name=getattr(deps, "tz_name", None),
     )
 
     webhook_refresh_every_sec = int(os.getenv("WEBHOOK_REFRESH_EVERY_SEC", "300"))

@@ -11,6 +11,8 @@ import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from bot.tz import resolve_tz_name
+
 import asyncpg
 import dateparser
 from bot.utils.datetime import parse_datetime_ru
@@ -36,8 +38,14 @@ UTC = ZoneInfo("UTC")
 
 
 def _tz_from_deps(deps: AppDeps) -> ZoneInfo:
+    """Resolve app timezone.
+
+    Always prefer explicit env vars (BOT_TIMEZONE/APP_TIMEZONE/BOT_TZ),
+    then fall back to deps.tz_name.
+    """
+    name = resolve_tz_name((deps.tz_name or "Europe/Moscow"))
     try:
-        return ZoneInfo(deps.tz_name or "Europe/Moscow")
+        return ZoneInfo(name)
     except Exception:
         return ZoneInfo("Europe/Moscow")
 

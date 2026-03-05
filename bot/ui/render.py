@@ -8,6 +8,7 @@ a new message and stores its id.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import asyncpg
 from aiogram import Bot
@@ -18,34 +19,7 @@ from aiogram.types import InlineKeyboardMarkup, Message
 from bot.ui.state import ui_get_state, ui_set_state
 from bot.utils.telegram import fit_telegram_text
 
-
-async def ui_adopt_message(
-    *,
-    bot: Bot,
-    db_pool: asyncpg.Pool,
-    chat_id: int,
-    message_id: int,
-    delete_old: bool = True,
-) -> None:
-    """Adopt `message_id` as the SPA UI message for the chat.
-
-    If requested, best-effort delete the previously stored UI message to keep chat clean.
-    Screen/payload are left intact.
-    """
-    chat_id = int(chat_id)
-    message_id = int(message_id)
-    async with db_pool.acquire() as conn:
-        state = await ui_get_state(conn, chat_id)
-        old_id = state.get("ui_message_id")
-
-    if delete_old and old_id and int(old_id) != int(message_id):
-        try:
-            await bot.delete_message(chat_id=chat_id, message_id=int(old_id))
-        except Exception:
-            pass
-
-    async with db_pool.acquire() as conn:
-        await ui_set_state(conn, chat_id, ui_message_id=message_id)
+logger = logging.getLogger(__name__)
 
 
 def _is_editable_fallback(msg: Message | None) -> bool:
@@ -59,6 +33,7 @@ def _is_editable_fallback(msg: Message | None) -> bool:
 
 def _pick_edit_targets(
     old_ui_id: int | None,
+    preferred_message_id: int | None,
     fallback_is_editable: bool,
     fallback_id: int | None,
     force_new: bool,
@@ -67,10 +42,12 @@ def _pick_edit_targets(
         return []
 
     targets: list[int] = []
-    if fallback_is_editable and fallback_id:
-        targets.append(int(fallback_id))
+    if preferred_message_id:
+        targets.append(int(preferred_message_id))
     if old_ui_id and int(old_ui_id) not in targets:
         targets.append(int(old_ui_id))
+    if not old_ui_id and fallback_is_editable and fallback_id and int(fallback_id) not in targets:
+        targets.append(int(fallback_id))
     return targets
 
 
@@ -84,6 +61,7 @@ async def ui_render(
     screen: str | None = None,
     payload: dict | None = None,
     fallback_message: Message | None = None,
+    preferred_message_id: int | None = None,
     force_new: bool = False,
     parse_mode: str | None = "HTML",
 ) -> int:
@@ -110,8 +88,10 @@ async def ui_render(
         new_payload = payload
     new_screen = str(screen or existing_screen or "home")
     fallback_id = getattr(fallback_message, "message_id", None)
+    preferred_id = int(preferred_message_id) if preferred_message_id else None
     edit_targets = _pick_edit_targets(
         int(old_ui_msg_id) if old_ui_msg_id else None,
+        preferred_id,
         _is_editable_fallback(fallback_message),
         int(fallback_id) if fallback_id else None,
         force_new,
@@ -127,7 +107,20 @@ async def ui_render(
                 ui_payload=new_payload,
             )
 
-    # Try edit candidate UI messages. Prefer the message the user just interacted with.
+    async def _cleanup_after_success(final_message_id: int) -> None:
+        cleanup_ids: list[int] = []
+        if old_ui_msg_id and int(old_ui_msg_id) != int(final_message_id):
+            cleanup_ids.append(int(old_ui_msg_id))
+        if preferred_id and int(preferred_id) != int(final_message_id):
+            if not old_ui_msg_id or int(preferred_id) != int(old_ui_msg_id):
+                cleanup_ids.append(int(preferred_id))
+        for message_id in cleanup_ids:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=int(message_id))
+            except Exception:
+                pass
+
+    # Try edit candidate UI messages.
     for ui_msg_id in edit_targets:
         for _ in range(3):
             try:
@@ -140,11 +133,7 @@ async def ui_render(
                     disable_web_page_preview=True,
                 )
                 await _persist(ui_message_id=int(ui_msg_id))
-                if old_ui_msg_id and int(old_ui_msg_id) != int(ui_msg_id):
-                    try:
-                        await bot.delete_message(chat_id=chat_id, message_id=int(old_ui_msg_id))
-                    except Exception:
-                        pass
+                await _cleanup_after_success(int(ui_msg_id))
                 return int(ui_msg_id)
             except TelegramRetryAfter as e:
                 await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
@@ -152,11 +141,7 @@ async def ui_render(
                 # Treat "not modified" as success but still persist state.
                 if "message is not modified" in str(e).lower():
                     await _persist(ui_message_id=int(ui_msg_id))
-                    if old_ui_msg_id and int(old_ui_msg_id) != int(ui_msg_id):
-                        try:
-                            await bot.delete_message(chat_id=chat_id, message_id=int(old_ui_msg_id))
-                        except Exception:
-                            pass
+                    await _cleanup_after_success(int(ui_msg_id))
                     return int(ui_msg_id)
                 break
             except Exception:
@@ -164,6 +149,7 @@ async def ui_render(
 
     # Send new UI message.
     sent = None
+    send_failed = False
     for _ in range(3):
         try:
             sent = await bot.send_message(
@@ -177,19 +163,20 @@ async def ui_render(
         except TelegramRetryAfter as e:
             await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
         except Exception:
-            return int(old_ui_msg_id or fallback_id or 0)
+            send_failed = True
+            logger.exception("ui_render send failed", extra={"chat_id": int(chat_id)})
+            break
 
     if not sent:
-        return int(old_ui_msg_id or fallback_id or 0)
-
-    # Best-effort delete old UI message to keep chat clean.
-    if old_ui_msg_id and int(old_ui_msg_id) != int(sent.message_id):
-        try:
-            await bot.delete_message(chat_id=chat_id, message_id=int(old_ui_msg_id))
-        except Exception:
-            pass
+        if not send_failed:
+            logger.exception(
+                "ui_render send did not produce a message",
+                extra={"chat_id": int(chat_id)},
+            )
+        return 0
 
     await _persist(ui_message_id=int(sent.message_id))
+    await _cleanup_after_success(int(sent.message_id))
     return int(sent.message_id)
 
 
@@ -204,6 +191,8 @@ async def ui_wizard_render(
     reply_markup=None,
     parse_mode: str | None = None,
 ) -> int:
+    data = await state.get_data()
+    preferred_message_id = data.get("wizard_msg_id")
     message_id = await ui_render(
         bot=bot,
         db_pool=db_pool,
@@ -213,6 +202,7 @@ async def ui_wizard_render(
         screen=None,
         payload=None,
         fallback_message=fallback_msg,
+        preferred_message_id=int(preferred_message_id) if preferred_message_id else None,
         force_new=False,
         parse_mode=parse_mode,
     )

@@ -86,6 +86,32 @@ def _now_ts() -> int:
     return int(time.time())
 
 
+def ui_payload_with_toast(payload: dict, text: str, ttl_sec: int = 25) -> dict:
+    p = dict(payload or {})
+    p["toast"] = {
+        "text": str(text or "").strip(),
+        "exp": _now_ts() + max(1, int(ttl_sec or 25)),
+    }
+    return p
+
+
+def ui_payload_take_toast(payload: dict) -> tuple[str | None, dict]:
+    p = dict(payload or {})
+    toast = p.get("toast")
+    if not isinstance(toast, dict):
+        p.pop("toast", None)
+        return None, p
+
+    exp = int(toast.get("exp") or 0)
+    text = str(toast.get("text") or "").strip()
+    p.pop("toast", None)
+    if exp and exp < _now_ts():
+        return None, p
+    if not text:
+        return None, p
+    return text, p
+
+
 def _undo_active(payload: dict, *, task_id: int | None = None) -> dict | None:
     undo = (payload or {}).get("undo")
     if not isinstance(undo, dict):

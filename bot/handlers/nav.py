@@ -8,69 +8,28 @@ from __future__ import annotations
 
 import asyncpg
 from aiogram import Dispatcher, F
-from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery
 
 from bot.deps import AppDeps
-
-from bot.ui.screens import (
-    ui_render_home,
-    ui_render_stats,
-    ui_render_help,
-    ui_render_add_menu,
-    ui_render_projects_portfolio,
-    ui_render_all_tasks,
-    ui_render_today,
-    ui_render_overdue,
-    ui_render_work,
-    ui_render_inbox,
-    ui_render_team,
+from bot.handlers.common import (
+    cleanup_stale_wizard_message,
+    get_wizard_message_data,
+    split_wizard_message_target,
 )
-
-from bot.ui.render import ui_adopt_message
-
-
-async def _cleanup_wizard_message(callback: CallbackQuery, state: FSMContext) -> None:
-    """Best-effort cleanup for wizard "screen" message.
-
-    Many flows render a wizard screen as a separate message tracked in FSM data
-    (wizard_msg_id). When the user leaves the flow via top-level navigation,
-    we should remove that wizard message to keep chat clean.
-
-    If the user pressed navigation on the wizard message itself, we keep it
-    (it will be edited by the SPA renderer).
-    """
-
-    try:
-        data = await state.get_data()
-        wiz_chat_id = data.get("wizard_chat_id")
-        wiz_msg_id = data.get("wizard_msg_id")
-        if not wiz_chat_id or not wiz_msg_id:
-            return
-
-        current_msg_id = getattr(callback.message, "message_id", None)
-        if current_msg_id and int(wiz_msg_id) == int(current_msg_id):
-            return
-
-        await callback.bot.delete_message(chat_id=int(wiz_chat_id), message_id=int(wiz_msg_id))
-    except Exception:
-        return
-
-
-async def _adopt_callback_message_as_ui(callback: CallbackQuery, db_pool: asyncpg.Pool) -> None:
-    """Make the message with the pressed inline button the current SPA UI message.
-
-    Some flows send a separate message (task cards, wizards, bulk actions, etc.).
-    If the user presses a top-level navigation button (e.g. "⬅️ Домой") on that
-    message, we want to update *that same message* instead of editing an older
-    stored UI message (which would leave the current one behind).
-    """
-    msg = callback.message
-    if not msg:
-        return
-    chat_id = int(msg.chat.id)
-    msg_id = int(msg.message_id)
-    await ui_adopt_message(bot=callback.bot, db_pool=db_pool, chat_id=chat_id, message_id=msg_id, delete_old=True)
+from bot.ui.screens import (
+    ui_render_add_menu,
+    ui_render_all_tasks,
+    ui_render_help,
+    ui_render_home,
+    ui_render_inbox,
+    ui_render_overdue,
+    ui_render_projects_portfolio,
+    ui_render_stats,
+    ui_render_team,
+    ui_render_today,
+    ui_render_work,
+)
 
 
 def _parse_nav_all_callback(data: str | None) -> tuple[str, int]:
@@ -82,8 +41,6 @@ def _parse_nav_all_callback(data: str | None) -> tuple[str, int]:
         parts = (data or "").split(":")
         token = parts[2] if len(parts) >= 3 else ""
         token_page = parts[3] if len(parts) >= 4 else ""
-
-        # Legacy format: nav:all:<page>
         if token.isdigit():
             page = int(token)
         elif token:
@@ -96,155 +53,283 @@ def _parse_nav_all_callback(data: str | None) -> tuple[str, int]:
     return filter_key, max(0, page)
 
 
+async def _callback_wizard_context(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> tuple[int | None, int | None, int | None]:
+    wizard_chat_id, wizard_msg_id = await get_wizard_message_data(
+        state,
+        fallback_chat_id=int(callback.message.chat.id),
+    )
+    preferred_message_id, stale_wizard_msg_id = split_wizard_message_target(
+        wizard_msg_id,
+        current_message_id=getattr(callback.message, "message_id", None),
+    )
+    return wizard_chat_id, preferred_message_id, stale_wizard_msg_id
+
 
 async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name)
-
+    final_id = await ui_render_home(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_stats(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_stats(callback.message, db_pool, tz_name=deps.tz_name)
+    final_id = await ui_render_stats(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_close_inline(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name)
+    final_id = await ui_render_home(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_projects(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_projects_portfolio(callback.message, db_pool, tz_name=deps.tz_name)
+    final_id = await ui_render_projects_portfolio(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_all(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Р СњР ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р С•", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
     filter_key, page = _parse_nav_all_callback(callback.data)
-    await ui_render_all_tasks(
+    final_id = await ui_render_all_tasks(
         callback.message,
         db_pool,
         tz_name=deps.tz_name,
         page=page,
         filter_key=filter_key,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
     )
 
 
 async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_today(callback.message, db_pool, tz_name=deps.tz_name)
+    final_id = await ui_render_today(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_overdue(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
     page = 0
     try:
-        parts = (callback.data or '').split(':')
+        parts = (callback.data or "").split(":")
         if len(parts) >= 3 and parts[2].isdigit():
             page = int(parts[2])
     except Exception:
         page = 0
-    await ui_render_overdue(callback.message, db_pool, tz_name=deps.tz_name, page=page)
-
+    final_id = await ui_render_overdue(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        page=page,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_work(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
     page = 0
     try:
-        parts = (callback.data or '').split(':')
+        parts = (callback.data or "").split(":")
         if len(parts) >= 3 and parts[2].isdigit():
             page = int(parts[2])
     except Exception:
         page = 0
-    await ui_render_work(callback.message, db_pool, tz_name=deps.tz_name, page=page)
+    final_id = await ui_render_work(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        page=page,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_inbox(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
     page = 0
     try:
-        parts = (callback.data or '').split(':')
+        parts = (callback.data or "").split(":")
         if len(parts) >= 3 and parts[2].isdigit():
             page = int(parts[2])
     except Exception:
         page = 0
-    await ui_render_inbox(callback.message, db_pool, tz_name=deps.tz_name, page=page)
+    final_id = await ui_render_inbox(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        page=page,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_add(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_add_menu(callback.message, db_pool)
+    final_id = await ui_render_add_menu(
+        callback.message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_help(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_help(callback.message, db_pool)
+    final_id = await ui_render_help(
+        callback.message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_team(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
-    await _cleanup_wizard_message(callback, state)
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    await _adopt_callback_message_as_ui(callback, db_pool)
-    await ui_render_team(callback.message, db_pool)
+    final_id = await ui_render_team(
+        callback.message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 def register(dp: Dispatcher) -> None:

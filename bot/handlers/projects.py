@@ -25,7 +25,7 @@ from bot.deps import AppDeps
 
 from bot.ui import ui_render, ui_render_projects_portfolio
 from bot.ui.render import ui_safe_edit as safe_edit
-from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _now_ts
+from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_with_toast
 from bot.ui.task_tree import render_task_tree
 from bot.utils import h, fmt_task_line_html, try_delete_user_message
 from bot.keyboards import back_home_kb
@@ -164,17 +164,11 @@ async def msg_proj_add_data(message: Message, state: FSMContext, db_pool: asyncp
 
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
-            payload["toast"] = {
-                "text": (
-                    f"✅ Проект <b>{h(code)}</b> "
-                    + ("создан и " if created else "")
-                    + f"связан с файлом <b>{h(name)}</b>.md"
-                ),
-                "exp": int(time.time()) + 20,
-            }
-            await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
-
-        vault = deps.vault
+            payload = ui_payload_with_toast(
+                payload,
+                f"✅ Проект <b>{h(code)}</b> " + ("создан и " if created else "") + f"связан с файлом <b>{h(name)}</b>.md",
+                ttl_sec=20,
+            )
 
         # Trigger sync
         fire_and_forget(
@@ -308,10 +302,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
 
                     ui_state = await ui_get_state(conn, int(callback.message.chat.id))
                     payload = _ui_payload_get(ui_state)
-                    payload["toast"] = {
-                        "text": f"📦 Проект <b>{h(code)}</b> отправлен в архив",
-                        "exp": _now_ts() + 25,
-                    }
+                    payload = ui_payload_with_toast(payload, f"📦 Проект <b>{h(code)}</b> отправлен в архив", ttl_sec=25)
                     await ui_set_state(conn, int(callback.message.chat.id), ui_screen="project_archived", ui_payload=payload)
 
                     vault = deps.vault

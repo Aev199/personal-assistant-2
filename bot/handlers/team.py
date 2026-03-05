@@ -21,11 +21,16 @@ from bot.deps import AppDeps
 
 from bot.db import db_log_error
 from bot.fsm import AddTeamWizard
-from bot.handlers.common import escape_hatch_menu_or_command
+from bot.handlers.common import (
+    cleanup_stale_wizard_message,
+    escape_hatch_menu_or_command,
+    get_wizard_message_data,
+    split_wizard_message_target,
+)
 from bot.ui import ui_render
-from bot.ui.render import ui_adopt_message, ui_safe_edit as safe_edit, ui_safe_wizard_render as wizard_render
+from bot.ui.render import ui_safe_edit as safe_edit, ui_safe_wizard_render as wizard_render
 from bot.ui.screens import ui_render_team
-from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _now_ts
+from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_with_toast
 from bot.utils import canon, h, kb_columns, try_delete_user_message
 from bot.keyboards import back_home_kb
 
@@ -45,24 +50,28 @@ def to_utc(dt: datetime | None) -> datetime | None:
 async def cmd_team_load(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    # If coming from a wizard, adopt its message as the SPA screen to keep "one screen".
-    try:
-        data = await state.get_data()
-        wiz_chat_id = int(data.get("wizard_chat_id") or message.chat.id)
-        wiz_msg_id = data.get("wizard_msg_id")
-        if wiz_msg_id:
-            await ui_adopt_message(
-                bot=message.bot,
-                db_pool=db_pool,
-                chat_id=wiz_chat_id,
-                message_id=int(wiz_msg_id),
-                delete_old=True,
-            )
-    except Exception:
-        pass
+    wizard_chat_id, wizard_msg_id = await get_wizard_message_data(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
+    preferred_message_id, stale_wizard_msg_id = split_wizard_message_target(
+        wizard_msg_id,
+        prefer_wizard=True,
+    )
     await state.clear()
     await try_delete_user_message(message)
-    await ui_render_team(message, db_pool, force_new=False)
+    final_id = await ui_render_team(
+        message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_team_add(callback: CallbackQuery, state: FSMContext, deps: AppDeps) -> None:
@@ -136,7 +145,7 @@ async def msg_team_add(message: Message, state: FSMContext, db_pool: asyncpg.Poo
 
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
-            payload["toast"] = {"text": f"✅ Сотрудник <b>{h(name)}</b> добавлен", "exp": _now_ts() + 20}
+            payload = ui_payload_with_toast(payload, f"✅ Сотрудник <b>{h(name)}</b> добавлен", ttl_sec=20)
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
 
         await state.clear()

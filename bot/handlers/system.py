@@ -20,6 +20,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.db.projects import ensure_inbox_project_id
 from bot.db.user_settings import get_current_project_id
+from bot.handlers.common import (
+    cleanup_stale_wizard_message,
+    get_wizard_message_data,
+    split_wizard_message_target,
+)
 from bot.services.background import fire_and_forget
 from bot.services.vault_sync import background_project_sync
 from bot.ui import (
@@ -31,9 +36,9 @@ from bot.ui import (
     ui_get_state,
     ui_set_state,
 )
-from bot.ui.state import _ui_payload_get, _now_ts
+from bot.ui.state import _ui_payload_get, ui_payload_with_toast
 from bot.utils import canon, fmt_msk, h, try_delete_user_message, fmt_task_line_html
-from bot.ui.render import ui_adopt_message, ui_safe_edit as safe_edit
+from bot.ui.render import ui_safe_edit as safe_edit
 
 
 UTC = ZoneInfo("UTC")
@@ -51,57 +56,71 @@ def _to_local(dt_utc_naive, tz_name: str):
 from bot.keyboards import back_home_kb, main_menu_kb
 
 
-async def _adopt_wizard_message_from_state(
-    bot,
+async def _reply_wizard_context(
     state: FSMContext,
-    db_pool: asyncpg.Pool | None,
     *,
-    fallback_chat_id: int | None = None,
-) -> None:
-    """Make wizard prompt message (if any) the current SPA UI message.
-
-    Used to enforce the "one screen" rule: when leaving a wizard via bottom menu
-    or a command, we update the wizard message in-place instead of editing an
-    older stored UI message.
-    """
-    if db_pool is None:
-        return
-    try:
-        data = await state.get_data()
-        wiz_chat_id = int(data.get("wizard_chat_id") or (fallback_chat_id or 0))
-        wiz_msg_id = data.get("wizard_msg_id")
-        if not wiz_chat_id or not wiz_msg_id:
-            return
-        await ui_adopt_message(
-            bot=bot,
-            db_pool=db_pool,
-            chat_id=wiz_chat_id,
-            message_id=int(wiz_msg_id),
-            delete_old=True,
-        )
-    except Exception:
-        return
+    fallback_chat_id: int,
+) -> tuple[int | None, int | None, int | None]:
+    wizard_chat_id, wizard_msg_id = await get_wizard_message_data(
+        state,
+        fallback_chat_id=fallback_chat_id,
+    )
+    preferred_message_id, stale_wizard_msg_id = split_wizard_message_target(
+        wizard_msg_id,
+        prefer_wizard=True,
+    )
+    return wizard_chat_id, preferred_message_id, stale_wizard_msg_id
 
 
 
 async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
     await state.clear()
     await try_delete_user_message(message)
     await ensure_main_menu(message, db_pool)
-    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    final_id = await ui_render_home(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
     await state.clear()
     await try_delete_user_message(message)
     await ensure_main_menu(message, db_pool)
-    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    final_id = await ui_render_home(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cmd_tz(message: Message, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -167,13 +186,32 @@ async def cmd_tz(message: Message, deps: AppDeps, db_pool: asyncpg.Pool | None =
 async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id = None
+    preferred_message_id = None
+    stale_wizard_msg_id = None
+    if db_pool is not None:
+        wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+            state,
+            fallback_chat_id=int(message.chat.id),
+        )
     await state.clear()
 
     if db_pool is not None:
         await try_delete_user_message(message)
         await ensure_main_menu(message, db_pool)
-        return await ui_render_help(message, db_pool, force_new=False)
+        final_id = await ui_render_help(
+            message,
+            db_pool,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+        await cleanup_stale_wizard_message(
+            message.bot,
+            chat_id=wizard_chat_id,
+            stale_message_id=stale_wizard_msg_id,
+            final_message_id=final_id,
+        )
+        return
 
     help_text = (
         "🛠 Доступно (основной режим — кнопки внизу):\n\n"
@@ -186,19 +224,47 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
 async def cmd_add_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
     await state.clear()
     await try_delete_user_message(message)
-    await ui_render_add_menu(message, db_pool, force_new=False)
+    final_id = await ui_render_add_menu(
+        message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cmd_help_button_router(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
     await state.clear()
     await try_delete_user_message(message)
-    await ui_render_help(message, db_pool, force_new=False)
+    final_id = await ui_render_help(
+        message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_sync_status(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -267,7 +333,7 @@ async def cb_sync_retry(callback: CallbackQuery, state: FSMContext, db_pool: asy
 
             ui_state = await ui_get_state(conn, chat_id)
             payload = _ui_payload_get(ui_state)
-            payload["toast"] = {"text": "🔄 Запустил синхронизацию…", "exp": _now_ts() + 20}
+            payload = ui_payload_with_toast(payload, "🔄 Запустил синхронизацию…", ttl_sec=20)
             await ui_set_state(conn, chat_id, ui_payload=payload)
 
         vault = deps.vault
@@ -557,34 +623,79 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
 async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
     await state.clear()
     await try_delete_user_message(message)
     from bot.ui import ui_render_projects_portfolio
 
-    await ui_render_projects_portfolio(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    final_id = await ui_render_projects_portfolio(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
     await state.clear()
     await try_delete_user_message(message)
     from bot.ui import ui_render_today
 
-    await ui_render_today(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    final_id = await ui_render_today(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    await _adopt_wizard_message_from_state(message.bot, state, db_pool, fallback_chat_id=int(message.chat.id))
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
     await state.clear()
     await try_delete_user_message(message)
     from bot.ui import ui_render_overdue
 
-    await ui_render_overdue(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    final_id = await ui_render_overdue(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -618,7 +729,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
         async with db_pool.acquire() as conn:
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
-            payload["toast"] = {"text": toast, "exp": _now_ts() + 25}
+            payload = ui_payload_with_toast(payload, toast, ttl_sec=25)
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
     except Exception:
         pass

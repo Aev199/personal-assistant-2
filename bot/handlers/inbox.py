@@ -17,13 +17,9 @@ from aiogram.fsm.context import FSMContext
 from bot.deps import AppDeps
 from bot.ui.screens import ui_render_home, ui_render_inbox
 from bot.ui.state import ui_get_state, ui_set_state
-from bot.ui.state import _ui_payload_get, _now_ts
+from bot.ui.state import _ui_payload_get, ui_payload_with_toast
 
 from bot.handlers.tasks import show_task_card
-
-
-def _utc_now_ts() -> int:
-    return _now_ts()
 
 
 async def cb_inbox_triage_start(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -42,7 +38,7 @@ async def cb_inbox_triage_start(callback: CallbackQuery, state: FSMContext, db_p
 
         inbox_id = await conn.fetchval("SELECT id FROM projects WHERE code='INBOX' LIMIT 1")
         if not inbox_id:
-            payload["toast"] = {"text": "❌ Проект INBOX не найден", "exp": _utc_now_ts() + 20}
+            payload = ui_payload_with_toast(payload, "❌ Проект INBOX не найден", ttl_sec=20)
             await ui_set_state(conn, chat_id, ui_message_id=int(callback.message.message_id), ui_payload=payload)
             return await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name)
 
@@ -52,7 +48,7 @@ async def cb_inbox_triage_start(callback: CallbackQuery, state: FSMContext, db_p
         )
         total = int(total or 0)
         if total <= 0:
-            payload["toast"] = {"text": "🎉 Inbox пуст", "exp": _utc_now_ts() + 20}
+            payload = ui_payload_with_toast(payload, "🎉 Inbox пуст", ttl_sec=20)
             await ui_set_state(conn, chat_id, ui_message_id=int(callback.message.message_id), ui_payload=payload)
             return await ui_render_inbox(callback.message, db_pool, tz_name=deps.tz_name, page=0)
 
@@ -67,7 +63,7 @@ async def cb_inbox_triage_start(callback: CallbackQuery, state: FSMContext, db_p
             int(inbox_id),
         )
         if not first:
-            payload["toast"] = {"text": "🎉 Inbox пуст", "exp": _utc_now_ts() + 20}
+            payload = ui_payload_with_toast(payload, "🎉 Inbox пуст", ttl_sec=20)
             await ui_set_state(conn, chat_id, ui_message_id=int(callback.message.message_id), ui_payload=payload)
             return await ui_render_inbox(callback.message, db_pool, tz_name=deps.tz_name, page=0)
 
@@ -109,14 +105,14 @@ async def cb_inbox_triage_next(callback: CallbackQuery, state: FSMContext, db_po
         payload = _ui_payload_get(ui_state)
         triage = payload.get("triage") if isinstance(payload, dict) else None
         if not isinstance(triage, dict) or not triage.get("active"):
-            payload["toast"] = {"text": "ℹ️ Разбор Inbox не активен", "exp": _utc_now_ts() + 15}
+            payload = ui_payload_with_toast(payload, "ℹ️ Разбор Inbox не активен", ttl_sec=15)
             await ui_set_state(conn, chat_id, ui_payload=payload)
             return await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name)
 
         inbox_id = int(triage.get("inbox_id") or 0)
         if inbox_id <= 0:
             payload.pop("triage", None)
-            payload["toast"] = {"text": "❌ Не найден INBOX", "exp": _utc_now_ts() + 20}
+            payload = ui_payload_with_toast(payload, "❌ Не найден INBOX", ttl_sec=20)
             await ui_set_state(conn, chat_id, ui_payload=payload)
             return await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name)
 
@@ -144,7 +140,7 @@ async def cb_inbox_triage_next(callback: CallbackQuery, state: FSMContext, db_po
         if not nxt:
             # Finish triage
             payload.pop("triage", None)
-            payload["toast"] = {"text": "🎉 Inbox разобран", "exp": _utc_now_ts() + 25}
+            payload = ui_payload_with_toast(payload, "🎉 Inbox разобран", ttl_sec=25)
             await ui_set_state(conn, chat_id, ui_payload=payload)
             # Return to where user started triage
             if triage.get("return") == "inbox":

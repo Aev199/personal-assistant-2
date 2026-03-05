@@ -22,11 +22,11 @@ from bot.utils import canon, try_delete_user_message
 
 
 MAIN_MENU_TOKENS = {
-    "СЃРµРіРѕРґРЅСЏ",
-    "РїСЂРѕРµРєС‚С‹",
-    "РїСЂРѕСЃСЂРѕС‡РєРё",
-    "РєРѕРјР°РЅРґР°",
-    "РґРѕР±Р°РІРёС‚СЊ",
+    "сегодня",
+    "проекты",
+    "просрочки",
+    "команда",
+    "добавить",
     "help",
 }
 
@@ -159,28 +159,28 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     await state.clear()
     await try_delete_user_message(message)
 
-    if token == "РїСЂРѕРµРєС‚С‹":
+    if token == "проекты":
         final_id = await ui_render_projects_portfolio(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
             force_new=False,
         )
-    elif token == "СЃРµРіРѕРґРЅСЏ":
+    elif token == "сегодня":
         final_id = await ui_render_today(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
             force_new=False,
         )
-    elif token == "РїСЂРѕСЃСЂРѕС‡РєРё":
+    elif token == "просрочки":
         final_id = await ui_render_overdue(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
             force_new=False,
         )
-    elif token == "РґРѕР±Р°РІРёС‚СЊ":
+    elif token == "добавить":
         final_id = await ui_render_add_menu(
             message,
             db_pool,

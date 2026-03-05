@@ -3,7 +3,7 @@
 from .format import h, fmt_task_line_html, fmt_portfolio_line
 from .text import canon, kb_columns
 from .datetime import quick_parse_datetime_ru, quick_parse_duration_min, fmt_msk
-from .telegram import safe_edit, try_delete_user_message, wizard_render
+from .telegram import try_delete_user_message
 
 __all__ = [
     "h",
@@ -14,7 +14,5 @@ __all__ = [
     "quick_parse_datetime_ru",
     "quick_parse_duration_min",
     "fmt_msk",
-    "safe_edit",
     "try_delete_user_message",
-    "wizard_render",
 ]

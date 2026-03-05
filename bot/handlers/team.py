@@ -23,10 +23,10 @@ from bot.db import db_log_error
 from bot.fsm import AddTeamWizard
 from bot.handlers.common import escape_hatch_menu_or_command
 from bot.ui import ui_render
+from bot.ui.render import ui_adopt_message, ui_safe_edit as safe_edit, ui_safe_wizard_render as wizard_render
 from bot.ui.screens import ui_render_team
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _now_ts
-from bot.ui.render import ui_adopt_message
-from bot.utils import canon, h, kb_columns, safe_edit, try_delete_user_message, wizard_render
+from bot.utils import canon, h, kb_columns, try_delete_user_message
 from bot.keyboards import back_home_kb
 
 

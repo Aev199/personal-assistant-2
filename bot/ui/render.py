@@ -222,3 +222,52 @@ async def ui_wizard_render(
             wizard_msg_id=int(message_id),
         )
     return int(message_id)
+
+
+def _bot_db_pool(bot: Bot) -> asyncpg.Pool:
+    db_pool = getattr(bot, "db_pool", None)
+    if db_pool is None:
+        raise RuntimeError("Bot db_pool is not configured")
+    return db_pool
+
+
+async def ui_safe_edit(
+    msg: Message,
+    text: str,
+    reply_markup=None,
+    *,
+    parse_mode: str | None = None,
+) -> int:
+    return await ui_render(
+        bot=msg.bot,
+        db_pool=_bot_db_pool(msg.bot),
+        chat_id=int(msg.chat.id),
+        text=text,
+        reply_markup=reply_markup,
+        screen=None,
+        payload=None,
+        fallback_message=msg,
+        parse_mode=parse_mode,
+    )
+
+
+async def ui_safe_wizard_render(
+    *,
+    bot: Bot,
+    state: FSMContext,
+    chat_id: int,
+    fallback_msg: Message | None,
+    text: str,
+    reply_markup=None,
+    parse_mode: str | None = None,
+) -> int:
+    return await ui_wizard_render(
+        bot=bot,
+        state=state,
+        db_pool=_bot_db_pool(bot),
+        chat_id=int(chat_id),
+        fallback_msg=fallback_msg,
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode,
+    )

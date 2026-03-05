@@ -18,8 +18,10 @@ from aiogram.fsm.context import FSMContext
 from bot.deps import AppDeps
 
 from bot.db import db_add_event
+from bot.ui import ui_render
+from bot.ui.render import ui_safe_edit as safe_edit
 from bot.ui.screens import ui_render_overdue, to_local
-from bot.utils import h, safe_edit, kb_columns
+from bot.utils import h, kb_columns
 from bot.keyboards import back_home_kb
 
 
@@ -66,6 +68,28 @@ def _short(s: str, n: int = 26) -> str:
     return s if len(s) <= n else (s[: n - 1] + "…")
 
 
+async def _render_bulk_message(
+    msg: Message,
+    db_pool: asyncpg.Pool,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None,
+    page: int,
+    parse_mode: str | None = "HTML",
+) -> None:
+    await ui_render(
+        bot=msg.bot,
+        db_pool=db_pool,
+        chat_id=int(msg.chat.id),
+        text=text,
+        reply_markup=reply_markup,
+        screen="bulk_overdue",
+        payload={"page": int(page)},
+        fallback_message=msg,
+        parse_mode=parse_mode,
+    )
+
+
 async def _render_bulk(msg: Message, db_pool: asyncpg.Pool, chat_id: int, deps: AppDeps, page: int = 0) -> None:
     page = max(0, page)
     page_size = 8
@@ -88,7 +112,7 @@ async def _render_bulk(msg: Message, db_pool: asyncpg.Pool, chat_id: int, deps: 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="⬅ Просрочки", callback_data="nav:overdue:0"), InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]
         )
-        await safe_edit(msg, "\n".join(parts), reply_markup=kb, parse_mode="HTML")
+        await _render_bulk_message(msg, db_pool, "\n".join(parts), reply_markup=kb, page=page, parse_mode="HTML")
         return
 
     # Human-readable list in text, but keep within Telegram limits
@@ -134,7 +158,14 @@ async def _render_bulk(msg: Message, db_pool: asyncpg.Pool, chat_id: int, deps: 
         InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
     ])
 
-    await safe_edit(msg, "\n".join(parts).strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows), parse_mode="HTML")
+    await _render_bulk_message(
+        msg,
+        db_pool,
+        "\n".join(parts).strip(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+        page=page,
+        parse_mode="HTML",
+    )
 
 
 async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -190,7 +221,18 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                     [InlineKeyboardButton(text="❌ Нет", callback_data=f"bulk:start:{int(sess.get('page',0) or 0)}")],
                 ]
             )
-            return await safe_edit(callback.message, text, reply_markup=kb)
+            await ui_render(
+                bot=callback.bot,
+                db_pool=db_pool,
+                chat_id=int(callback.message.chat.id),
+                text=text,
+                reply_markup=kb,
+                screen="bulk_overdue",
+                payload={"page": int(sess.get("page", 0) or 0)},
+                fallback_message=callback.message,
+                parse_mode=None,
+            )
+            return
 
         if action == "confirm":
             act = parts[2] if len(parts) >= 3 else ""

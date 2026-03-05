@@ -31,8 +31,9 @@ from bot.keyboards.event import (
 )
 from bot.services.background import fire_and_forget
 from bot.services.vault_sync import background_project_sync
+from bot.ui.render import ui_safe_edit as safe_edit, ui_safe_wizard_render as wizard_render
 from bot.ui.screens import ui_render_home
-from bot.utils import h, quick_parse_datetime_ru, quick_parse_duration_min, safe_edit, try_delete_user_message, wizard_render
+from bot.utils import h, quick_parse_datetime_ru, quick_parse_duration_min, try_delete_user_message
 
 
 UTC = ZoneInfo("UTC")

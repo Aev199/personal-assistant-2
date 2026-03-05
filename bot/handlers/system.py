@@ -32,8 +32,8 @@ from bot.ui import (
     ui_set_state,
 )
 from bot.ui.state import _ui_payload_get, _now_ts
-from bot.utils import canon, fmt_msk, h, safe_edit, try_delete_user_message, fmt_task_line_html
-from bot.ui.render import ui_adopt_message
+from bot.utils import canon, fmt_msk, h, try_delete_user_message, fmt_task_line_html
+from bot.ui.render import ui_adopt_message, ui_safe_edit as safe_edit
 
 
 UTC = ZoneInfo("UTC")
@@ -358,10 +358,15 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
                 InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
             ]
         )
-        await safe_edit(
-            callback.message,
-            "\n".join(lines).strip(),
+        await ui_render(
+            bot=callback.bot,
+            db_pool=db_pool,
+            chat_id=int(callback.message.chat.id),
+            text="\n".join(lines).strip(),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+            screen="today_pick",
+            payload={"page": page},
+            fallback_message=callback.message,
             parse_mode="HTML",
         )
     except Exception as e:
@@ -401,7 +406,17 @@ async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asy
                 ]
             ]
         )
-        await safe_edit(callback.message, "\n".join(lines), reply_markup=kb)
+        await ui_render(
+            bot=callback.bot,
+            db_pool=db_pool,
+            chat_id=int(callback.message.chat.id),
+            text="\n".join(lines),
+            reply_markup=kb,
+            screen="today_done",
+            payload={},
+            fallback_message=callback.message,
+            parse_mode=None,
+        )
     except Exception as e:
         await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 

@@ -46,15 +46,14 @@ from bot.keyboards import main_menu_kb, back_home_kb
 from bot.services.background import fire_and_forget
 from bot.services.gtasks_service import get_or_create_list_id, due_from_local_date
 from bot.services.vault_sync import background_project_sync, background_log_event
+from bot.ui.render import ui_safe_edit as safe_edit, ui_safe_wizard_render as wizard_render
 from bot.ui.screens import ui_render_home, ui_render_projects_portfolio
 from bot.ui.state import ui_get_state, ui_set_state
 from bot.utils import (
     h,
     kb_columns,
     quick_parse_datetime_ru,
-    safe_edit,
     try_delete_user_message,
-    wizard_render,
 )
 
 
@@ -164,13 +163,30 @@ async def msg_add_super_title(message: Message, state: FSMContext, db_pool: asyn
         return
     title = (message.text or "").strip()
     if not title:
-        return await message.answer("Введите название суперзадачи.")
+        return await wizard_render(
+            bot=message.bot,
+            state=state,
+            chat_id=int(message.chat.id),
+            fallback_msg=None,
+            text="Введите название суперзадачи.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]
+            ),
+        )
 
     data = await state.get_data()
     project_id = data.get("project_id")
     if not project_id:
         await state.clear()
-        return await message.answer("❌ Не удалось определить проект.")
+        return await wizard_render(
+            bot=message.bot,
+            state=state,
+            chat_id=int(message.chat.id),
+            fallback_msg=None,
+            text="❌ Не удалось определить проект.",
+            reply_markup=back_home_kb(),
+            parse_mode="HTML",
+        )
 
     # Keep chat clean: the wizard already owns the SPA message, so we can delete user input.
     await try_delete_user_message(message)

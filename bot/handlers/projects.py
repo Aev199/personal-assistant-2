@@ -24,9 +24,10 @@ from bot.services.vault_sync import background_project_sync
 from bot.deps import AppDeps
 
 from bot.ui import ui_render, ui_render_projects_portfolio
+from bot.ui.render import ui_safe_edit as safe_edit
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _now_ts
 from bot.ui.task_tree import render_task_tree
-from bot.utils import h, fmt_task_line_html, safe_edit, try_delete_user_message
+from bot.utils import h, fmt_task_line_html, try_delete_user_message
 from bot.keyboards import back_home_kb
 
 
@@ -275,13 +276,17 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                         ],
                     ])
-                    await ui_set_state(
-                        conn,
-                        int(callback.message.chat.id),
-                        ui_screen="project_archive_confirm",
-                        ui_payload={"project_id": project_id},
+                    await ui_render(
+                        bot=callback.bot,
+                        db_pool=db_pool,
+                        chat_id=int(callback.message.chat.id),
+                        text=confirm_text,
+                        reply_markup=kb,
+                        screen="project_archive_confirm",
+                        payload={"project_id": project_id},
+                        fallback_message=callback.message,
+                        parse_mode="HTML",
                     )
-                    await safe_edit(callback.message, confirm_text, reply_markup=kb, parse_mode="HTML")
                     return
 
             if action == "archive_do":
@@ -328,7 +333,17 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                         ],
                     ])
-                    await safe_edit(callback.message, done_text, reply_markup=done_kb, parse_mode="HTML")
+                    await ui_render(
+                        bot=callback.bot,
+                        db_pool=db_pool,
+                        chat_id=int(callback.message.chat.id),
+                        text=done_text,
+                        reply_markup=done_kb,
+                        screen="project_archived",
+                        payload=payload,
+                        fallback_message=callback.message,
+                        parse_mode="HTML",
+                    )
                     return
 
             # --- Project tails

@@ -883,14 +883,37 @@ async def ui_render_today(message: Message, db_pool: asyncpg.Pool, *, tz_name: s
 
 
 
-async def ui_render_all_tasks(message: Message, db_pool: asyncpg.Pool, *, tz_name: str | None = None, page: int = 0, force_new: bool = False) -> None:
+async def ui_render_all_tasks(
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    tz_name: str | None = None,
+    page: int = 0,
+    filter_key: str = "all",
+    force_new: bool = False,
+) -> None:
     """Render global active tasks list grouped by project with pagination."""
     tz_name = tz_name or _tz_name()
     tz = resolve_tzinfo(tz_name)
     chat_id = int(message.chat.id)
 
-    page = max(0, int(page or 0))
+    try:
+        page = max(0, int(page or 0))
+    except Exception:
+        page = 0
+
+    valid_filters = {"all", "overdue", "today", "nodate"}
+    filter_key = str(filter_key or "all").strip().lower()
+    if filter_key not in valid_filters:
+        filter_key = "all"
+
     page_size = 30
+    now_utc_naive = datetime.now(UTC).replace(tzinfo=None)
+    now_local = datetime.now(tz)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    start_utc_naive = start_local.astimezone(UTC).replace(tzinfo=None)
+    end_utc_naive = end_local.astimezone(UTC).replace(tzinfo=None)
 
     def _short(s: str, n: int = 30) -> str:
         s = (s or "").strip()
@@ -898,27 +921,120 @@ async def ui_render_all_tasks(message: Message, db_pool: asyncpg.Pool, *, tz_nam
 
     try:
         async with db_pool.acquire() as conn:
-            total = await conn.fetchval(
-                """
-                SELECT COUNT(*)
-                FROM tasks t
-                JOIN projects p ON p.id=t.project_id
-                WHERE t.status != 'done' AND p.status='active'
-                """
-            )
-            rows = await conn.fetch(
-                """
-                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
-                FROM tasks t
-                JOIN projects p ON p.id=t.project_id
-                LEFT JOIN team tm ON tm.id=t.assignee_id
-                WHERE t.status != 'done' AND p.status='active'
-                ORDER BY p.code ASC, t.deadline ASC NULLS LAST, t.id ASC
-                LIMIT $1 OFFSET $2
-                """,
-                page_size,
-                page * page_size,
-            )
+            if filter_key == "overdue":
+                total = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                      AND t.deadline IS NOT NULL
+                      AND t.deadline < $1
+                    """,
+                    now_utc_naive,
+                )
+                rows = await conn.fetch(
+                    """
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    LEFT JOIN team tm ON tm.id=t.assignee_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                      AND t.deadline IS NOT NULL
+                      AND t.deadline < $1
+                    ORDER BY p.code ASC, t.deadline ASC NULLS LAST, t.id ASC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    now_utc_naive,
+                    page_size,
+                    page * page_size,
+                )
+            elif filter_key == "today":
+                total = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                      AND t.deadline IS NOT NULL
+                      AND t.deadline >= $1
+                      AND t.deadline < $2
+                    """,
+                    start_utc_naive,
+                    end_utc_naive,
+                )
+                rows = await conn.fetch(
+                    """
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    LEFT JOIN team tm ON tm.id=t.assignee_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                      AND t.deadline IS NOT NULL
+                      AND t.deadline >= $1
+                      AND t.deadline < $2
+                    ORDER BY p.code ASC, t.deadline ASC NULLS LAST, t.id ASC
+                    LIMIT $3 OFFSET $4
+                    """,
+                    start_utc_naive,
+                    end_utc_naive,
+                    page_size,
+                    page * page_size,
+                )
+            elif filter_key == "nodate":
+                total = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                      AND t.deadline IS NULL
+                    """
+                )
+                rows = await conn.fetch(
+                    """
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    LEFT JOIN team tm ON tm.id=t.assignee_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                      AND t.deadline IS NULL
+                    ORDER BY p.code ASC, t.deadline ASC NULLS LAST, t.id ASC
+                    LIMIT $1 OFFSET $2
+                    """,
+                    page_size,
+                    page * page_size,
+                )
+            else:
+                total = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                    """
+                )
+                rows = await conn.fetch(
+                    """
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    FROM tasks t
+                    JOIN projects p ON p.id=t.project_id
+                    LEFT JOIN team tm ON tm.id=t.assignee_id
+                    WHERE t.status != 'done'
+                      AND p.status='active'
+                    ORDER BY p.code ASC, t.deadline ASC NULLS LAST, t.id ASC
+                    LIMIT $1 OFFSET $2
+                    """,
+                    page_size,
+                    page * page_size,
+                )
     except Exception as e:
         return await ui_render(
             bot=message.bot,
@@ -935,9 +1051,21 @@ async def ui_render_all_tasks(message: Message, db_pool: asyncpg.Pool, *, tz_nam
     total = int(total or 0)
     rows = list(rows or [])
 
-    lines: list[str] = ["📋 <b>Все задачи</b>", f"<i>Всего активных: {total}</i>", ""]
+    filter_titles = {
+        "all": "Все",
+        "overdue": "Просрочено",
+        "today": "Сегодня",
+        "nodate": "Без срока",
+    }
+    filter_title = filter_titles.get(filter_key, "Все")
+
+    lines: list[str] = [
+        "📋 <b>Все задачи</b>",
+        f"<i>Фильтр: {h(filter_title)} · Всего: {total}</i>",
+        "",
+    ]
     if not rows:
-        lines.append("Активных задач нет.")
+        lines.append("По выбранному фильтру задач нет.")
     else:
         current_project: str | None = None
         for r in rows:
@@ -962,6 +1090,15 @@ async def ui_render_all_tasks(message: Message, db_pool: asyncpg.Pool, *, tz_nam
                 lines.append(f"• {h(title_show)} — {h(assignee)}, <i>{h(due_part)}</i>")
 
     kb: list[list[InlineKeyboardButton]] = []
+
+    filter_buttons: list[InlineKeyboardButton] = []
+    filter_order = ("all", "overdue", "today", "nodate")
+    for key in filter_order:
+        title = filter_titles[key]
+        text = f"• {title}" if key == filter_key else title
+        filter_buttons.append(InlineKeyboardButton(text=text, callback_data=f"nav:all:{key}"))
+    kb.append(filter_buttons)
+
     task_buttons: list[InlineKeyboardButton] = []
     for r in rows:
         project = (r.get("project") or "").strip()
@@ -972,9 +1109,9 @@ async def ui_render_all_tasks(message: Message, db_pool: asyncpg.Pool, *, tz_nam
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:all:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:all:{filter_key}:{page-1}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:all:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:all:{filter_key}:{page+1}"))
     if nav_row:
         kb.append(nav_row)
 
@@ -990,7 +1127,7 @@ async def ui_render_all_tasks(message: Message, db_pool: asyncpg.Pool, *, tz_nam
         text="\n".join(lines).strip(),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         screen="all_tasks",
-        payload={"page": page},
+        payload={"page": page, "filter": filter_key},
         fallback_message=message,
         force_new=force_new,
         parse_mode="HTML",

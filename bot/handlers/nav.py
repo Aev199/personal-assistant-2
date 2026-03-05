@@ -75,6 +75,29 @@ async def _adopt_callback_message_as_ui(callback: CallbackQuery, db_pool: asyncp
         await ui_set_state(conn, chat_id, ui_message_id=msg_id)
 
 
+def _parse_nav_all_callback(data: str | None) -> tuple[str, int]:
+    """Parse nav:all callback variants with backward-compatible fallbacks."""
+    valid_filters = {"all", "overdue", "today", "nodate"}
+    filter_key = "all"
+    page = 0
+    try:
+        parts = (data or "").split(":")
+        token = parts[2] if len(parts) >= 3 else ""
+        token_page = parts[3] if len(parts) >= 4 else ""
+
+        # Legacy format: nav:all:<page>
+        if token.isdigit():
+            page = int(token)
+        elif token:
+            parsed_filter = token.lower()
+            filter_key = parsed_filter if parsed_filter in valid_filters else "all"
+            if token_page.isdigit():
+                page = int(token_page)
+    except Exception:
+        return "all", 0
+    return filter_key, max(0, page)
+
+
 
 async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
@@ -124,14 +147,14 @@ async def cb_nav_all(callback: CallbackQuery, state: FSMContext, db_pool: asyncp
     await _cleanup_wizard_message(callback, state)
     await state.clear()
     await _adopt_callback_message_as_ui(callback, db_pool)
-    page = 0
-    try:
-        parts = (callback.data or '').split(':')
-        if len(parts) >= 3 and parts[2].isdigit():
-            page = int(parts[2])
-    except Exception:
-        page = 0
-    await ui_render_all_tasks(callback.message, db_pool, tz_name=deps.tz_name, page=page)
+    filter_key, page = _parse_nav_all_callback(callback.data)
+    await ui_render_all_tasks(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        page=page,
+        filter_key=filter_key,
+    )
 
 
 async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:

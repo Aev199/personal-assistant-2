@@ -120,6 +120,10 @@ def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str
 
     if ui_screen == "all_tasks":
         page = max(0, _as_int(p.get("page"), 0))
+        valid_filters = {"all", "overdue", "today", "nodate"}
+        filter_key = str(p.get("filter") or "").strip().lower()
+        if filter_key in valid_filters:
+            return f"nav:all:{filter_key}:{page}", "⬅ Все задачи"
         return f"nav:all:{page}", "⬅ Все задачи"
 
     if ui_screen == "projects":

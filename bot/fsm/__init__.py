@@ -10,6 +10,7 @@ from .states import (
     EditTaskDeadline,
     AddReminderWizard,
     AddPersonalWizard,
+    AddSuperTaskWizard,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "EditTaskDeadline",
     "AddReminderWizard",
     "AddPersonalWizard",
+    "AddSuperTaskWizard",
 ]

@@ -39,6 +39,7 @@ from bot.fsm import (
     AddEventWizard,
     QuickTaskWizard,
     QuickIdeaWizard,
+    AddSuperTaskWizard,
 )
 from bot.handlers.common import escape_hatch_menu_or_command
 from bot.keyboards import main_menu_kb, back_home_kb
@@ -121,6 +122,146 @@ async def cb_add_cancel(callback: CallbackQuery, state: FSMContext, db_pool: asy
 # ---------------------------------------------------------------------------
 # Task wizard (incl. Subtask)
 # ---------------------------------------------------------------------------
+
+
+def _super_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Создать", callback_data="add:super:create")],
+            [InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")],
+        ]
+    )
+
+
+async def cb_add_super_start(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await callback.answer()
+    await state.clear()
+
+    parts = (callback.data or "").split(":")
+    project_id = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
+    if not project_id:
+        return
+
+    await state.update_data(
+        wizard_mode="super",
+        project_id=int(project_id),
+        wizard_chat_id=int(callback.message.chat.id),
+        wizard_msg_id=int(callback.message.message_id),
+    )
+    await state.set_state(AddSuperTaskWizard.entering_title)
+    return await safe_edit(
+        callback.message,
+        "🧩 <b>Суперзадача</b>\n\nВведите название (это контейнер для задач внутри проекта).",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        parse_mode="HTML",
+    )
+
+
+async def msg_add_super_title(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+    title = (message.text or "").strip()
+    if not title:
+        return await message.answer("Введите название суперзадачи.")
+
+    data = await state.get_data()
+    project_id = data.get("project_id")
+    if not project_id:
+        await state.clear()
+        return await message.answer("❌ Не удалось определить проект.")
+
+    await state.update_data(title=title)
+    await state.set_state(AddSuperTaskWizard.confirming)
+
+    project_code = "—"
+    try:
+        async with db_pool.acquire() as conn:
+            project_code = await conn.fetchval("SELECT code FROM projects WHERE id=$1", int(project_id)) or "—"
+    except Exception:
+        project_code = "—"
+
+    lines = [
+        "🧩 <b>Проверь суперзадачу</b>",
+        f"Проект: <b>{h(project_code)}</b>",
+        "",
+        f"🧩 {h(title)}",
+        "",
+        "Создать суперзадачу?",
+    ]
+    return await wizard_render(
+        bot=message.bot,
+        state=state,
+        chat_id=int(message.chat.id),
+        fallback_msg=message,
+        text="\n".join(lines),
+        reply_markup=_super_confirm_kb(),
+        parse_mode="HTML",
+    )
+
+
+async def cb_add_super_create(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await callback.answer()
+    data = await state.get_data()
+    project_id = data.get("project_id")
+    title = (data.get("title") or "").strip()
+    if not project_id or not title:
+        await state.clear()
+        return await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name, force_new=False)
+
+    vault = deps.vault
+    task_id = None
+    try:
+        async with db_pool.acquire() as conn:
+            proj = await conn.fetchrow("SELECT id, code FROM projects WHERE id=$1", int(project_id))
+            if not proj:
+                await state.clear()
+                return await safe_edit(callback.message, "❌ Проект не найден.", reply_markup=back_home_kb(), parse_mode="HTML")
+
+            task_id = await conn.fetchval(
+                "INSERT INTO tasks (project_id, title, assignee_id, deadline, parent_task_id, kind) "
+                "VALUES ($1,$2,NULL,NULL,NULL,'super') RETURNING id",
+                int(project_id),
+                str(title),
+            )
+            await db_add_event(
+                conn,
+                "super_task_created",
+                int(project_id),
+                int(task_id),
+                f"🧩 Создана суперзадача | [{proj['code']}] #{int(task_id)} {title}",
+            )
+    except Exception as e:
+        await state.clear()
+        return await wizard_render(
+            bot=callback.bot,
+            state=state,
+            chat_id=int(callback.message.chat.id),
+            fallback_msg=callback.message,
+            text=f"❌ Ошибка: {h(str(e))}",
+            reply_markup=main_menu_kb(),
+            parse_mode="HTML",
+        )
+
+    fire_and_forget(
+        background_project_sync(int(project_id), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
+        label="vault_sync",
+    )
+    await state.clear()
+    return await safe_edit(
+        callback.message,
+        f"✅ Суперзадача создана: <b>#{int(task_id)}</b> {h(title)}",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅ Проект", callback_data=f"proj:{int(project_id)}")],
+                [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+            ]
+        ),
+        parse_mode="HTML",
+    )
 
 
 def deadline_kb() -> InlineKeyboardMarkup:
@@ -582,9 +723,23 @@ async def cb_add_subtask(callback: CallbackQuery, state: FSMContext, db_pool: as
         return
 
     async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT project_id FROM tasks WHERE id=$1", parent_id)
+        row = await conn.fetchrow("SELECT project_id, kind FROM tasks WHERE id=$1", parent_id)
     if not row:
         return await safe_edit(callback.message, "❌ Родительская задача не найдена.")
+    if (row.get("kind") or "task") != "super":
+        await callback.answer("Подзадачи доступны только в суперзадачах", show_alert=True)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{int(parent_id)}")],
+                [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+            ]
+        )
+        return await safe_edit(
+            callback.message,
+            "🧩 Подзадачи доступны только в <b>суперзадачах</b>.",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
 
     await state.clear()
     await state.update_data(
@@ -1336,6 +1491,7 @@ def register(dp: Dispatcher) -> None:
 
     # tasks
     dp.callback_query.register(cb_add_task_start, F.data.startswith("add:task"))
+    dp.callback_query.register(cb_add_super_start, F.data.regexp(r"^add:super:\d+$"))
     dp.callback_query.register(cb_add_choose_project, F.data == "add:proj:choose")
     dp.callback_query.register(cb_add_set_project, F.data.regexp(r"^add:proj:\d+$"))
     dp.callback_query.register(cb_add_set_assignee, F.data.startswith("add:as:"))
@@ -1345,6 +1501,8 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_add_edit_deadline, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_deadline")
     dp.callback_query.register(cb_add_create_task, StateFilter(AddTaskWizard.confirming), F.data == "add:create")
     dp.callback_query.register(cb_add_subtask, F.data.startswith("add:sub:"))
+    dp.message.register(msg_add_super_title, StateFilter(AddSuperTaskWizard.entering_title), F.text)
+    dp.callback_query.register(cb_add_super_create, StateFilter(AddSuperTaskWizard.confirming), F.data == "add:super:create")
 
     # reminders
     dp.callback_query.register(cb_add_reminder_start, F.data == "add:rem")

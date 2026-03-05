@@ -47,7 +47,7 @@ async def cb_inbox_triage_start(callback: CallbackQuery, state: FSMContext, db_p
             return await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name)
 
         total = await conn.fetchval(
-            "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND project_id=$1",
+            "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND project_id=$1",
             int(inbox_id),
         )
         total = int(total or 0)
@@ -60,7 +60,7 @@ async def cb_inbox_triage_start(callback: CallbackQuery, state: FSMContext, db_p
             """
             SELECT id, created_at
             FROM tasks
-            WHERE status != 'done' AND project_id=$1
+            WHERE status != 'done' AND kind != 'super' AND project_id=$1
             ORDER BY created_at ASC, id ASC
             LIMIT 1
             """,
@@ -131,7 +131,7 @@ async def cb_inbox_triage_next(callback: CallbackQuery, state: FSMContext, db_po
             """
             SELECT id, created_at
             FROM tasks
-            WHERE status != 'done' AND project_id=$1
+            WHERE status != 'done' AND kind != 'super' AND project_id=$1
               AND (created_at > $2 OR (created_at = $2 AND id > $3))
             ORDER BY created_at ASC, id ASC
             LIMIT 1

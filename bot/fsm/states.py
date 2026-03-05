@@ -78,3 +78,10 @@ class AddPersonalWizard(StatesGroup):
     choosing_deadline = State()
     entering_deadline = State()
     entering = State()
+
+
+class AddSuperTaskWizard(StatesGroup):
+    """Wizard for creating supertask (epic) inside a project."""
+
+    entering_title = State()
+    confirming = State()

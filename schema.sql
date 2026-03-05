@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id BIGSERIAL PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'task',
     assignee_id INTEGER REFERENCES team(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'todo',
     deadline TIMESTAMP NULL,

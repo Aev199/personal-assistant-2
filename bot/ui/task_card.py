@@ -99,7 +99,7 @@ def task_card_kb(
             InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
         ])
         rows.append([
-            InlineKeyboardButton(text="➕ Подзадача", callback_data=f"add:sub:{task_id}"),
+            InlineKeyboardButton(text="🧩 В суперзадачу…", callback_data=f"task:{task_id}:parent:0"),
             InlineKeyboardButton(text="⚡ В работе", callback_data=f"task:{task_id}:in_progress"),
         ])
 
@@ -123,13 +123,13 @@ def task_card_kb(
     ])
 
     # Relations (secondary)
-    rows.append([
-        InlineKeyboardButton(text="🔗 Родитель…", callback_data=f"task:{task_id}:parent:0"),
-        InlineKeyboardButton(
-            text=("⛓ Отвязать" if parent_task_id else "➕ Подзадача"),
-            callback_data=(f"task:{task_id}:detach" if parent_task_id else f"add:sub:{task_id}"),
-        ),
-    ])
+    if parent_task_id:
+        rows.append([
+            InlineKeyboardButton(text="🧩 Суперзадача…", callback_data=f"task:{task_id}:parent:0"),
+            InlineKeyboardButton(text="⛓ Отвязать", callback_data=f"task:{task_id}:detach"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text="🧩 В суперзадачу…", callback_data=f"task:{task_id}:parent:0")])
 
     # Move (especially useful for inbox)
     rows.append([InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")])

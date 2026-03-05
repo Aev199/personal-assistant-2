@@ -126,7 +126,7 @@ class VaultManager:
         Render nested task list in Markdown, using parent_task_id.
 
         Input tasks: iterable of mappings, each with at least:
-          - id, title, assignee, status, deadline, parent_task_id
+          - id, title, assignee, status, deadline, parent_task_id, kind
         """
         items: List[Mapping[str, Any]] = list(tasks or [])
         if not items:
@@ -146,16 +146,18 @@ class VaultManager:
                     pid = None
             children[pid].append(tid)
 
-        def sort_key(tid: int) -> Tuple[int, datetime.datetime, int]:
+        def sort_key(tid: int) -> Tuple[int, int, datetime.datetime, int]:
             t = task_by_id.get(tid, {})
+            kind = str(t.get("kind") or "task").strip().lower()
+            kind_rank = 0 if kind == "super" else 1
             dl = t.get("deadline")
             # Put "no deadline" last
             if dl is None:
-                return (1, datetime.datetime.max.replace(tzinfo=ZoneInfo("UTC")), tid)
+                return (kind_rank, 1, datetime.datetime.max.replace(tzinfo=ZoneInfo("UTC")), tid)
             # asyncpg returns naive datetime for timestamptz? depends. normalize.
             if getattr(dl, "tzinfo", None) is None:
                 dl = dl.replace(tzinfo=ZoneInfo("UTC"))
-            return (0, dl, tid)
+            return (kind_rank, 0, dl, tid)
 
         for pid, arr in list(children.items()):
             arr.sort(key=sort_key)
@@ -185,10 +187,18 @@ class VaultManager:
                 return
             visited.add(tid)
             t = task_by_id[tid]
+            title = t.get("title") or ""
+            kind = str(t.get("kind") or "task").strip().lower()
+            indent = "  " * depth
+            if kind == "super":
+                # Not a real task for Obsidian Tasks plugin, just a structural marker.
+                lines.append(f"{indent}- 🧩 {title} (ID: {tid})")
+                for cid in children.get(tid, []):
+                    walk(cid, depth + 1)
+                return
+
             status = "x" if (t.get("status") == "done") else " "
             assignee = t.get("assignee") or "—"
-            title = t.get("title") or ""
-            indent = "  " * depth
             dl = t.get("deadline")
             due = ""
             if dl is not None:

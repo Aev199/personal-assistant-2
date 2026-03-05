@@ -189,23 +189,23 @@ async def ui_render_home(message: Message | None, db_pool: asyncpg.Pool, *, tz_n
 
             # Counts
             overdue_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND deadline IS NOT NULL AND deadline < $1",
+                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND kind != 'super' AND deadline IS NOT NULL AND deadline < $1",
                 now_utc_naive,
             )
             today_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND deadline IS NOT NULL AND deadline >= $1 AND deadline < $2",
+                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND kind != 'super' AND deadline IS NOT NULL AND deadline >= $1 AND deadline < $2",
                 start_utc_naive,
                 end_utc_naive,
             )
             inbox_count = 0
             if inbox_id:
                 inbox_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND project_id=$1",
+                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND project_id=$1",
                     int(inbox_id),
                 )
 
             # Work (in_progress): focus within current project if set and not INBOX; otherwise global.
-            work_where = "t.status='in_progress'"
+            work_where = "t.status='in_progress' AND t.kind != 'super'"
             args: list = []
             if current_project_id and not current_project_is_inbox:
                 work_where += " AND t.project_id=$1"
@@ -220,7 +220,7 @@ async def ui_render_home(message: Message | None, db_pool: asyncpg.Pool, *, tz_n
                 FROM tasks t
                 JOIN projects p ON p.id=t.project_id
                 LEFT JOIN team tm ON tm.id=t.assignee_id
-                WHERE t.status NOT IN ('done','postponed') AND t.deadline IS NOT NULL AND t.deadline < $1
+                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline < $1
                 ORDER BY t.deadline ASC
                 LIMIT 3
                 """,
@@ -233,7 +233,7 @@ async def ui_render_home(message: Message | None, db_pool: asyncpg.Pool, *, tz_n
                 FROM tasks t
                 JOIN projects p ON p.id=t.project_id
                 LEFT JOIN team tm ON tm.id=t.assignee_id
-                WHERE t.status NOT IN ('done','postponed') AND t.deadline IS NOT NULL AND t.deadline >= $1 AND t.deadline < $2
+                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline >= $1 AND t.deadline < $2
                 ORDER BY t.deadline ASC
                 LIMIT 3
                 """,
@@ -393,21 +393,21 @@ async def ui_render_stats(message: Message | None, db_pool: asyncpg.Pool, *, tz_
             inbox_id = await conn.fetchval("SELECT id FROM projects WHERE code='INBOX' LIMIT 1")
 
             overdue = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND deadline IS NOT NULL AND deadline < (NOW() AT TIME ZONE 'UTC')"
+                "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND deadline IS NOT NULL AND deadline < (NOW() AT TIME ZONE 'UTC')"
             )
 
             if inbox_id:
                 nodate = await conn.fetchval(
-                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND deadline IS NULL AND project_id != $1",
+                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND deadline IS NULL AND project_id != $1",
                     int(inbox_id),
                 )
             else:
                 nodate = await conn.fetchval(
-                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND deadline IS NULL"
+                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND deadline IS NULL"
                 )
 
             today = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND deadline IS NOT NULL "
+                "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND deadline IS NOT NULL "
                 "AND (deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date",
                 tz_name,
             )
@@ -415,12 +415,12 @@ async def ui_render_stats(message: Message | None, db_pool: asyncpg.Pool, *, tz_
             inbox_count = 0
             if inbox_id:
                 inbox_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND project_id=$1",
+                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND project_id=$1",
                     int(inbox_id),
                 )
 
             projects = await conn.fetchval("SELECT COUNT(*) FROM projects")
-            active_tasks = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status != 'done'")
+            active_tasks = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super'")
 
             next_rem = await conn.fetchval(
                 "SELECT text FROM reminders WHERE is_sent=FALSE ORDER BY remind_at ASC LIMIT 1"
@@ -562,8 +562,8 @@ async def ui_render_projects_portfolio(message: Message, db_pool: asyncpg.Pool, 
             rows = await conn.fetch(
                 '''
                 SELECT p.id, p.code, p.name,
-                       COUNT(t.id) FILTER (WHERE t.status != 'done') AS active_tasks,
-                       COUNT(t.id) FILTER (WHERE t.status != 'done' AND t.deadline IS NOT NULL AND t.deadline < (NOW() AT TIME ZONE 'UTC')) AS overdue_tasks
+                       COUNT(t.id) FILTER (WHERE t.status != 'done' AND t.kind != 'super') AS active_tasks,
+                       COUNT(t.id) FILTER (WHERE t.status != 'done' AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline < (NOW() AT TIME ZONE 'UTC')) AS overdue_tasks
                 FROM projects p
                 LEFT JOIN tasks t ON t.project_id = p.id
                 WHERE p.status = 'active'
@@ -691,7 +691,7 @@ async def ui_render_team(message: Message, db_pool: asyncpg.Pool, *, force_new: 
         async with db_pool.acquire() as conn:
             team_rows = await conn.fetch("SELECT id, name, role FROM team ORDER BY name")
             tasks_rows = await conn.fetch(
-                "SELECT assignee_id, deadline FROM tasks WHERE status != 'done' AND assignee_id IS NOT NULL"
+                "SELECT assignee_id, deadline FROM tasks WHERE status != 'done' AND kind != 'super' AND assignee_id IS NOT NULL"
             )
 
         if not team_rows:
@@ -805,6 +805,7 @@ async def ui_render_today(message: Message, db_pool: asyncpg.Pool, *, tz_name: s
                 JOIN projects p ON t.project_id = p.id
                 LEFT JOIN team tm ON t.assignee_id = tm.id
                 WHERE t.status NOT IN ('done', 'postponed')
+                  AND t.kind != 'super'
                   AND t.deadline IS NOT NULL
                   AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
                 ORDER BY t.deadline ASC
@@ -928,6 +929,7 @@ async def ui_render_all_tasks(
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                       AND t.deadline IS NOT NULL
                       AND t.deadline < $1
@@ -941,6 +943,7 @@ async def ui_render_all_tasks(
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                       AND t.deadline IS NOT NULL
                       AND t.deadline < $1
@@ -958,6 +961,7 @@ async def ui_render_all_tasks(
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                       AND t.deadline IS NOT NULL
                       AND t.deadline >= $1
@@ -973,6 +977,7 @@ async def ui_render_all_tasks(
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                       AND t.deadline IS NOT NULL
                       AND t.deadline >= $1
@@ -992,6 +997,7 @@ async def ui_render_all_tasks(
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                       AND t.deadline IS NULL
                     """
@@ -1003,6 +1009,7 @@ async def ui_render_all_tasks(
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                       AND t.deadline IS NULL
                     ORDER BY p.code ASC, t.deadline ASC NULLS LAST, t.id ASC
@@ -1018,6 +1025,7 @@ async def ui_render_all_tasks(
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                     """
                 )
@@ -1028,6 +1036,7 @@ async def ui_render_all_tasks(
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
                     WHERE t.status != 'done'
+                      AND t.kind != 'super'
                       AND p.status='active'
                     ORDER BY p.code ASC, t.deadline ASC NULLS LAST, t.id ASC
                     LIMIT $1 OFFSET $2
@@ -1178,7 +1187,7 @@ async def ui_render_work(message: Message, db_pool: asyncpg.Pool, *, tz_name: st
                     current_project_code = str(rowp["code"])
                     current_project_is_inbox = current_project_code.upper() == "INBOX"
 
-            where = "t.status='in_progress'"
+            where = "t.status='in_progress' AND t.kind != 'super'"
             args: list = []
             if current_project_id and not current_project_is_inbox:
                 where += " AND t.project_id=$1"
@@ -1342,7 +1351,7 @@ async def ui_render_inbox(message: Message, db_pool: asyncpg.Pool, *, tz_name: s
                 )
 
             total = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND project_id=$1",
+                "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND project_id=$1",
                 int(inbox_id),
             )
             total = int(total or 0)
@@ -1352,7 +1361,7 @@ async def ui_render_inbox(message: Message, db_pool: asyncpg.Pool, *, tz_name: s
                 SELECT t.id, t.title, COALESCE(tm.name,'—') AS assignee, t.deadline, t.created_at
                 FROM tasks t
                 LEFT JOIN team tm ON tm.id=t.assignee_id
-                WHERE t.status != 'done' AND t.project_id=$1
+                WHERE t.status != 'done' AND t.kind != 'super' AND t.project_id=$1
                 ORDER BY t.created_at ASC, t.id ASC
                 LIMIT $2 OFFSET $3
                 """,
@@ -1461,7 +1470,7 @@ async def ui_render_overdue(message: Message, db_pool: asyncpg.Pool, *, tz_name:
     try:
         async with db_pool.acquire() as conn:
             total = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND deadline IS NOT NULL AND deadline < $1",
+                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND kind != 'super' AND deadline IS NOT NULL AND deadline < $1",
                 now_utc_naive,
             )
             total = int(total or 0)
@@ -1471,7 +1480,7 @@ async def ui_render_overdue(message: Message, db_pool: asyncpg.Pool, *, tz_name:
                 FROM tasks t
                 JOIN projects p ON t.project_id = p.id
                 LEFT JOIN team tm ON t.assignee_id = tm.id
-                WHERE t.status NOT IN ('done','postponed') AND t.deadline IS NOT NULL AND t.deadline < $1
+                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline < $1
                 ORDER BY t.deadline ASC
                 LIMIT $2 OFFSET $3
                 """,

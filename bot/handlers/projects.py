@@ -333,11 +333,11 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
             # --- Project tails
             if action == "tails":
                 nodate = await conn.fetchval(
-                    "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND status != 'done' AND deadline IS NULL",
+                    "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND status != 'done' AND kind != 'super' AND deadline IS NULL",
                     project_id,
                 )
                 postponed = await conn.fetchval(
-                    "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND status='postponed' AND status != 'done'",
+                    "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND kind != 'super' AND status='postponed' AND status != 'done'",
                     project_id,
                 )
                 text = "\n".join([
@@ -376,7 +376,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                 where = "t.deadline IS NULL" if kind == "nodate" else "t.status='postponed'"
 
                 total = await conn.fetchval(
-                    f"SELECT COUNT(*) FROM tasks t WHERE t.project_id=$1 AND t.status != 'done' AND {where}",
+                    f"SELECT COUNT(*) FROM tasks t WHERE t.project_id=$1 AND t.status != 'done' AND t.kind != 'super' AND {where}",
                     project_id,
                 )
                 rows = await conn.fetch(
@@ -384,7 +384,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     SELECT t.id, t.title, COALESCE(tm.name,'—') AS assignee, t.deadline
                     FROM tasks t
                     LEFT JOIN team tm ON t.assignee_id = tm.id
-                    WHERE t.project_id=$1 AND t.status != 'done' AND {where}
+                    WHERE t.project_id=$1 AND t.status != 'done' AND t.kind != 'super' AND {where}
                     ORDER BY COALESCE(t.deadline, TIMESTAMP '9999-12-31'), t.id
                     LIMIT $2 OFFSET $3
                     """,
@@ -441,8 +441,8 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
             stats = await conn.fetchrow(
                 """
                 SELECT
-                  COUNT(*) FILTER (WHERE status != 'done') AS active,
-                  COUNT(*) FILTER (WHERE status != 'done' AND deadline IS NOT NULL AND deadline < (NOW() AT TIME ZONE 'UTC')) AS overdue
+                  COUNT(*) FILTER (WHERE status != 'done' AND kind != 'super') AS active,
+                  COUNT(*) FILTER (WHERE status != 'done' AND kind != 'super' AND deadline IS NOT NULL AND deadline < (NOW() AT TIME ZONE 'UTC')) AS overdue
                 FROM tasks WHERE project_id=$1
                 """,
                 project_id,
@@ -450,7 +450,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
 
             records = await conn.fetch(
                 """
-                SELECT t.id, t.title, COALESCE(tm.name,'—') as assignee, t.deadline, t.parent_task_id, t.status
+                SELECT t.id, t.title, t.kind, COALESCE(tm.name,'—') as assignee, t.deadline, t.parent_task_id, t.status
                 FROM tasks t
                 LEFT JOIN team tm ON t.assignee_id = tm.id
                 WHERE t.project_id=$1 AND t.status != 'done'
@@ -462,6 +462,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                 {
                     "id": r["id"],
                     "title": r["title"],
+                    "kind": r.get("kind") or "task",
                     "assignee": r["assignee"],
                     "deadline": r["deadline"],
                     "parent_task_id": r["parent_task_id"],
@@ -478,7 +479,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
             )
             root_rows = await conn.fetch(
                 """
-                SELECT id, title
+                SELECT id, title, kind
                 FROM tasks
                 WHERE project_id=$1 AND parent_task_id IS NULL AND status != 'done'
                 ORDER BY id
@@ -494,7 +495,12 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
             return s if len(s) <= n else (s[: n - 1] + "…")
 
         root_btns = [
-            [InlineKeyboardButton(text=_short_btn(str(r["title"]), 30), callback_data=f"task:{int(r['id'])}")]
+            [
+                InlineKeyboardButton(
+                    text=_short_btn(("🧩 " if (r.get("kind") == "super") else "") + str(r["title"]), 30),
+                    callback_data=f"task:{int(r['id'])}",
+                )
+            ]
             for r in root_rows
         ]
 
@@ -527,8 +533,9 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
         # Actions
         kb.append([
             InlineKeyboardButton(text="➕ Задача", callback_data=f"add:task:{project_id}"),
-            InlineKeyboardButton(text="🧺 Хвосты", callback_data=f"proj:{project_id}:tails"),
+            InlineKeyboardButton(text="🧩 Суперзадача", callback_data=f"add:super:{project_id}"),
         ])
+        kb.append([InlineKeyboardButton(text="🧺 Хвосты", callback_data=f"proj:{project_id}:tails")])
         kb.append([
             InlineKeyboardButton(text=("⭐ Снять текущий" if is_cur else "⭐ Сделать текущим"), callback_data=f"proj:{project_id}:toggle_current"),
         ])

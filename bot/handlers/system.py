@@ -280,6 +280,7 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
                 SELECT COUNT(*)
                 FROM tasks t
                 WHERE t.status NOT IN ('done', 'postponed')
+                  AND t.kind != 'super'
                   AND t.deadline IS NOT NULL
                   AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
                 """,
@@ -292,6 +293,7 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
                 JOIN projects p ON t.project_id = p.id
                 LEFT JOIN team tm ON t.assignee_id = tm.id
                 WHERE t.status NOT IN ('done', 'postponed')
+                  AND t.kind != 'super'
                   AND t.deadline IS NOT NULL
                   AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
                 ORDER BY t.deadline ASC
@@ -389,8 +391,8 @@ async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asy
 
 async def _render_global_tails_screen(msg: Message, db_pool: asyncpg.Pool, back_cb: str, deps: AppDeps):
     async with db_pool.acquire() as conn:
-        nodate = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status != 'done' AND deadline IS NULL")
-        postponed = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status != 'done' AND status='postponed'")
+        nodate = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND deadline IS NULL")
+        postponed = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND status='postponed'")
 
     parts = [
         "<b>🧺 ХВОСТЫ</b>",
@@ -451,14 +453,14 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
         where = "t.deadline IS NULL AND t.status != 'postponed'" if kind == "nodate" else "t.status='postponed'"
 
         async with db_pool.acquire() as conn:
-            total = await conn.fetchval(f"SELECT COUNT(*) FROM tasks t WHERE t.status != 'done' AND {where}")
+            total = await conn.fetchval(f"SELECT COUNT(*) FROM tasks t WHERE t.status != 'done' AND t.kind != 'super' AND {where}")
             rows = await conn.fetch(
                 f"""
                 SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
                 FROM tasks t
                 JOIN projects p ON t.project_id = p.id
                 LEFT JOIN team tm ON t.assignee_id = tm.id
-                WHERE t.status != 'done' AND {where}
+                WHERE t.status != 'done' AND t.kind != 'super' AND {where}
                 ORDER BY p.code, t.id
                 LIMIT $1 OFFSET $2
                 """,

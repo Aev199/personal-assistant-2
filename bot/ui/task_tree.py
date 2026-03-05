@@ -69,11 +69,12 @@ def render_task_tree(tasks: list[dict], tz: ZoneInfo) -> tuple[str, list[int]]:
             return
         visited.add(tid)
         t = task_by_id[tid]
+        kind = (t.get("kind") or "task").lower()
 
         dl = t.get("deadline")
         dl_txt = ""
         overdue = False
-        if dl:
+        if dl and kind != "super":
             dl_utc = to_utc(dl)
             overdue = dl_utc < now_utc and (t.get("status") not in {"done"})
             dl_local = dl_utc.astimezone(tz)
@@ -82,12 +83,16 @@ def render_task_tree(tasks: list[dict], tz: ZoneInfo) -> tuple[str, list[int]]:
         assignee = t.get("assignee") or "—"
         icon = status_icon(t.get("status", "todo"))
         suffix_parts = []
-        if overdue:
+        if overdue and kind != "super":
             suffix_parts.append("🚨")
-        suffix_parts.append(icon)
+        if kind != "super":
+            suffix_parts.append(icon)
         suffix = "  " + " ".join(suffix_parts) if suffix_parts else ""
         prefix = ("\xa0\xa0\xa0\xa0" * depth) + ("↳ " if depth > 0 else "")
-        lines.append(f"{prefix}{assignee}: {t['title']}{dl_txt}{suffix}")
+        if kind == "super":
+            lines.append(f"{prefix}🧩 {t['title']}{suffix}")
+        else:
+            lines.append(f"{prefix}{assignee}: {t['title']}{dl_txt}{suffix}")
         order.append(tid)
         for cid in children.get(tid, []):
             walk(cid, depth + 1)

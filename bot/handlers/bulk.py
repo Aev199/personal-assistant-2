@@ -34,7 +34,7 @@ bulk_sessions: dict[int, dict] = {}
 
 async def _fetch_overdue_page(conn: asyncpg.Connection, page: int, page_size: int):
     total = await conn.fetchval(
-        "SELECT COUNT(*) FROM tasks WHERE deadline IS NOT NULL AND deadline < (NOW() AT TIME ZONE 'UTC') AND status != 'done'"
+        "SELECT COUNT(*) FROM tasks WHERE kind != 'super' AND deadline IS NOT NULL AND deadline < (NOW() AT TIME ZONE 'UTC') AND status != 'done'"
     )
     rows = await conn.fetch(
         """
@@ -42,7 +42,7 @@ async def _fetch_overdue_page(conn: asyncpg.Connection, page: int, page_size: in
         FROM tasks t
         JOIN projects p ON t.project_id = p.id
         LEFT JOIN team tm ON t.assignee_id = tm.id
-        WHERE t.deadline IS NOT NULL AND t.deadline < (NOW() AT TIME ZONE 'UTC') AND t.status != 'done'
+        WHERE t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline < (NOW() AT TIME ZONE 'UTC') AND t.status != 'done'
         ORDER BY t.deadline ASC
         LIMIT $1 OFFSET $2
         """,
@@ -204,7 +204,7 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                         """
                         SELECT t.id, t.title, t.project_id, p.code AS project_code
                         FROM tasks t JOIN projects p ON t.project_id=p.id
-                        WHERE t.id = ANY($1::bigint[])
+                        WHERE t.id = ANY($1::bigint[]) AND t.kind != 'super'
                         """,
                         list(sel),
                     )
@@ -220,7 +220,7 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                             store_tz=bool(getattr(deps, 'db_tasks_deadline_timestamptz', False)),
                         )
                         await conn.execute(
-                            "UPDATE tasks SET deadline=$2, status='todo' WHERE id=ANY($1::bigint[]) AND status!='done'",
+                            "UPDATE tasks SET deadline=$2, status='todo' WHERE id=ANY($1::bigint[]) AND kind != 'super' AND status!='done'",
                             list(sel),
                             dl,
                         )
@@ -236,7 +236,7 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                                 )
                     elif act == "postpone":
                         await conn.execute(
-                            "UPDATE tasks SET status='postponed' WHERE id=ANY($1::bigint[]) AND status!='done'",
+                            "UPDATE tasks SET status='postponed' WHERE id=ANY($1::bigint[]) AND kind != 'super' AND status!='done'",
                             list(sel),
                         )
                         for tid in sel:
@@ -251,7 +251,7 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                                 )
                     elif act == "unassign":
                         await conn.execute(
-                            "UPDATE tasks SET assignee_id=NULL WHERE id=ANY($1::bigint[]) AND status!='done'",
+                            "UPDATE tasks SET assignee_id=NULL WHERE id=ANY($1::bigint[]) AND kind != 'super' AND status!='done'",
                             list(sel),
                         )
                         for tid in sel:
@@ -266,7 +266,7 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                                 )
                     elif act == "done":
                         await conn.execute(
-                            "UPDATE tasks SET status='done' WHERE id=ANY($1::bigint[]) AND status!='done'",
+                            "UPDATE tasks SET status='done' WHERE id=ANY($1::bigint[]) AND kind != 'super' AND status!='done'",
                             list(sel),
                         )
                         for tid in sel:

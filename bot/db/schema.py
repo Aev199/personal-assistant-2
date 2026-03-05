@@ -86,6 +86,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
             id BIGSERIAL PRIMARY KEY,
             project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
             title TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'task',
             assignee_id INTEGER REFERENCES team(id) ON DELETE SET NULL,
             status TEXT NOT NULL DEFAULT 'todo',
             deadline TIMESTAMP NULL,
@@ -104,6 +105,13 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
     # Ensure columns used by handlers exist (best-effort for existing DBs)
     try:
         await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_task_id BIGINT")
+    except Exception:
+        pass
+    try:
+        await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS kind TEXT")
+        await conn.execute("UPDATE tasks SET kind='task' WHERE kind IS NULL")
+        await conn.execute("ALTER TABLE tasks ALTER COLUMN kind SET DEFAULT 'task'")
+        await conn.execute("ALTER TABLE tasks ALTER COLUMN kind SET NOT NULL")
     except Exception:
         pass
 

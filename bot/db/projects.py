@@ -44,11 +44,12 @@ async def fetch_portfolio_rows(conn: asyncpg.Connection):
     return await conn.fetch(
         """
         SELECT p.id, p.code, p.name,
-               COUNT(t.id) FILTER (WHERE t.status != 'done') AS active_tasks,
+               COUNT(t.id) FILTER (WHERE t.status != 'done' AND t.kind != 'super') AS active_tasks,
                COUNT(t.id) FILTER (
-                   WHERE t.status != 'done'
-                     AND t.deadline IS NOT NULL
-                     AND t.deadline < (NOW() AT TIME ZONE 'UTC')
+                    WHERE t.status != 'done'
+                      AND t.kind != 'super'
+                      AND t.deadline IS NOT NULL
+                      AND t.deadline < (NOW() AT TIME ZONE 'UTC')
                ) AS overdue_tasks
         FROM projects p
         LEFT JOIN tasks t ON t.project_id = p.id

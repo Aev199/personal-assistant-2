@@ -4,6 +4,11 @@ from bot.handlers.tasks import _task_return_context
 
 
 class TaskReturnContextTests(unittest.TestCase):
+    def test_super_task_returns_super_card(self) -> None:
+        cb, label = _task_return_context("super_task", {"super_ctx": {"super_id": 10, "page": 2}})
+        self.assertEqual(cb, "task:10:super:2")
+        self.assertEqual(label, "⬅ Суперзадача")
+
     def test_all_tasks_with_filter_and_page(self) -> None:
         cb, label = _task_return_context("all_tasks", {"filter": "today", "page": 2})
         self.assertEqual(cb, "nav:all:today:2")

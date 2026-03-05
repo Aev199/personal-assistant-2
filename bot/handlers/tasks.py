@@ -99,6 +99,13 @@ def _as_int(value, default: int = 0) -> int:
 def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str | None]:
     p = payload if isinstance(payload, dict) else {}
 
+    if ui_screen == "super_task":
+        ctx = p.get("super_ctx") if isinstance(p.get("super_ctx"), dict) else {}
+        super_id = _as_int(ctx.get("super_id"), 0)
+        page = max(0, _as_int(ctx.get("page"), 0))
+        if super_id > 0:
+            return f"task:{super_id}:super:{page}", "⬅ Суперзадача"
+
     if ui_screen == "overdue":
         page = max(0, _as_int(p.get("page"), 0))
         return f"nav:overdue:{page}", "⬅ Просрочки"
@@ -162,13 +169,154 @@ def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str
     return None, None
 
 
+async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps, *, page: int = 0) -> None:
+    """Render supertask (epic) card with its child tasks (1-level hierarchy)."""
+    tz = _tz_from_deps(deps)
+    chat_id = int(msg.chat.id)
+    page = max(0, _as_int(page, 0))
+    page_size = 10
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT t.id, t.title, t.status, t.kind, p.id AS project_id, p.code AS project_code
+            FROM tasks t
+            JOIN projects p ON p.id=t.project_id
+            WHERE t.id=$1
+            """,
+            int(task_id),
+        )
+        if not row:
+            return await safe_edit(msg, "❌ Суперзадача не найдена.")
+
+        kind = (row.get("kind") or "task").lower()
+        if kind != "super":
+            return await show_task_card(msg, db_pool, int(task_id), deps=deps)
+
+        counts = await conn.fetchrow(
+            """
+            SELECT
+              COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE status='done') AS done,
+              COUNT(*) FILTER (WHERE status!='done') AS active
+            FROM tasks
+            WHERE parent_task_id=$1 AND kind != 'super'
+            """,
+            int(task_id),
+        )
+        total_children = int(counts.get("total") or 0) if counts else 0
+        done_children = int(counts.get("done") or 0) if counts else 0
+        active_children = int(counts.get("active") or 0) if counts else 0
+
+        rows = await conn.fetch(
+            """
+            SELECT t.id, t.title, t.status, t.deadline, COALESCE(tm.name,'—') AS assignee
+            FROM tasks t
+            LEFT JOIN team tm ON tm.id=t.assignee_id
+            WHERE t.parent_task_id=$1 AND t.kind != 'super' AND t.status != 'done'
+            ORDER BY t.deadline ASC NULLS LAST, t.id ASC
+            LIMIT $2 OFFSET $3
+            """,
+            int(task_id),
+            page_size,
+            page * page_size,
+        )
+
+        ui_state = await ui_get_state(conn, chat_id)
+        payload = _ui_payload_get(ui_state)
+        ui_screen = str(ui_state.get("ui_screen") or "")
+
+        if ui_screen == "super_task":
+            ctx = payload.get("super_ctx") if isinstance(payload, dict) else {}
+            return_cb = (ctx.get("return_cb") or "").strip() or None
+            return_label = (ctx.get("return_label") or "").strip() or None
+        else:
+            return_cb, return_label = _task_return_context(ui_screen, payload)
+
+        project_id = int(row["project_id"])
+        project_code = str(row.get("project_code") or "").strip()
+        if not return_cb:
+            return_cb = f"proj:{project_id}"
+            return_label = "⬅ Проект"
+
+        if not isinstance(payload, dict):
+            payload = {}
+        payload["super_ctx"] = {
+            "super_id": int(task_id),
+            "page": int(page),
+            "return_cb": return_cb,
+            "return_label": return_label or "⬅ Назад",
+        }
+        await ui_set_state(conn, chat_id, ui_screen="super_task", ui_payload=payload)
+
+    title = (row.get("title") or "").strip()
+    status = (row.get("status") or "todo").lower()
+    status_txt = "закрыта" if status == "done" else "активна"
+
+    def _short(s: str, n: int = 36) -> str:
+        s = (s or "").strip()
+        return s if len(s) <= n else (s[: n - 1] + "…")
+
+    lines: list[str] = [
+        f"🧩 <b>Суперзадача</b> #{int(task_id)}",
+        f"Проект: <b>{h(project_code)}</b>",
+        f"Статус: <b>{h(status_txt)}</b>",
+        f"Готово: <b>{done_children}/{total_children}</b>",
+        "",
+        f"🧩 {h(title)}",
+        "",
+        "<b>Задачи внутри:</b>",
+    ]
+
+    if not rows:
+        lines.append("—")
+    else:
+        for r in rows:
+            t_title = (r.get("title") or "").strip()
+            assignee = (r.get("assignee") or "—").strip()
+            dl_local = to_local(r.get("deadline"), tz)
+            due = dl_local.strftime("%d.%m %H:%M") if dl_local else "без срока"
+            lines.append(f"• {h(t_title)} — {h(assignee)}, <i>{h('до ' + due) if dl_local else h(due)}</i>")
+
+    kb: list[list[InlineKeyboardButton]] = []
+    kb.append(
+        [
+            InlineKeyboardButton(text="➕ Задача", callback_data=f"add:sub:{int(task_id)}"),
+            InlineKeyboardButton(text="✅ Закрыть", callback_data=f"task:{int(task_id)}:super_close_ask"),
+        ]
+    )
+
+    task_buttons: list[InlineKeyboardButton] = []
+    for r in rows:
+        t_title = (r.get("title") or "").strip()
+        task_buttons.append(InlineKeyboardButton(text=_short(t_title, 24), callback_data=f"task:{int(r['id'])}"))
+    kb.extend(kb_columns(task_buttons, 2))
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"task:{int(task_id)}:super:{page-1}"))
+    if (page + 1) * page_size < active_children:
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"task:{int(task_id)}:super:{page+1}"))
+    if nav_row:
+        kb.append(nav_row)
+
+    kb.append(
+        [
+            InlineKeyboardButton(text=(return_label or "⬅ Назад"), callback_data=str(return_cb)),
+            InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+        ]
+    )
+
+    return await safe_edit(msg, "\n".join(lines).strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
+
+
 async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps, *, expanded: bool = False) -> None:
     """Render task card into the SPA message."""
     tz = _tz_from_deps(deps)
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT t.id, t.title, t.status, t.deadline, t.parent_task_id,
+            SELECT t.id, t.title, t.status, t.kind, t.deadline, t.parent_task_id,
                    t.g_task_id, t.g_task_list_id, t.g_task_hash,
                    p.id AS project_id, p.code AS project_code,
                    COALESCE(tm.name, '—') AS assignee
@@ -182,6 +330,8 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         if not row:
             await safe_edit(msg, "❌ Задача не найдена.")
             return
+        if (row.get("kind") or "task") == "super":
+            return await show_super_task_card(msg, db_pool, int(task_id), deps=deps, page=0)
 
         subs = await conn.fetch(
             "SELECT id, title, status FROM tasks WHERE parent_task_id=$1 ORDER BY id",
@@ -207,7 +357,7 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
                 inbox_id = int(triage.get("inbox_id") or 0)
                 if inbox_id:
                     inbox_left = await conn.fetchval(
-                        "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND project_id=$1",
+                        "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND project_id=$1",
                         inbox_id,
                     )
                     inbox_left = int(inbox_left or 0)
@@ -400,9 +550,98 @@ async def cb_task(
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
     if action == "less":
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=False)
+    if action == "super":
+        page = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 0
+        return await show_super_task_card(callback.message, db_pool, task_id, deps=deps, page=page)
+    if action == "super_close_ask":
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, int(callback.message.chat.id))
+            payload = _ui_payload_get(ui_state)
+        ctx = payload.get("super_ctx") if isinstance(payload, dict) else {}
+        page = max(0, _as_int(ctx.get("page"), 0))
+        return_cb = (ctx.get("return_cb") or "nav:home")
+        return_label = (ctx.get("return_label") or "⬅ Назад")
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Да, закрыть все", callback_data=f"task:{task_id}:super_close_do")],
+                [InlineKeyboardButton(text="⬅ Отмена", callback_data=f"task:{task_id}:super:{page}")],
+                [
+                    InlineKeyboardButton(text=str(return_label), callback_data=str(return_cb)),
+                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                ],
+            ]
+        )
+        return await safe_edit(
+            callback.message,
+            "✅ <b>Закрыть суперзадачу?</b>\n\nЭто действие отметит <b>done</b> суперзадачу и все задачи внутри.",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
+    if action == "super_close_do":
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT t.id, t.title, t.kind, t.project_id, p.code AS project_code "
+                "FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=$1",
+                int(task_id),
+            )
+            if not row or (row.get("kind") or "task") != "super":
+                await callback.answer("Суперзадача не найдена", show_alert=True)
+                return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+            closed_rows = await conn.fetch(
+                "UPDATE tasks SET status='done' "
+                "WHERE parent_task_id=$1 AND status != 'done' AND kind != 'super' "
+                "RETURNING id",
+                int(task_id),
+            )
+            closed_n = len(list(closed_rows or []))
+            await conn.execute(
+                "UPDATE tasks SET status='done', assignee_id=NULL, deadline=NULL, parent_task_id=NULL WHERE id=$1",
+                int(task_id),
+            )
+            await db_add_event(
+                conn,
+                "super_task_closed",
+                int(row["project_id"]),
+                int(task_id),
+                f"✅ Закрыта суперзадача | [{row['project_code']}] #{int(task_id)} {row['title']} (закрыто задач: {closed_n})",
+            )
+            ui_state = await ui_get_state(conn, int(callback.message.chat.id))
+            payload = _ui_payload_get(ui_state)
+
+        fire_and_forget(
+            background_project_sync(int(row["project_id"]), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
+            label="vault_sync",
+        )
+        ctx = payload.get("super_ctx") if isinstance(payload, dict) else {}
+        return_cb = (ctx.get("return_cb") or f"proj:{int(row['project_id'])}")
+        return_label = (ctx.get("return_label") or "⬅ Проект")
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=str(return_label), callback_data=str(return_cb))],
+                [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+            ]
+        )
+        return await safe_edit(
+            callback.message,
+            f"✅ Суперзадача закрыта. Закрыто задач: <b>{closed_n}</b>.",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
     if action == "dlcancel":
         await state.clear()
         return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+
+    # Block unsupported actions on supertasks (old callbacks, direct links).
+    async with db_pool.acquire() as conn:
+        kind = await conn.fetchval("SELECT kind FROM tasks WHERE id=$1", int(task_id))
+    if (kind or "task") == "super":
+        await callback.answer("Это суперзадача: действие недоступно", show_alert=True)
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, int(callback.message.chat.id))
+            payload = _ui_payload_get(ui_state)
+        ctx = payload.get("super_ctx") if isinstance(payload, dict) else {}
+        page = max(0, _as_int(ctx.get("page"), 0))
+        return await show_super_task_card(callback.message, db_pool, task_id, deps=deps, page=page)
 
     # -----------------
     # Inbox triage: move task to another project
@@ -759,49 +998,43 @@ async def cb_task(
             row = await conn.fetchrow("SELECT project_id FROM tasks WHERE id=$1", task_id)
             if not row:
                 return await safe_edit(callback.message, "❌ Задача не найдена.")
-            project_id = row["project_id"]
-            all_rows = await conn.fetch(
-                "SELECT id, title, parent_task_id FROM tasks WHERE project_id=$1 AND status != 'done' ORDER BY id",
+            project_id = int(row["project_id"])
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND status != 'done' AND kind='super' AND id != $2",
                 project_id,
+                int(task_id),
+            )
+            total = int(total or 0)
+            rows = await conn.fetch(
+                """
+                SELECT id, title
+                FROM tasks
+                WHERE project_id=$1 AND status != 'done' AND kind='super' AND id != $2
+                ORDER BY id
+                LIMIT $3 OFFSET $4
+                """,
+                project_id,
+                int(task_id),
+                page_size,
+                page * page_size,
             )
 
-        children: dict[int | None, list[int]] = {}
-        title_by_id: dict[int, str] = {}
-        for r in all_rows:
-            tid = int(r["id"])
-            pid = r["parent_task_id"]
-            title_by_id[tid] = (r["title"] or "").strip()
-            children.setdefault(pid, []).append(tid)
-
-        def collect_descendants(root: int) -> set[int]:
-            res: set[int] = set()
-            stack = [root]
-            while stack:
-                cur = stack.pop()
-                for c in children.get(cur, []):
-                    if c not in res:
-                        res.add(c)
-                        stack.append(c)
-            return res
-
-        excluded = {task_id} | collect_descendants(task_id)
-        candidates = [tid for tid in title_by_id.keys() if tid not in excluded]
-        candidates.sort()
-
-        total = len(candidates)
-        chunk = candidates[page * page_size : (page + 1) * page_size]
-
         def _short(s: str, n: int = 36) -> str:
+            s = (s or "").strip()
             return s if len(s) <= n else (s[: n - 1] + "…")
 
-        lines = ["🔗 Выберите родительскую задачу:"]
-        if not chunk:
-            lines.append("Нет подходящих родительских задач.")
-        kb = []
-        for tid in chunk:
-            kb.append([
-                InlineKeyboardButton(text=f"[{tid}] {_short(title_by_id[tid], 30)}", callback_data=f"task:{task_id}:parent_set:{tid}")
-            ])
+        lines = ["🧩 Выберите суперзадачу-родителя:"]
+        kb: list[list[InlineKeyboardButton]] = []
+        if not rows:
+            lines.append("Суперзадач в проекте нет.")
+        else:
+            for r in rows:
+                kb.append([
+                    InlineKeyboardButton(
+                        text=f"[{int(r['id'])}] {_short(str(r['title'] or ''), 30)}",
+                        callback_data=f"task:{task_id}:parent_set:{int(r['id'])}",
+                    )
+                ])
 
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:
@@ -826,44 +1059,31 @@ async def cb_task(
             )
 
         async with db_pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT project_id FROM tasks WHERE id=$1", task_id)
-            if not row:
+            cur = await conn.fetchrow("SELECT project_id, kind FROM tasks WHERE id=$1", int(task_id))
+            if not cur:
                 return await safe_edit(callback.message, "❌ Задача не найдена.")
-            pid = row["project_id"]
-            rels = await conn.fetch(
-                "SELECT id, parent_task_id FROM tasks WHERE project_id=$1 AND status != 'done'",
-                pid,
-            )
+            if (cur.get("kind") or "task") == "super":
+                await callback.answer("Суперзадача не может быть дочерней", show_alert=True)
+                return await show_super_task_card(callback.message, db_pool, task_id, deps=deps, page=0)
 
-        children: dict[int | None, list[int]] = {}
-        for r in rels:
-            children.setdefault(r["parent_task_id"], []).append(int(r["id"]))
+            parent = await conn.fetchrow("SELECT id, project_id, kind FROM tasks WHERE id=$1", int(parent_id))
+            if not parent:
+                return await safe_edit(callback.message, "❌ Суперзадача не найдена.")
+            if int(parent["project_id"]) != int(cur["project_id"]):
+                return await safe_edit(callback.message, "⚠️ Нельзя назначить родителя из другого проекта.")
+            if (parent.get("kind") or "task") != "super":
+                return await safe_edit(callback.message, "⚠️ Родителем может быть только суперзадача.")
 
-        def collect_descendants(root: int) -> set[int]:
-            res: set[int] = set()
-            stack = [root]
-            while stack:
-                cur = stack.pop()
-                for c in children.get(cur, []):
-                    if c not in res:
-                        res.add(c)
-                        stack.append(c)
-            return res
-
-        if parent_id in collect_descendants(task_id):
-            return await safe_edit(callback.message, "⚠️ Нельзя выбрать дочернюю задачу в качестве родителя (получится цикл).")
-
-        async with db_pool.acquire() as conn:
             info = await conn.fetchrow(
                 "SELECT t.project_id, p.code as project_code, t.title FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=$1",
                 task_id,
             )
             await conn.execute("UPDATE tasks SET parent_task_id=$2 WHERE id=$1", task_id, parent_id)
             if info:
-                await db_add_event(conn, "task_parent_set", int(info["project_id"]), task_id, f"🔗 Сделано подзадачей #{parent_id} | [{info['project_code']}] #{task_id} {info['title']}")
+                await db_add_event(conn, "task_parent_set", int(info["project_id"]), task_id, f"🔗 Привязано к суперзадаче #{parent_id} | [{info['project_code']}] #{task_id} {info['title']}")
 
         fire_and_forget(
-            background_project_sync(int(pid), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
+            background_project_sync(int(cur["project_id"]), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
         return await show_task_card(callback.message, db_pool, task_id, deps=deps)

@@ -446,6 +446,7 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
         back_cb = ":".join(parts[4:]) if len(parts) >= 5 else "nav:projects"
         page = max(0, page)
         page_size = 8
+        tz_name = resolve_tz_name(deps.tz_name)
 
         where = "t.deadline IS NULL AND t.status != 'postponed'" if kind == "nodate" else "t.status='postponed'"
 

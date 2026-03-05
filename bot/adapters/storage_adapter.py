@@ -215,13 +215,21 @@ class DropboxStorageAdapter:
             raise ValueError("Dropbox access token not provided")
         
         self._client = None
+        self._dropbox_module = None
     
     def _get_client(self):
         """Get or create Dropbox client (lazy initialization)."""
         if self._client is None:
             import dropbox
+
+            self._dropbox_module = dropbox
             self._client = dropbox.Dropbox(self.access_token)
         return self._client
+
+    def _get_dropbox_module(self):
+        if self._dropbox_module is None:
+            self._get_client()
+        return self._dropbox_module
     
     def _full_path(self, remote_path: str) -> str:
         """Convert relative path to full Dropbox path."""
@@ -235,6 +243,7 @@ class DropboxStorageAdapter:
         HTTPS is enforced by Dropbox API. Dropbox provides encryption at rest.
         """
         client = self._get_client()
+        dropbox_module = self._get_dropbox_module()
         full_path = self._full_path(remote_path)
         
         # Get file size to determine upload strategy
@@ -249,7 +258,7 @@ class DropboxStorageAdapter:
                 data = f.read()
                 await loop.run_in_executor(
                     None,
-                    lambda: client.files_upload(data, full_path, mode=dropbox.files.WriteMode.overwrite)
+                    lambda: client.files_upload(data, full_path, mode=dropbox_module.files.WriteMode.overwrite)
                 )
         else:
             # Large file: chunked upload for streaming
@@ -269,7 +278,7 @@ class DropboxStorageAdapter:
                     if len(data) == 0:
                         break
                     
-                    cursor = dropbox.files.UploadSessionCursor(session_id, offset)
+                    cursor = dropbox_module.files.UploadSessionCursor(session_id, offset)
                     await loop.run_in_executor(
                         None,
                         lambda: client.files_upload_session_append_v2(data, cursor)
@@ -277,8 +286,8 @@ class DropboxStorageAdapter:
                     offset += len(data)
                 
                 # Finish upload
-                cursor = dropbox.files.UploadSessionCursor(session_id, offset)
-                commit = dropbox.files.CommitInfo(full_path, mode=dropbox.files.WriteMode.overwrite)
+                cursor = dropbox_module.files.UploadSessionCursor(session_id, offset)
+                commit = dropbox_module.files.CommitInfo(full_path, mode=dropbox_module.files.WriteMode.overwrite)
                 await loop.run_in_executor(
                     None,
                     lambda: client.files_upload_session_finish(b'', cursor, commit)
@@ -307,6 +316,7 @@ class DropboxStorageAdapter:
     async def list_files(self, prefix: str) -> list[str]:
         """List files in Dropbox with given prefix."""
         client = self._get_client()
+        dropbox_module = self._get_dropbox_module()
         full_prefix = self._full_path(prefix)
         
         # Run blocking Dropbox call in executor
@@ -319,7 +329,7 @@ class DropboxStorageAdapter:
         # Extract file paths (remove base_path prefix for consistency)
         files = []
         for entry in result.entries:
-            if isinstance(entry, dropbox.files.FileMetadata):
+            if isinstance(entry, dropbox_module.files.FileMetadata):
                 # Remove base_path to return relative paths
                 relative_path = entry.path_display[len(self.base_path):].lstrip('/')
                 files.append(relative_path)

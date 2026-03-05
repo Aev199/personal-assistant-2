@@ -89,6 +89,75 @@ async def _guard(callback: CallbackQuery, deps: AppDeps) -> bool:
     return True
 
 
+def _as_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str | None]:
+    p = payload if isinstance(payload, dict) else {}
+
+    if ui_screen == "overdue":
+        page = max(0, _as_int(p.get("page"), 0))
+        return f"nav:overdue:{page}", "⬅ Просрочки"
+
+    if ui_screen == "today":
+        return "nav:today", "⬅ Сегодня"
+
+    if ui_screen == "today_pick":
+        page = max(0, _as_int(p.get("page"), 0))
+        return f"nav:today:pick:{page}", "⬅ Сегодня"
+
+    if ui_screen in {"inbox", "inbox_triage"}:
+        page = max(0, _as_int(p.get("inbox_page", p.get("page")), 0))
+        return f"nav:inbox:{page}", "⬅ Inbox"
+
+    if ui_screen == "work":
+        page = max(0, _as_int(p.get("page"), 0))
+        return f"nav:work:{page}", "⬅ В работе"
+
+    if ui_screen == "all_tasks":
+        page = max(0, _as_int(p.get("page"), 0))
+        return f"nav:all:{page}", "⬅ Все задачи"
+
+    if ui_screen == "projects":
+        return "nav:projects", "⬅ Проекты"
+
+    if ui_screen == "project_card":
+        project_id = _as_int(p.get("project_id"), 0)
+        if project_id > 0:
+            page = max(0, _as_int(p.get("page"), 0))
+            return f"proj:{project_id}:open:{page}", "⬅ Проект"
+
+    if ui_screen == "project_tails":
+        project_id = _as_int(p.get("project_id"), 0)
+        if project_id > 0:
+            return f"proj:{project_id}:tails", "⬅ Хвосты"
+
+    if ui_screen == "project_tails_pick":
+        project_id = _as_int(p.get("project_id"), 0)
+        if project_id > 0:
+            kind = str(p.get("kind") or "nodate")
+            page = max(0, _as_int(p.get("page"), 0))
+            return f"proj:{project_id}:tails_pick:{kind}:{page}", "⬅ Хвосты"
+
+    if ui_screen == "team_member":
+        emp_id = _as_int(p.get("emp_id"), 0)
+        if emp_id > 0:
+            page = max(0, _as_int(p.get("page"), 0))
+            return f"team:{emp_id}:{page}", "⬅ Команда"
+
+    if ui_screen == "tails_pick":
+        kind = str(p.get("kind") or "nodate")
+        page = max(0, _as_int(p.get("page"), 0))
+        back = str(p.get("back") or "nav:projects")
+        return f"nav:tails_pick:{kind}:{page}:{back}", "⬅ Хвосты"
+
+    return None, None
+
+
 async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps, *, expanded: bool = False) -> None:
     """Render task card into the SPA message."""
     tz = _tz_from_deps(deps)
@@ -117,6 +186,8 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
 
         ui_state = await ui_get_state(conn, int(msg.chat.id))
         payload = _ui_payload_get(ui_state)
+        ui_screen = str(ui_state.get("ui_screen") or "")
+        return_cb, return_label = _task_return_context(ui_screen, payload)
         undo = _undo_active(payload, task_id=task_id)
 
         triage = payload.get("triage") if isinstance(payload, dict) else None
@@ -217,6 +288,8 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         subtasks=active_subs,
         is_inbox=(str(row.get("project_code") or "").upper() == "INBOX"),
         triage=triage_active,
+        return_cb=return_cb,
+        return_label=return_label,
     )
 
     if undo:
@@ -323,6 +396,9 @@ async def cb_task(
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
     if action == "less":
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=False)
+    if action == "dlcancel":
+        await state.clear()
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     # -----------------
     # Inbox triage: move task to another project
@@ -819,7 +895,7 @@ async def cb_task(
             return await safe_edit(
                 callback.message,
                 "Введите дату/время (например 26.02 14:00 или 26.02).",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{task_id}:dlcancel")]]),
             )
 
         deadline_db = None

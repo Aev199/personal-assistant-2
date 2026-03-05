@@ -19,6 +19,7 @@ from bot.ui.screens import (
     ui_render_help,
     ui_render_add_menu,
     ui_render_projects_portfolio,
+    ui_render_all_tasks,
     ui_render_today,
     ui_render_overdue,
     ui_render_work,
@@ -116,6 +117,23 @@ async def cb_nav_projects(callback: CallbackQuery, state: FSMContext, db_pool: a
     await ui_render_projects_portfolio(callback.message, db_pool, tz_name=deps.tz_name)
 
 
+async def cb_nav_all(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+    await callback.answer()
+    await _cleanup_wizard_message(callback, state)
+    await state.clear()
+    await _adopt_callback_message_as_ui(callback, db_pool)
+    page = 0
+    try:
+        parts = (callback.data or '').split(':')
+        if len(parts) >= 3 and parts[2].isdigit():
+            page = int(parts[2])
+    except Exception:
+        page = 0
+    await ui_render_all_tasks(callback.message, db_pool, tz_name=deps.tz_name, page=page)
+
+
 async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
@@ -211,6 +229,7 @@ async def cb_nav_team(callback: CallbackQuery, state: FSMContext, db_pool: async
 def register(dp: Dispatcher) -> None:
     """Register navigation handlers on the provided Dispatcher."""
     dp.callback_query.register(cb_nav_projects, F.data == "nav:projects")
+    dp.callback_query.register(cb_nav_all, F.data.startswith("nav:all"))
     dp.callback_query.register(cb_nav_close_inline, F.data == "nav:close_inline")
     dp.callback_query.register(cb_nav_home, F.data == "nav:home")
     dp.callback_query.register(cb_nav_stats, F.data == "home:stats")

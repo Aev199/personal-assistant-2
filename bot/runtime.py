@@ -73,9 +73,6 @@ def create_app_webhook() -> web.Application:
     # Normalize timezone: always prefer explicit env vars over defaults.
     deps.tz_name = resolve_tz_name(deps.tz_name or tz_name)
 
-    # Normalize timezone: always prefer explicit env vars over defaults.
-    deps.tz_name = resolve_tz_name(deps.tz_name or tz_name)
-
     # Attach runtime services to deps
     deps.logger = get_logger("bot")
     deps.error_notify_user = bool(cfg.error_handler.notify_user)

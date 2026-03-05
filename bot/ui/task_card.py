@@ -44,16 +44,15 @@ def task_card_kb(
     subtasks: list[tuple[int, str]] | None = None,
     is_inbox: bool = False,
     triage: bool = False,
+    return_cb: str | None = None,
+    return_label: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Task card keyboard (Drill-down + compact UI).
-
-    Breadcrumbs:
-    - if parent_task_id exists → back to parent task card
-    - else → back to project card
-    """
+    """Task card keyboard (Drill-down + compact UI)."""
 
     status = (status or "todo").lower()
-    back_cb = f"task:{int(parent_task_id)}" if parent_task_id else f"proj:{int(project_id)}"
+    fallback_back_cb = f"task:{int(parent_task_id)}" if parent_task_id else f"proj:{int(project_id)}"
+    back_cb = (return_cb or "").strip() or fallback_back_cb
+    back_label = (return_label or "").strip() or "⬅ Назад"
 
     def _subtask_rows() -> list[list[InlineKeyboardButton]]:
         rows: list[list[InlineKeyboardButton]] = []
@@ -83,7 +82,7 @@ def task_card_kb(
         if status == "done":
             rows_done = [
                 [
-                    InlineKeyboardButton(text="⬅ Назад", callback_data=back_cb),
+                    InlineKeyboardButton(text=back_label, callback_data=back_cb),
                     InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                 ]
             ]
@@ -107,8 +106,9 @@ def task_card_kb(
         if is_inbox:
             rows.append([InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")])
 
+        rows.append([InlineKeyboardButton(text="⋯ Ещё", callback_data=f"task:{task_id}:more")])
         rows.append([
-            InlineKeyboardButton(text="⋯ Ещё", callback_data=f"task:{task_id}:more"),
+            InlineKeyboardButton(text=back_label, callback_data=back_cb),
             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
 
@@ -117,11 +117,18 @@ def task_card_kb(
 
     # Expanded (⋯ Ещё): secondary actions
     rows: list[list[InlineKeyboardButton]] = []
+    rows.append([
+        InlineKeyboardButton(text=back_label, callback_data=back_cb),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+    ])
 
     # Relations (secondary)
     rows.append([
         InlineKeyboardButton(text="🔗 Родитель…", callback_data=f"task:{task_id}:parent:0"),
-        InlineKeyboardButton(text=("⛓ Отвязать" if parent_task_id else "➕ Подзадача"), callback_data=(f"task:{task_id}:detach" if parent_task_id else f"add:sub:{task_id}")),
+        InlineKeyboardButton(
+            text=("⛓ Отвязать" if parent_task_id else "➕ Подзадача"),
+            callback_data=(f"task:{task_id}:detach" if parent_task_id else f"add:sub:{task_id}"),
+        ),
     ])
 
     # Move (especially useful for inbox)
@@ -138,12 +145,7 @@ def task_card_kb(
     # Active subtasks quick open (optional)
     rows.extend(_subtask_rows())
 
-    # Navigation
-    rows.append([
-        InlineKeyboardButton(text="⬅ К проекту", callback_data=back_cb),
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-    ])
-    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:less")])
+    rows.append([InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less")])
 
     rows.extend(_triage_row())
 

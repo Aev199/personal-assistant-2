@@ -6,18 +6,19 @@ Provides the "escape hatch" so bottom menu and core commands work even inside FS
 from __future__ import annotations
 
 import asyncpg
-from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
+from aiogram.types import Message
 
-from bot.utils import canon, try_delete_user_message
 from bot.ui.screens import (
-    ui_render_home,
-    ui_render_projects_portfolio,
-    ui_render_today,
-    ui_render_overdue,
     ui_render_add_menu,
     ui_render_help,
+    ui_render_home,
+    ui_render_overdue,
+    ui_render_projects_portfolio,
+    ui_render_team,
+    ui_render_today,
 )
+from bot.utils import canon, try_delete_user_message
 
 
 MAIN_MENU_TOKENS = {
@@ -79,7 +80,6 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     elif token == "help":
         await ui_render_help(message, db_pool, force_new=True)
     else:
-        # "команда" is not a screen yet in extracted screens module, fallback home
-        await ui_render_home(message, db_pool, force_new=True)
+        await ui_render_team(message, db_pool, force_new=True)
 
     return True

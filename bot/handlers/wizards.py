@@ -172,6 +172,9 @@ async def msg_add_super_title(message: Message, state: FSMContext, db_pool: asyn
         await state.clear()
         return await message.answer("❌ Не удалось определить проект.")
 
+    # Keep chat clean: the wizard already owns the SPA message, so we can delete user input.
+    await try_delete_user_message(message)
+
     await state.update_data(title=title)
     await state.set_state(AddSuperTaskWizard.confirming)
 

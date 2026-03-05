@@ -25,6 +25,7 @@ from bot.handlers.common import escape_hatch_menu_or_command
 from bot.ui import ui_render
 from bot.ui.screens import ui_render_team
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _now_ts
+from bot.ui.render import ui_adopt_message
 from bot.utils import canon, h, kb_columns, safe_edit, try_delete_user_message, wizard_render
 from bot.keyboards import back_home_kb
 
@@ -44,9 +45,24 @@ def to_utc(dt: datetime | None) -> datetime | None:
 async def cmd_team_load(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    # If coming from a wizard, adopt its message as the SPA screen to keep "one screen".
+    try:
+        data = await state.get_data()
+        wiz_chat_id = int(data.get("wizard_chat_id") or message.chat.id)
+        wiz_msg_id = data.get("wizard_msg_id")
+        if wiz_msg_id:
+            await ui_adopt_message(
+                bot=message.bot,
+                db_pool=db_pool,
+                chat_id=wiz_chat_id,
+                message_id=int(wiz_msg_id),
+                delete_old=True,
+            )
+    except Exception:
+        pass
     await state.clear()
     await try_delete_user_message(message)
-    await ui_render_team(message, db_pool, force_new=True)
+    await ui_render_team(message, db_pool, force_new=False)
 
 
 async def cb_team_add(callback: CallbackQuery, state: FSMContext, deps: AppDeps) -> None:

@@ -30,7 +30,8 @@ from bot.services.vault_sync import background_project_sync
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _undo_active, _now_ts
 from bot.ui.task_card import task_card_kb, task_deadline_kb
 from bot.tz import to_db_utc
-from bot.utils import h, safe_edit, kb_columns
+from bot.utils import h, safe_edit, kb_columns, try_delete_user_message
+from bot.utils.telegram import safe_edit_by_id
 
 
 
@@ -310,11 +311,30 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
     return await safe_edit(msg, "\n".join(lines).strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
 
 
-async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps, *, expanded: bool = False) -> None:
-    """Render task card into the SPA message."""
+async def build_task_card(
+    *,
+    db_pool: asyncpg.Pool,
+    chat_id: int,
+    task_id: int,
+    deps: AppDeps,
+    expanded: bool = False,
+) -> tuple[str, InlineKeyboardMarkup | None, str]:
+    """Build task card UI without sending/editing messages.
+
+    Returns: (text, keyboard, kind) where kind is one of: task/super/missing.
+    """
     tz = _tz_from_deps(deps)
+    kind = "task"
+    row: dict | None = None
+    subs: list[dict] = []
+    return_cb: str | None = None
+    return_label: str | None = None
+    undo: dict | None = None
+    triage_active = False
+    inbox_left: int | None = None
+
     async with db_pool.acquire() as conn:
-        row = await conn.fetchrow(
+        rec = await conn.fetchrow(
             """
             SELECT t.id, t.title, t.status, t.kind, t.deadline, t.parent_task_id,
                    t.g_task_id, t.g_task_list_id, t.g_task_hash,
@@ -325,24 +345,23 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
             LEFT JOIN team tm ON tm.id = t.assignee_id
             WHERE t.id=$1
             """,
-            task_id,
+            int(task_id),
         )
-        if not row:
-            await safe_edit(msg, "❌ Задача не найдена.")
-            return
-        if (row.get("kind") or "task") == "super":
-            return await show_super_task_card(msg, db_pool, int(task_id), deps=deps, page=0)
+        if not rec:
+            return "❌ Задача не найдена.", None, "missing"
 
-        subs = await conn.fetch(
-            "SELECT id, title, status FROM tasks WHERE parent_task_id=$1 ORDER BY id",
-            task_id,
-        )
+        row = dict(rec)
+        kind = (row.get("kind") or "task").lower()
+        if kind == "super":
+            return "", None, "super"
 
-        ui_state = await ui_get_state(conn, int(msg.chat.id))
+        subs = [dict(r) for r in await conn.fetch("SELECT id, title, status FROM tasks WHERE parent_task_id=$1 ORDER BY id", int(task_id))]
+
+        ui_state = await ui_get_state(conn, int(chat_id))
         payload = _ui_payload_get(ui_state)
         ui_screen = str(ui_state.get("ui_screen") or "")
         return_cb, return_label = _task_return_context(ui_screen, payload)
-        undo = _undo_active(payload, task_id=task_id)
+        undo = _undo_active(payload, task_id=int(task_id))
 
         triage = payload.get("triage") if isinstance(payload, dict) else None
         triage_active = bool(
@@ -351,7 +370,6 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
             and triage.get("mode") == "inbox"
             and int(triage.get("anchor_id") or 0) == int(task_id)
         )
-        inbox_left: int | None = None
         if triage_active:
             try:
                 inbox_id = int(triage.get("inbox_id") or 0)
@@ -364,11 +382,13 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
             except Exception:
                 inbox_left = None
 
+    assert row is not None
+
     # Convert stored naive-UTC deadline to local time for display.
-    dl = fmt_local(row["deadline"], tz)
+    dl = fmt_local(row.get("deadline"), tz)
     if getattr(deps, "logger", None):
         try:
-            raw = row["deadline"]
+            raw = row.get("deadline")
             loc = to_local(raw, tz)
             deps.logger.info(
                 "task card tz debug",
@@ -380,7 +400,8 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
             )
         except Exception:
             pass
-    status = (row["status"] or "todo").lower()
+
+    status = (row.get("status") or "todo").lower()
     status_map = {
         "todo": "к выполнению",
         "in_progress": "в работе",
@@ -392,8 +413,8 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
 
     lines = [
         f"🧩 <b>ЗАДАЧА</b> #{int(row['id'])}",
-        f"Проект: <b>{h(str(row['project_code']))}</b>",
-        f"Исполнитель: <b>{h(str(row['assignee']))}</b>",
+        f"Проект: <b>{h(str(row.get('project_code') or ''))}</b>",
+        f"Исполнитель: <b>{h(str(row.get('assignee') or '—'))}</b>",
         f"Статус: <b>{h(str(st))}</b>",
         f"Дедлайн: <b>{h(str(dl))}</b>",
     ]
@@ -406,21 +427,21 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         left = max(0, int(undo.get("exp", 0)) - _now_ts())
         lines.append(f"↩️ <i>Можно отменить последнее действие</i> (<b>{left}</b> сек)")
 
-    lines += ["", f"Текст: {h(str(row['title']))}"]
+    lines += ["", f"Текст: {h(str(row.get('title') or ''))}"]
 
-    if row["parent_task_id"]:
+    if row.get("parent_task_id"):
         lines.append(f"Родитель: #{int(row['parent_task_id'])}")
 
     if subs:
         lines.append("")
         lines.append("<b>Подзадачи:</b>")
         for s in subs[:10]:
-            mark = "✅" if s["status"] == "done" else "•"
-            lines.append(f"{mark} #{int(s['id'])} {h(str(s['title']))}")
+            mark = "✅" if s.get("status") == "done" else "•"
+            lines.append(f"{mark} #{int(s['id'])} {h(str(s.get('title') or ''))}")
         if len(subs) > 10:
             lines.append(f"…и ещё {len(subs)-10}")
 
-    active_subs = [(int(s["id"]), str(s["title"])) for s in (subs or []) if (s.get("status") != "done")]
+    active_subs = [(int(s["id"]), str(s.get("title") or "")) for s in (subs or []) if (s.get("status") != "done")]
 
     in_gtasks = bool(row.get("g_task_id"))
     fp = _gtasks_fingerprint(
@@ -434,7 +455,7 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
     kb = task_card_kb(
         int(task_id),
         int(row["project_id"]),
-        int(row["parent_task_id"]) if row["parent_task_id"] else None,
+        int(row["parent_task_id"]) if row.get("parent_task_id") else None,
         str(status),
         in_gtasks=in_gtasks,
         gtasks_dirty=gtasks_dirty,
@@ -449,7 +470,15 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
     if undo:
         kb.inline_keyboard.insert(0, [InlineKeyboardButton(text="↩️ Undo", callback_data=f"undo:task:{task_id}")])
 
-    await safe_edit(msg, "\n".join(lines), reply_markup=kb, parse_mode="HTML")
+    return "\n".join(lines), kb, kind
+
+
+async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps, *, expanded: bool = False) -> None:
+    """Render task card into the current message."""
+    text, kb, kind = await build_task_card(db_pool=db_pool, chat_id=int(msg.chat.id), task_id=int(task_id), deps=deps, expanded=expanded)
+    if kind == "super":
+        return await show_super_task_card(msg, db_pool, int(task_id), deps=deps, page=0)
+    await safe_edit(msg, text, reply_markup=kb, parse_mode="HTML")
 
 
 async def cb_undo_task(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -1111,7 +1140,11 @@ async def cb_task(
         elif kind == "none":
             deadline_local = None
         elif kind == "manual":
-            await state.update_data(edit_task_id=task_id)
+            await state.update_data(
+                edit_task_id=task_id,
+                wizard_chat_id=int(callback.message.chat.id),
+                wizard_msg_id=int(callback.message.message_id),
+            )
             # State itself is defined in bot.fsm.states
             from bot.fsm import EditTaskDeadline
 
@@ -1160,13 +1193,39 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
 
     data = await state.get_data()
     task_id = data.get("edit_task_id")
+    wiz_chat_id = int(data.get("wizard_chat_id") or message.chat.id)
+    wiz_msg_id = data.get("wizard_msg_id")
+
+    # Keep chat clean: remove the user's input message (date string).
+    await try_delete_user_message(message)
+
     if not task_id:
         await state.clear()
+        if wiz_msg_id:
+            await safe_edit_by_id(
+                bot=message.bot,
+                chat_id=wiz_chat_id,
+                message_id=int(wiz_msg_id),
+                text="⚠️ Не удалось определить задачу.",
+            )
+            return
         return await message.answer("⚠️ Не удалось определить задачу.")
 
     parsed = await asyncio_to_thread_parse(message.text or "", deps.tz_name)
     if not parsed:
-        return await message.answer("Не понял дату. Пример: 26.02 14:00 или 26.02.")
+        prompt = "Не понял дату. Пример: 26.02 14:00 или 26.02.\n\nВведите дату/время (например 26.02 14:00 или 26.02)."
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{int(task_id)}:dlcancel")]]
+        )
+        if wiz_msg_id:
+            return await safe_edit_by_id(
+                bot=message.bot,
+                chat_id=wiz_chat_id,
+                message_id=int(wiz_msg_id),
+                text=prompt,
+                reply_markup=kb,
+            )
+        return await message.answer(prompt, reply_markup=kb)
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=_tz_from_deps(deps))
@@ -1192,8 +1251,25 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
             background_project_sync(int(pid), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
+
+    # Update the task card in the same message where the prompt was shown.
+    text, kb, kind = await build_task_card(
+        db_pool=db_pool,
+        chat_id=wiz_chat_id,
+        task_id=int(task_id),
+        deps=deps,
+        expanded=False,
+    )
     await state.clear()
-    await message.answer("✅ Срок обновлён.")
+    if wiz_msg_id and kind != "super":
+        return await safe_edit_by_id(
+            bot=message.bot,
+            chat_id=wiz_chat_id,
+            message_id=int(wiz_msg_id),
+            text=text,
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
     return await show_task_card(message, db_pool, int(task_id), deps=deps)
 
 

@@ -15,6 +15,36 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import InlineKeyboardMarkup, Message
 
 from bot.ui.state import ui_get_state, ui_set_state
+from bot.utils.telegram import fit_telegram_text
+
+
+async def ui_adopt_message(
+    *,
+    bot: Bot,
+    db_pool: asyncpg.Pool,
+    chat_id: int,
+    message_id: int,
+    delete_old: bool = True,
+) -> None:
+    """Adopt `message_id` as the SPA UI message for the chat.
+
+    If requested, best-effort delete the previously stored UI message to keep chat clean.
+    Screen/payload are left intact.
+    """
+    chat_id = int(chat_id)
+    message_id = int(message_id)
+    async with db_pool.acquire() as conn:
+        state = await ui_get_state(conn, chat_id)
+        old_id = state.get("ui_message_id")
+
+    if delete_old and old_id and int(old_id) != int(message_id):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=int(old_id))
+        except Exception:
+            pass
+
+    async with db_pool.acquire() as conn:
+        await ui_set_state(conn, chat_id, ui_message_id=message_id)
 
 
 async def ui_render(
@@ -40,6 +70,7 @@ async def ui_render(
     Notes:
     - payload can be {} to explicitly clear payload; do not use `payload or ...`
     """
+    text = fit_telegram_text(text, parse_mode=parse_mode)
     # Load current UI state once.
     async with db_pool.acquire() as conn:
         state = await ui_get_state(conn, chat_id)

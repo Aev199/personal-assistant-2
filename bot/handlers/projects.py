@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -471,6 +472,14 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                 for r in records
             ]
             tree_text = "✅ Задач нет." if not tasks else render_task_tree(tasks, tz)[0]
+            try:
+                max_lines = int(os.getenv("PROJECT_TREE_MAX_LINES", "35"))
+            except Exception:
+                max_lines = 35
+            tree_lines = tree_text.splitlines()
+            if max_lines > 0 and len(tree_lines) > max_lines:
+                hidden = len(tree_lines) - max_lines
+                tree_text = "\n".join(tree_lines[:max_lines] + [f"<i>… и ещё {hidden} строк</i>"])
 
             page_size = 8
             total_roots = await conn.fetchval(

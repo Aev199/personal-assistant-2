@@ -27,7 +27,7 @@ from bot.ui.screens import (
     ui_render_team,
 )
 
-from bot.ui.state import ui_set_state
+from bot.ui.render import ui_adopt_message
 
 
 async def _cleanup_wizard_message(callback: CallbackQuery, state: FSMContext) -> None:
@@ -70,9 +70,7 @@ async def _adopt_callback_message_as_ui(callback: CallbackQuery, db_pool: asyncp
         return
     chat_id = int(msg.chat.id)
     msg_id = int(msg.message_id)
-    async with db_pool.acquire() as conn:
-        # Screen/payload will be updated by the target renderer.
-        await ui_set_state(conn, chat_id, ui_message_id=msg_id)
+    await ui_adopt_message(bot=callback.bot, db_pool=db_pool, chat_id=chat_id, message_id=msg_id, delete_old=True)
 
 
 def _parse_nav_all_callback(data: str | None) -> tuple[str, int]:

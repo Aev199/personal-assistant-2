@@ -86,6 +86,26 @@ def fit_telegram_text(text: str, *, parse_mode: str | None = None, max_units: in
 
 async def safe_edit(msg: Message, text: str, reply_markup=None, *, parse_mode: str | None = None) -> None:
     """Edit message when possible; fallback to sending a new message."""
+    db_pool = getattr(msg.bot, "db_pool", None)
+    if db_pool is not None:
+        try:
+            from bot.ui.render import ui_render
+
+            await ui_render(
+                bot=msg.bot,
+                db_pool=db_pool,
+                chat_id=int(msg.chat.id),
+                text=text,
+                reply_markup=reply_markup,
+                screen=None,
+                payload=None,
+                fallback_message=msg,
+                parse_mode=parse_mode,
+            )
+            return
+        except Exception:
+            pass
+
     text = fit_telegram_text(text, parse_mode=parse_mode)
     for _ in range(3):
         try:
@@ -129,6 +149,29 @@ async def safe_edit_by_id(
     parse_mode: str | None = None,
 ) -> None:
     """Edit a bot message by id; fallback to sending a new message."""
+    db_pool = getattr(bot, "db_pool", None)
+    if db_pool is not None:
+        try:
+            from bot.ui.render import ui_render
+            from bot.ui.state import ui_set_state
+
+            async with db_pool.acquire() as conn:
+                await ui_set_state(conn, int(chat_id), ui_message_id=int(message_id))
+            await ui_render(
+                bot=bot,
+                db_pool=db_pool,
+                chat_id=int(chat_id),
+                text=text,
+                reply_markup=reply_markup,
+                screen=None,
+                payload=None,
+                fallback_message=None,
+                parse_mode=parse_mode,
+            )
+            return
+        except Exception:
+            pass
+
     text = fit_telegram_text(text, parse_mode=parse_mode)
     for _ in range(3):
         try:
@@ -182,6 +225,24 @@ async def wizard_render(
     Uses wizard_msg_id from FSM data; if edit fails, sends a new message and
     updates wizard_msg_id.
     """
+    db_pool = getattr(bot, "db_pool", None)
+    if db_pool is not None:
+        try:
+            from bot.ui.render import ui_wizard_render
+
+            await ui_wizard_render(
+                bot=bot,
+                state=state,
+                db_pool=db_pool,
+                chat_id=int(chat_id),
+                fallback_msg=fallback_msg,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+            return
+        except Exception:
+            pass
 
     data = await state.get_data()
     wiz_chat_id = int(data.get("wizard_chat_id") or chat_id)

@@ -27,11 +27,11 @@ from bot.db import db_add_event, db_log_error
 from bot.services.background import fire_and_forget
 from bot.services.gtasks_service import get_or_create_list_id, due_from_local_date
 from bot.services.vault_sync import background_project_sync
+from bot.ui.render import ui_render
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _undo_active, _now_ts
 from bot.ui.task_card import task_card_kb, task_deadline_kb
 from bot.tz import to_db_utc
-from bot.utils import h, safe_edit, kb_columns, try_delete_user_message
-from bot.utils.telegram import safe_edit_by_id
+from bot.utils import h, kb_columns, try_delete_user_message
 
 
 
@@ -170,6 +170,29 @@ def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str
     return None, None
 
 
+async def _render_task_overlay(
+    msg: Message,
+    db_pool: asyncpg.Pool,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    parse_mode: str | None = "HTML",
+    screen: str | None = None,
+    payload: dict | None = None,
+) -> int:
+    return await ui_render(
+        bot=msg.bot,
+        db_pool=db_pool,
+        chat_id=int(msg.chat.id),
+        text=text,
+        reply_markup=reply_markup,
+        screen=screen,
+        payload=payload,
+        fallback_message=msg,
+        parse_mode=parse_mode,
+    )
+
+
 async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps, *, page: int = 0) -> None:
     """Render supertask (epic) card with its child tasks (1-level hierarchy)."""
     tz = _tz_from_deps(deps)
@@ -188,7 +211,8 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
             int(task_id),
         )
         if not row:
-            return await safe_edit(msg, "❌ Суперзадача не найдена.")
+            await _render_task_overlay(msg, db_pool, "❌ Суперзадача не найдена.")
+            return
 
         kind = (row.get("kind") or "task").lower()
         if kind != "super":
@@ -248,7 +272,6 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
             "return_cb": return_cb,
             "return_label": return_label or "⬅ Назад",
         }
-        await ui_set_state(conn, chat_id, ui_screen="super_task", ui_payload=payload)
 
     title = (row.get("title") or "").strip()
     status = (row.get("status") or "todo").lower()
@@ -308,7 +331,17 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
         ]
     )
 
-    return await safe_edit(msg, "\n".join(lines).strip(), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
+    await ui_render(
+        bot=msg.bot,
+        db_pool=db_pool,
+        chat_id=int(msg.chat.id),
+        text="\n".join(lines).strip(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        screen="super_task",
+        payload=payload,
+        fallback_message=msg,
+        parse_mode="HTML",
+    )
 
 
 async def build_task_card(
@@ -478,7 +511,17 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
     text, kb, kind = await build_task_card(db_pool=db_pool, chat_id=int(msg.chat.id), task_id=int(task_id), deps=deps, expanded=expanded)
     if kind == "super":
         return await show_super_task_card(msg, db_pool, int(task_id), deps=deps, page=0)
-    await safe_edit(msg, text, reply_markup=kb, parse_mode="HTML")
+    await ui_render(
+        bot=msg.bot,
+        db_pool=db_pool,
+        chat_id=int(msg.chat.id),
+        text=text,
+        reply_markup=kb,
+        screen=None,
+        payload=None,
+        fallback_message=msg,
+        parse_mode="HTML",
+    )
 
 
 async def cb_undo_task(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -516,7 +559,7 @@ async def cb_undo_task(callback: CallbackQuery, state: FSMContext, db_pool: asyn
             if not info:
                 payload.pop("undo", None)
                 await ui_set_state(conn, chat_id, ui_payload=payload)
-                await safe_edit(callback.message, "❌ Задача не найдена.", parse_mode="HTML")
+                await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.", parse_mode="HTML")
                 return
 
             cur_status = info["status"] or "todo"
@@ -600,8 +643,9 @@ async def cb_task(
                 ],
             ]
         )
-        return await safe_edit(
+        return await _render_task_overlay(
             callback.message,
+            db_pool,
             "✅ <b>Закрыть суперзадачу?</b>\n\nЭто действие отметит <b>done</b> суперзадачу и все задачи внутри.",
             reply_markup=kb,
             parse_mode="HTML",
@@ -650,8 +694,9 @@ async def cb_task(
                 [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
             ]
         )
-        return await safe_edit(
+        return await _render_task_overlay(
             callback.message,
+            db_pool,
             f"✅ Суперзадача закрыта. Закрыто задач: <b>{closed_n}</b>.",
             reply_markup=kb,
             parse_mode="HTML",
@@ -679,7 +724,7 @@ async def cb_task(
         async with db_pool.acquire() as conn:
             info = await conn.fetchrow("SELECT t.project_id FROM tasks t WHERE t.id=$1", task_id)
             if not info:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             rows = await conn.fetch("SELECT id, code FROM projects WHERE status='active' ORDER BY code")
         cur_pid = int(info["project_id"])
         kb_rows: list[list[InlineKeyboardButton]] = []
@@ -698,8 +743,9 @@ async def cb_task(
             InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:more"),
             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
-        return await safe_edit(
+        return await _render_task_overlay(
             callback.message,
+            db_pool,
             "📁 <b>Выберите проект:</b>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
             parse_mode="HTML",
@@ -713,7 +759,7 @@ async def cb_task(
                 task_id,
             )
             if not info:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             old_pid = int(info["project_id"])
             if new_pid == old_pid:
                 return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
@@ -903,7 +949,7 @@ async def cb_task(
                 task_id,
             )
             if not info:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             pid = int(info["project_id"])
             prev_status = info["status"] or "todo"
 
@@ -956,7 +1002,7 @@ async def cb_task(
         async with db_pool.acquire() as conn:
             pid = await conn.fetchval("SELECT project_id FROM tasks WHERE id=$1", task_id)
             if not pid:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             team = await conn.fetch("SELECT id, name FROM team ORDER BY name")
 
         kb: list[list[InlineKeyboardButton]] = [
@@ -970,7 +1016,12 @@ async def cb_task(
             InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}"),
             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
-        return await safe_edit(callback.message, "👤 Выберите исполнителя:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        return await _render_task_overlay(
+            callback.message,
+            db_pool,
+            "👤 Выберите исполнителя:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        )
 
     if action == "assignee_set" and len(parts) >= 4:
         token = parts[3]
@@ -981,7 +1032,7 @@ async def cb_task(
                 task_id,
             )
             if not info:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             pid = int(info["project_id"])
             await conn.execute("UPDATE tasks SET assignee_id=$2 WHERE id=$1", task_id, new_assignee)
             nm = "—"
@@ -1006,7 +1057,7 @@ async def cb_task(
                 task_id,
             )
             if not info:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             pid = int(info["project_id"])
             old_parent = info["parent_task_id"]
             await conn.execute("UPDATE tasks SET parent_task_id=NULL WHERE id=$1", task_id)
@@ -1026,7 +1077,7 @@ async def cb_task(
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("SELECT project_id FROM tasks WHERE id=$1", task_id)
             if not row:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             project_id = int(row["project_id"])
             total = await conn.fetchval(
                 "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND status != 'done' AND kind='super' AND id != $2",
@@ -1076,13 +1127,19 @@ async def cb_task(
             InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}"),
             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
-        return await safe_edit(callback.message, "\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        return await _render_task_overlay(
+            callback.message,
+            db_pool,
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        )
 
     if action == "parent_set" and len(parts) >= 4:
         parent_id = int(parts[3])
         if parent_id == task_id:
-            return await safe_edit(
+            return await _render_task_overlay(
                 callback.message,
+                db_pool,
                 "⚠️ Нельзя назначить задачу родителем самой себе.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}")]]),
             )
@@ -1090,18 +1147,18 @@ async def cb_task(
         async with db_pool.acquire() as conn:
             cur = await conn.fetchrow("SELECT project_id, kind FROM tasks WHERE id=$1", int(task_id))
             if not cur:
-                return await safe_edit(callback.message, "❌ Задача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             if (cur.get("kind") or "task") == "super":
                 await callback.answer("Суперзадача не может быть дочерней", show_alert=True)
                 return await show_super_task_card(callback.message, db_pool, task_id, deps=deps, page=0)
 
             parent = await conn.fetchrow("SELECT id, project_id, kind FROM tasks WHERE id=$1", int(parent_id))
             if not parent:
-                return await safe_edit(callback.message, "❌ Суперзадача не найдена.")
+                return await _render_task_overlay(callback.message, db_pool, "❌ Суперзадача не найдена.")
             if int(parent["project_id"]) != int(cur["project_id"]):
-                return await safe_edit(callback.message, "⚠️ Нельзя назначить родителя из другого проекта.")
+                return await _render_task_overlay(callback.message, db_pool, "⚠️ Нельзя назначить родителя из другого проекта.")
             if (parent.get("kind") or "task") != "super":
-                return await safe_edit(callback.message, "⚠️ Родителем может быть только суперзадача.")
+                return await _render_task_overlay(callback.message, db_pool, "⚠️ Родителем может быть только суперзадача.")
 
             info = await conn.fetchrow(
                 "SELECT t.project_id, p.code as project_code, t.title FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=$1",
@@ -1121,7 +1178,12 @@ async def cb_task(
     # Deadline controls
     # -----------------
     if action == "dl":
-        return await safe_edit(callback.message, "🗓 Выберите срок:", reply_markup=task_deadline_kb(task_id))
+        return await _render_task_overlay(
+            callback.message,
+            db_pool,
+            "🗓 Выберите срок:",
+            reply_markup=task_deadline_kb(task_id),
+        )
 
     if action == "dlset" and len(parts) >= 4:
         kind = parts[3]
@@ -1149,8 +1211,9 @@ async def cb_task(
             from bot.fsm import EditTaskDeadline
 
             await state.set_state(EditTaskDeadline.entering)
-            return await safe_edit(
+            return await _render_task_overlay(
                 callback.message,
+                db_pool,
                 "Введите дату/время (например 26.02 14:00 или 26.02).",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{task_id}:dlcancel")]]),
             )
@@ -1196,36 +1259,48 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
     wiz_chat_id = int(data.get("wizard_chat_id") or message.chat.id)
     wiz_msg_id = data.get("wizard_msg_id")
 
-    # Keep chat clean: remove the user's input message (date string).
     await try_delete_user_message(message)
+
+    async def _point_ui_to_wizard() -> None:
+        if wiz_msg_id:
+            async with db_pool.acquire() as conn:
+                await ui_set_state(conn, wiz_chat_id, ui_message_id=int(wiz_msg_id))
 
     if not task_id:
         await state.clear()
-        if wiz_msg_id:
-            await safe_edit_by_id(
-                bot=message.bot,
-                chat_id=wiz_chat_id,
-                message_id=int(wiz_msg_id),
-                text="⚠️ Не удалось определить задачу.",
-            )
-            return
-        return await message.answer("⚠️ Не удалось определить задачу.")
+        await _point_ui_to_wizard()
+        await ui_render(
+            bot=message.bot,
+            db_pool=db_pool,
+            chat_id=wiz_chat_id,
+            text="⚠️ Не удалось определить задачу.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]
+            ),
+            screen=None,
+            payload=None,
+            fallback_message=None,
+            parse_mode="HTML",
+        )
+        return
 
     parsed = await asyncio_to_thread_parse(message.text or "", deps.tz_name)
     if not parsed:
-        prompt = "Не понял дату. Пример: 26.02 14:00 или 26.02.\n\nВведите дату/время (например 26.02 14:00 или 26.02)."
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{int(task_id)}:dlcancel")]]
+        await _point_ui_to_wizard()
+        await ui_render(
+            bot=message.bot,
+            db_pool=db_pool,
+            chat_id=wiz_chat_id,
+            text="Не понял дату. Пример: 26.02 14:00 или 26.02.\n\nВведите дату/время (например 26.02 14:00 или 26.02).",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{int(task_id)}:dlcancel")]]
+            ),
+            screen=None,
+            payload=None,
+            fallback_message=None,
+            parse_mode=None,
         )
-        if wiz_msg_id:
-            return await safe_edit_by_id(
-                bot=message.bot,
-                chat_id=wiz_chat_id,
-                message_id=int(wiz_msg_id),
-                text=prompt,
-                reply_markup=kb,
-            )
-        return await message.answer(prompt, reply_markup=kb)
+        return
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=_tz_from_deps(deps))
@@ -1252,24 +1327,8 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
             label="vault_sync",
         )
 
-    # Update the task card in the same message where the prompt was shown.
-    text, kb, kind = await build_task_card(
-        db_pool=db_pool,
-        chat_id=wiz_chat_id,
-        task_id=int(task_id),
-        deps=deps,
-        expanded=False,
-    )
+    await _point_ui_to_wizard()
     await state.clear()
-    if wiz_msg_id and kind != "super":
-        return await safe_edit_by_id(
-            bot=message.bot,
-            chat_id=wiz_chat_id,
-            message_id=int(wiz_msg_id),
-            text=text,
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
     return await show_task_card(message, db_pool, int(task_id), deps=deps)
 
 

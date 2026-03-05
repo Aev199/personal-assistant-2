@@ -179,6 +179,10 @@ def make_on_startup(
         if pool is None:
             raise last_err or RuntimeError("DB pool create failed")
         dp.workflow_data.update({"db_pool": pool})
+        try:
+            setattr(bot, "db_pool", pool)
+        except Exception:
+            pass
 
         # Update dependency container
         deps = dp.workflow_data.get("deps")
@@ -341,6 +345,10 @@ def make_on_shutdown(*, dp: Dispatcher, cloud, gtasks, icloud):
                 deps.db_log_error = None
             except Exception:
                 pass
+        try:
+            setattr(bot, "db_pool", None)
+        except Exception:
+            pass
 
         t = dp.workflow_data.get("webhook_keeper_task")
         if t:

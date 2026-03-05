@@ -21,6 +21,7 @@ from bot.handlers import (
     register_nav,
     register_projects,
     register_tasks,
+    register_inbox,
     register_bulk,
     register_wizards,
     register_events,
@@ -57,6 +58,7 @@ def build_core(
     register_nav(dp)
     register_projects(dp)
     register_tasks(dp)
+    register_inbox(dp)
     register_bulk(dp)
     register_wizards(dp)
     register_events(dp)

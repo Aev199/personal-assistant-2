@@ -313,12 +313,24 @@ async def ui_render_home(message: Message | None, db_pool: asyncpg.Pool, *, tz_n
 
         # Keyboard (dynamic)
         kb: list[list[InlineKeyboardButton]] = []
-        row1: list[InlineKeyboardButton] = [InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task")]
-        if inbox_id:
-            row1.append(InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data=f"proj:{int(inbox_id)}"))
-        else:
-            row1.append(InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"))
-        kb.append(row1)
+
+        # Row 1: quick capture (GTD).
+        # Note: "Проекты" есть в нижней ReplyKeyboard, поэтому не дублируем на главной.
+        kb.append([
+            InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
+            InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
+        ])
+
+        # Row 2: inbox processing / inbox access
+        if inbox_id and int(inbox_count or 0) > 0:
+            kb.append([
+                InlineKeyboardButton(text="🧹 Разобрать Inbox", callback_data="inbox:triage:start"),
+                InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+            ])
+        elif inbox_id:
+            kb.append([
+                InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+            ])
 
         kb.append([
             InlineKeyboardButton(text=f"🔥 Срочно ({int(overdue_count or 0)}) →", callback_data="nav:overdue:0"),
@@ -326,7 +338,6 @@ async def ui_render_home(message: Message | None, db_pool: asyncpg.Pool, *, tz_n
         ])
         kb.append([
             InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)}) →", callback_data="nav:work:0"),
-            InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"),
         ])
         kb.append([
             InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
@@ -1008,6 +1019,156 @@ async def ui_render_work(message: Message, db_pool: asyncpg.Pool, *, tz_name: st
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         screen="work",
         payload={"page": page},
+        fallback_message=message,
+        force_new=force_new,
+        parse_mode="HTML",
+    )
+
+
+async def ui_render_inbox(message: Message, db_pool: asyncpg.Pool, *, tz_name: str | None = None, page: int = 0, force_new: bool = False) -> None:
+    """Render INBOX tasks list (GTD capture bucket) with pagination."""
+    tz_name = tz_name or _tz_name()
+    tz = resolve_tzinfo(tz_name)
+    chat_id = int(message.chat.id)
+
+    page = max(0, int(page or 0))
+    page_size = 30
+
+    def _short(s: str, n: int = 30) -> str:
+        s = (s or "").strip()
+        return s if len(s) <= n else (s[: n - 1] + "…")
+
+    def _line(title: str, assignee: str, dt_local: datetime | None) -> list[str]:
+        t = (title or "").strip()
+        a = (assignee or "—").strip()
+        due = dt_local.strftime("%d.%m %H:%M") if dt_local else "без срока"
+        if len(t) > 40:
+            t_show = t if len(t) <= 90 else (t[:89] + "…")
+            return [
+                f"📥 {h(t_show)}",
+                f"   {h(a)} → <i>{h('до ' + due) if dt_local else h(due)}</i>",
+            ]
+        t_show = t if len(t) <= 90 else (t[:89] + "…")
+        due_part = f"до {due}" if dt_local else due
+        return [f"📥 {h(t_show)} — {h(a)}, <i>{h(due_part)}</i>"]
+
+    toast_line: str | None = None
+
+    try:
+        async with db_pool.acquire() as conn:
+            # Pull existing payload for one-shot toasts (like Home) without overwriting state.
+            ui_state = await ui_get_state(conn, chat_id)
+            payload = _ui_payload_get(ui_state)
+            toast = payload.get("toast") if isinstance(payload, dict) else None
+            if isinstance(toast, dict):
+                exp = int(toast.get("exp") or 0)
+                if not exp or exp >= _now_ts():
+                    ttxt = (toast.get("text") or "").strip()
+                    if ttxt:
+                        toast_line = ttxt
+                payload.pop("toast", None)
+
+            # Remember current inbox page (non-critical)
+            payload["inbox_page"] = int(page)
+            await ui_set_state(conn, chat_id, ui_screen="inbox", ui_payload=payload)
+
+            inbox_id = await conn.fetchval("SELECT id FROM projects WHERE code='INBOX' LIMIT 1")
+            if not inbox_id:
+                return await ui_render(
+                    bot=message.bot,
+                    db_pool=db_pool,
+                    chat_id=chat_id,
+                    text="❌ Проект INBOX не найден.",
+                    reply_markup=back_home_kb(),
+                    screen="inbox",
+                    fallback_message=message,
+                    force_new=force_new,
+                    parse_mode="HTML",
+                )
+
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND project_id=$1",
+                int(inbox_id),
+            )
+            total = int(total or 0)
+
+            rows = await conn.fetch(
+                """
+                SELECT t.id, t.title, COALESCE(tm.name,'—') AS assignee, t.deadline, t.created_at
+                FROM tasks t
+                LEFT JOIN team tm ON tm.id=t.assignee_id
+                WHERE t.status != 'done' AND t.project_id=$1
+                ORDER BY t.created_at ASC, t.id ASC
+                LIMIT $2 OFFSET $3
+                """,
+                int(inbox_id),
+                page_size,
+                page * page_size,
+            )
+    except Exception as e:
+        return await ui_render(
+            bot=message.bot,
+            db_pool=db_pool,
+            chat_id=chat_id,
+            text=f"❌ Ошибка: {h(str(e))}",
+            reply_markup=back_home_kb(),
+            screen="inbox",
+            fallback_message=message,
+            force_new=force_new,
+            parse_mode="HTML",
+        )
+
+    rows = list(rows or [])
+
+    lines: list[str] = []
+    if toast_line:
+        lines.extend([toast_line, ""])
+    lines.extend(["📥 <b>INBOX</b> — входящие", f"<i>Всего: {total}</i>", ""])
+    if not rows:
+        lines.append("Inbox пуст. Добавляйте задачи через ➕ Добавить или ⚡ Быстрая задача.")
+    else:
+        lines.append("Нажмите <b>🧹 Разобрать</b>, чтобы пройтись по задачам по одной.")
+        lines.append("")
+        for r in rows:
+            dl_local = to_local(r.get("deadline"), tz)
+            lines.extend(_line(r.get("title") or "", r.get("assignee") or "—", dl_local))
+
+    kb: list[list[InlineKeyboardButton]] = []
+    kb.append(
+        [
+            InlineKeyboardButton(text="🧹 Разобрать", callback_data="inbox:triage:start"),
+            InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
+        ]
+    )
+
+    # Task buttons (2 columns)
+    task_buttons: list[InlineKeyboardButton] = []
+    for r in rows:
+        title = (r.get("title") or "").strip()
+        label = f"📥 {_short(title, 26)}"
+        task_buttons.append(InlineKeyboardButton(text=label, callback_data=f"task:{int(r['id'])}"))
+    kb.extend(kb_columns(task_buttons, 2))
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:inbox:{page-1}"))
+    if (page + 1) * page_size < total:
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:inbox:{page+1}"))
+    if nav_row:
+        kb.append(nav_row)
+
+    kb.append([
+        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:inbox:{page}"),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+    ])
+
+    await ui_render(
+        bot=message.bot,
+        db_pool=db_pool,
+        chat_id=chat_id,
+        text="\n".join(lines).strip(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        screen="inbox",
         fallback_message=message,
         force_new=force_new,
         parse_mode="HTML",

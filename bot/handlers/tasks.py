@@ -119,6 +119,26 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         payload = _ui_payload_get(ui_state)
         undo = _undo_active(payload, task_id=task_id)
 
+        triage = payload.get("triage") if isinstance(payload, dict) else None
+        triage_active = bool(
+            isinstance(triage, dict)
+            and triage.get("active")
+            and triage.get("mode") == "inbox"
+            and int(triage.get("anchor_id") or 0) == int(task_id)
+        )
+        inbox_left: int | None = None
+        if triage_active:
+            try:
+                inbox_id = int(triage.get("inbox_id") or 0)
+                if inbox_id:
+                    inbox_left = await conn.fetchval(
+                        "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND project_id=$1",
+                        inbox_id,
+                    )
+                    inbox_left = int(inbox_left or 0)
+            except Exception:
+                inbox_left = None
+
     # Convert stored naive-UTC deadline to local time for display.
     dl = fmt_local(row["deadline"], tz)
     if getattr(deps, "logger", None):
@@ -152,6 +172,10 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         f"Статус: <b>{h(str(st))}</b>",
         f"Дедлайн: <b>{h(str(dl))}</b>",
     ]
+
+    if triage_active:
+        left_txt = f"{int(inbox_left)}" if inbox_left is not None else "…"
+        lines.insert(0, f"📥 <b>Разбор Inbox</b> • осталось: <b>{left_txt}</b>")
 
     if undo:
         left = max(0, int(undo.get("exp", 0)) - _now_ts())
@@ -191,6 +215,8 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
         gtasks_dirty=gtasks_dirty,
         expanded=expanded,
         subtasks=active_subs,
+        is_inbox=(str(row.get("project_code") or "").upper() == "INBOX"),
+        triage=triage_active,
     )
 
     if undo:

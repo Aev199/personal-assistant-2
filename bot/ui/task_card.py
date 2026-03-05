@@ -42,6 +42,8 @@ def task_card_kb(
     gtasks_dirty: bool = False,
     expanded: bool = False,
     subtasks: list[tuple[int, str]] | None = None,
+    is_inbox: bool = False,
+    triage: bool = False,
 ) -> InlineKeyboardMarkup:
     """Task card keyboard (Drill-down + compact UI).
 
@@ -66,88 +68,66 @@ def task_card_kb(
             rows.append([InlineKeyboardButton(text=f"↳ {_short(title, 30)}", callback_data=f"task:{int(sid)}")])
         return rows
 
+    def _triage_row() -> list[list[InlineKeyboardButton]]:
+        if not triage:
+            return []
+        return [
+            [
+                InlineKeyboardButton(text="➡ Следующая", callback_data="inbox:triage:next"),
+                InlineKeyboardButton(text="✖ Выйти", callback_data="inbox:triage:exit"),
+            ]
+        ]
+
     if not expanded:
-        # Compact mode
+        # Compact mode (daily use, minimal buttons)
         if status == "done":
-            return InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text="⬅ Назад", callback_data=back_cb),
-                        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-                    ]
+            rows_done = [
+                [
+                    InlineKeyboardButton(text="⬅ Назад", callback_data=back_cb),
+                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                 ]
-            )
+            ]
+            rows_done.extend(_triage_row())
+            return InlineKeyboardMarkup(inline_keyboard=rows_done)
 
         rows: list[list[InlineKeyboardButton]] = []
+        rows.append([
+            InlineKeyboardButton(text="✅ Готово", callback_data=f"task:{task_id}:done"),
+            InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
+            InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="➕ Подзадача", callback_data=f"add:sub:{task_id}"),
+            InlineKeyboardButton(text="⚡ В работе", callback_data=f"task:{task_id}:in_progress"),
+        ])
 
-        rows.append(
-            [
-                InlineKeyboardButton(text="✅ Готово", callback_data=f"task:{task_id}:done"),
-                InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
-            ]
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
-                InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
-            ]
-        )
+        if is_inbox:
+            rows.append([InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")])
 
-        # Relations
-        rel_row: list[InlineKeyboardButton] = [InlineKeyboardButton(text="➕ Подзадача", callback_data=f"add:sub:{task_id}")]
-        if parent_task_id:
-            rel_row.append(InlineKeyboardButton(text="⛓ Отвязать", callback_data=f"task:{task_id}:detach"))
-        else:
-            rel_row.append(InlineKeyboardButton(text="🔗 В подзадачи", callback_data=f"task:{task_id}:parent"))
-        rows.append(rel_row)
+        rows.append([
+            InlineKeyboardButton(text="⋯ Ещё", callback_data=f"task:{task_id}:more"),
+            InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+        ])
 
-        # Export to Google Tasks (fallback)
-        if in_gtasks and gtasks_dirty:
-            rows.append([InlineKeyboardButton(text="🔄 Обновить Google Tasks", callback_data=f"task:{task_id}:gtasks")])
-        elif in_gtasks:
-            rows.append([InlineKeyboardButton(text="✅ Google Tasks", callback_data=f"task:{task_id}:gtasks")])
-        else:
-            rows.append([InlineKeyboardButton(text="📤 В Google Tasks", callback_data=f"task:{task_id}:gtasks")])
-
-        # Inbox triage: move to another project
-        rows.append([InlineKeyboardButton(text="📁 В проект", callback_data=f"task:{task_id}:move")])
-
-        rows.extend(_subtask_rows())
-
-        rows.append(
-            [
-                InlineKeyboardButton(text="⬅ Главное", callback_data=f"task:{task_id}:more"),
-                InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-            ]
-        )
+        rows.extend(_triage_row())
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    # Expanded mode
+    # Expanded (⋯ Ещё): secondary actions
     rows: list[list[InlineKeyboardButton]] = []
 
-    if status != "done":
-        rows.append(
-            [
-                InlineKeyboardButton(text="✅ Готово", callback_data=f"task:{task_id}:done"),
-                InlineKeyboardButton(text="⏳ В работе", callback_data=f"task:{task_id}:in_progress"),
-            ]
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
-                InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
-            ]
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
-                InlineKeyboardButton(text="🔗 Родитель", callback_data=f"task:{task_id}:parent"),
-            ]
-        )
-        rows.append([InlineKeyboardButton(text="➕ Подзадача", callback_data=f"add:sub:{task_id}")])
-        if parent_task_id:
-            rows.append([InlineKeyboardButton(text="⛓ Отвязать", callback_data=f"task:{task_id}:detach")])
+    # Relations (secondary)
+    rows.append([
+        InlineKeyboardButton(text="🔗 Родитель…", callback_data=f"task:{task_id}:parent:0"),
+        InlineKeyboardButton(text=("⛓ Отвязать" if parent_task_id else "➕ Подзадача"), callback_data=(f"task:{task_id}:detach" if parent_task_id else f"add:sub:{task_id}")),
+    ])
 
+    # Move (especially useful for inbox)
+    rows.append([InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")])
+
+    # Google Tasks export/update
     if in_gtasks and gtasks_dirty:
         rows.append([InlineKeyboardButton(text="🔄 Обновить Google Tasks", callback_data=f"task:{task_id}:gtasks")])
     elif in_gtasks:
@@ -155,12 +135,16 @@ def task_card_kb(
     else:
         rows.append([InlineKeyboardButton(text="📤 В Google Tasks", callback_data=f"task:{task_id}:gtasks")])
 
-    rows.append([InlineKeyboardButton(text="📁 В проект", callback_data=f"task:{task_id}:move")])
+    # Active subtasks quick open (optional)
     rows.extend(_subtask_rows())
-    rows.append(
-        [
-            InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:less"),
-            InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-        ]
-    )
+
+    # Navigation
+    rows.append([
+        InlineKeyboardButton(text="⬅ К проекту", callback_data=back_cb),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+    ])
+    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:less")])
+
+    rows.extend(_triage_row())
+
     return InlineKeyboardMarkup(inline_keyboard=rows)

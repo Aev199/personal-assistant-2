@@ -16,6 +16,7 @@ from .screens import (
     ui_render_today,
     ui_render_overdue,
     ui_render_work,
+    ui_render_inbox,
     ui_render_team,
     ensure_main_menu,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "ui_render_today",
     "ui_render_overdue",
     "ui_render_work",
+    "ui_render_inbox",
     "ui_render_team",
     "ensure_main_menu",
 ]

@@ -22,6 +22,7 @@ from bot.ui.screens import (
     ui_render_today,
     ui_render_overdue,
     ui_render_work,
+    ui_render_inbox,
     ui_render_team,
 )
 
@@ -160,6 +161,23 @@ async def cb_nav_work(callback: CallbackQuery, state: FSMContext, db_pool: async
     await ui_render_work(callback.message, db_pool, tz_name=deps.tz_name, page=page)
 
 
+async def cb_nav_inbox(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
+        return await callback.answer("Недоступно", show_alert=True)
+    await callback.answer()
+    await _cleanup_wizard_message(callback, state)
+    await state.clear()
+    await _adopt_callback_message_as_ui(callback, db_pool)
+    page = 0
+    try:
+        parts = (callback.data or '').split(':')
+        if len(parts) >= 3 and parts[2].isdigit():
+            page = int(parts[2])
+    except Exception:
+        page = 0
+    await ui_render_inbox(callback.message, db_pool, tz_name=deps.tz_name, page=page)
+
+
 async def cb_nav_add(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
@@ -201,4 +219,5 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_nav_today, F.data == "nav:today")
     dp.callback_query.register(cb_nav_overdue, F.data.startswith("nav:overdue"))
     dp.callback_query.register(cb_nav_work, F.data.startswith("nav:work"))
+    dp.callback_query.register(cb_nav_inbox, F.data.startswith("nav:inbox"))
     dp.callback_query.register(cb_nav_team, F.data == "nav:team")

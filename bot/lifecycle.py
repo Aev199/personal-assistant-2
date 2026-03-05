@@ -104,14 +104,80 @@ def make_on_startup(
             except Exception:
                 # Do not fail startup if the DB rejects session settings.
                 pass
-        pool = await asyncpg.create_pool(
-            database_url,
-            min_size=mn,
-            max_size=mx,
-            command_timeout=timeout,
-            statement_cache_size=0,
-            init=_db_init,
-        )
+
+        # Render Postgres frequently requires SSL; if the URL doesn't specify sslmode,
+        # enforce SSL in Render to avoid silent disconnects during startup.
+        force_ssl = False
+        if os.getenv("RENDER_SERVICE_ID") or os.getenv("RENDER"):
+            u = (database_url or "").lower()
+            if "sslmode=" not in u and "ssl=" not in u:
+                force_ssl = True
+
+        try:
+            connect_attempts = int(os.getenv("DB_CONNECT_ATTEMPTS", "8"))
+        except Exception:
+            connect_attempts = 8
+        connect_attempts = max(1, connect_attempts)
+
+        try:
+            delay_sec = float(os.getenv("DB_CONNECT_RETRY_DELAY_SEC", "1.0"))
+        except Exception:
+            delay_sec = 1.0
+        delay_sec = max(0.2, delay_sec)
+
+        pool_kwargs = {
+            "min_size": mn,
+            "max_size": mx,
+            "command_timeout": timeout,
+            "statement_cache_size": 0,
+            "init": _db_init,
+        }
+        if force_ssl:
+            pool_kwargs["ssl"] = True
+
+        last_err: Exception | None = None
+        pool: asyncpg.Pool | None = None
+        for attempt in range(1, connect_attempts + 1):
+            try:
+                pool = await asyncpg.create_pool(database_url, **pool_kwargs)
+                break
+            except Exception as e:
+                last_err = e
+                log.warning(
+                    "DB pool create failed",
+                    attempt=attempt,
+                    attempts=connect_attempts,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    force_ssl=bool(force_ssl),
+                )
+                if attempt >= connect_attempts:
+                    # Startup may abort before shutdown hook runs; cleanup to avoid unclosed sessions.
+                    if hasattr(cloud, "close"):
+                        try:
+                            await cloud.close()
+                        except Exception:
+                            pass
+                    if os.getenv("GOOGLE_REFRESH_TOKEN", ""):
+                        try:
+                            await gtasks.close()
+                        except Exception:
+                            pass
+                    if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
+                        try:
+                            await icloud.close()
+                        except Exception:
+                            pass
+                    try:
+                        await bot.session.close()
+                    except Exception:
+                        pass
+                    raise
+                await asyncio.sleep(delay_sec)
+                delay_sec = min(delay_sec * 1.7, 8.0)
+
+        if pool is None:
+            raise last_err or RuntimeError("DB pool create failed")
         dp.workflow_data.update({"db_pool": pool})
 
         # Update dependency container
@@ -192,6 +258,26 @@ def make_on_startup(
                 # Close the pool to avoid leaking connections and re-raise to stop startup.
                 try:
                     await pool.close()
+                except Exception:
+                    pass
+                # Startup may abort before shutdown hook runs; cleanup to avoid unclosed sessions.
+                if hasattr(cloud, "close"):
+                    try:
+                        await cloud.close()
+                    except Exception:
+                        pass
+                if os.getenv("GOOGLE_REFRESH_TOKEN", ""):
+                    try:
+                        await gtasks.close()
+                    except Exception:
+                        pass
+                if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
+                    try:
+                        await icloud.close()
+                    except Exception:
+                        pass
+                try:
+                    await bot.session.close()
                 except Exception:
                     pass
                 raise

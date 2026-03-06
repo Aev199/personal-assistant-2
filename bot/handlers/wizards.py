@@ -488,7 +488,7 @@ async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_poo
             state=state,
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
-            text="Выберите срок задачи:",
+            text="Выберите срок задачи или отправьте дату/время сообщением:",
             reply_markup=deadline_kb(),
         )
 
@@ -523,7 +523,7 @@ async def msg_add_task_title(message: Message, state: FSMContext, db_pool: async
         )
         return
 
-    dt = quick_parse_datetime_ru(title_raw, deps.tz_name)
+    dt = quick_parse_datetime_ru(title_raw, deps.tz_name, date_only_time=(18, 0))
     await state.update_data(title=title_raw)
 
     if dt is not None:
@@ -540,7 +540,7 @@ async def msg_add_task_title(message: Message, state: FSMContext, db_pool: async
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text="Выберите срок задачи:",
+        text="Выберите срок задачи или отправьте дату/время сообщением:",
         reply_markup=deadline_kb(),
     )
 
@@ -620,7 +620,7 @@ async def cb_add_edit_deadline(callback: CallbackQuery, state: FSMContext, deps:
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Выберите срок задачи:",
+        text="Выберите срок задачи или отправьте дату/время сообщением:",
         reply_markup=deadline_kb(),
         parse_mode="HTML",
     )
@@ -827,7 +827,7 @@ async def cb_add_reminder_start(callback: CallbackQuery, state: FSMContext, deps
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="⏰ <b>Добавить напоминание</b>: выберите время",
+        text="⏰ <b>Добавить напоминание</b>: выберите время или отправьте дату/время сообщением",
         reply_markup=reminder_time_kb(),
         parse_mode="HTML",
     )
@@ -1222,7 +1222,7 @@ async def msg_personal_text(message: Message, state: FSMContext, db_pool: asyncp
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text="Выберите срок (необязательно):",
+        text="Выберите срок (необязательно) или отправьте дату/время сообщением:",
         reply_markup=personal_deadline_kb(),
     )
 
@@ -1428,7 +1428,7 @@ async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyn
         return
 
     tz = _tz_from_deps(deps)
-    dt = quick_parse_datetime_ru(raw, deps.tz_name)
+    dt = quick_parse_datetime_ru(raw, deps.tz_name, date_only_time=(18, 0))
     deadline_local = dt.astimezone(tz) if dt and dt.tzinfo else (dt.replace(tzinfo=tz) if dt else None)
 
     async with db_pool.acquire() as conn:
@@ -1516,6 +1516,7 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_add_set_assignee, F.data.startswith("add:as:"))
     dp.message.register(msg_add_task_title, StateFilter(AddTaskWizard.entering_title), F.text)
     dp.callback_query.register(cb_add_deadline, StateFilter(AddTaskWizard.choosing_deadline), F.data.startswith("add:dl:"))
+    dp.message.register(msg_add_task_deadline, StateFilter(AddTaskWizard.choosing_deadline), F.text)
     dp.message.register(msg_add_task_deadline, StateFilter(AddTaskWizard.entering_deadline), F.text)
     dp.callback_query.register(cb_add_edit_deadline, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_deadline")
     dp.callback_query.register(cb_add_create_task, StateFilter(AddTaskWizard.confirming), F.data == "add:create")
@@ -1526,6 +1527,7 @@ def register(dp: Dispatcher) -> None:
     # reminders
     dp.callback_query.register(cb_add_reminder_start, F.data == "add:rem")
     dp.callback_query.register(cb_add_reminder_time, StateFilter(AddReminderWizard.choosing_time), F.data.startswith("add:rtime:"))
+    dp.message.register(msg_add_reminder_time, StateFilter(AddReminderWizard.choosing_time), F.text)
     dp.message.register(msg_add_reminder_time, StateFilter(AddReminderWizard.entering_time), F.text)
     dp.message.register(msg_add_reminder_text, StateFilter(AddReminderWizard.entering_text), F.text)
     dp.callback_query.register(cb_add_reminder_repeat, StateFilter(AddReminderWizard.choosing_repeat), F.data.startswith("add:rrep:"))
@@ -1535,6 +1537,7 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_add_personal_start, F.data == "add:pers")
     dp.message.register(msg_personal_text, StateFilter(AddPersonalWizard.entering_text), F.text)
     dp.callback_query.register(cb_personal_deadline, StateFilter(AddPersonalWizard.choosing_deadline), F.data.startswith("pers:dl:"))
+    dp.message.register(msg_personal_deadline, StateFilter(AddPersonalWizard.choosing_deadline), F.text)
     dp.message.register(msg_personal_deadline, StateFilter(AddPersonalWizard.entering_deadline), F.text)
 
     # quick capture

@@ -316,7 +316,7 @@ async def msg_event_title(message: Message, state: FSMContext, db_pool: asyncpg.
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text="Когда событие? Выберите дату.",
+        text="Когда событие? Выберите дату или отправьте дату/время сообщением.",
         reply_markup=event_date_kb(),
         parse_mode="HTML",
     )
@@ -356,7 +356,7 @@ async def cb_event_choose_date(callback: CallbackQuery, state: FSMContext, deps:
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Выберите время.",
+        text="Выберите время или отправьте его сообщением.",
         reply_markup=event_time_kb(),
         parse_mode="HTML",
     )
@@ -398,16 +398,31 @@ async def msg_event_date_manual(message: Message, state: FSMContext, db_pool: as
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=tz)
-    d = parsed.astimezone(tz).date()
+    parsed_local = parsed.astimezone(tz)
+    d = parsed_local.date()
+    has_explicit_time = bool(re.search(r"\b\d{1,2}[:.]\d{2}\b", raw))
 
     await state.update_data(date=d.isoformat())
+    if has_explicit_time:
+        await state.update_data(time=f"{parsed_local.hour:02d}:{parsed_local.minute:02d}")
+        await state.set_state(AddEventWizard.choosing_duration)
+        return await wizard_render(
+            bot=message.bot,
+            state=state,
+            chat_id=int(message.chat.id),
+            fallback_msg=None,
+            text="Длительность события:",
+            reply_markup=event_duration_kb(),
+            parse_mode="HTML",
+        )
+
     await state.set_state(AddEventWizard.choosing_time)
     await wizard_render(
         bot=message.bot,
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text="Выберите время.",
+        text="Выберите время или отправьте его сообщением.",
         reply_markup=event_time_kb(),
         parse_mode="HTML",
     )
@@ -583,7 +598,7 @@ async def cb_event_edit_datetime(callback: CallbackQuery, state: FSMContext, dep
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Когда событие? Выберите дату.",
+        text="Когда событие? Выберите дату или отправьте дату/время сообщением.",
         reply_markup=event_date_kb(),
         parse_mode="HTML",
     )
@@ -843,9 +858,11 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(msg_event_title, StateFilter(AddEventWizard.entering_title), F.text)
 
     dp.callback_query.register(cb_event_choose_date, StateFilter(AddEventWizard.choosing_date), F.data.startswith("ev:date:"))
+    dp.message.register(msg_event_date_manual, StateFilter(AddEventWizard.choosing_date), F.text)
     dp.message.register(msg_event_date_manual, StateFilter(AddEventWizard.entering_date), F.text)
 
     dp.callback_query.register(cb_event_choose_time, StateFilter(AddEventWizard.choosing_time), F.data.startswith("ev:time:"))
+    dp.message.register(msg_event_time_manual, StateFilter(AddEventWizard.choosing_time), F.text)
     dp.message.register(msg_event_time_manual, StateFilter(AddEventWizard.entering_time), F.text)
 
     dp.callback_query.register(cb_event_choose_duration, StateFilter(AddEventWizard.choosing_duration), F.data.startswith("ev:dur:"))

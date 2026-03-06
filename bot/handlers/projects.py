@@ -552,7 +552,10 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
         ])
         kb.append([InlineKeyboardButton(text="🧺 Хвосты", callback_data=f"proj:{project_id}:tails")])
         kb.append([
-            InlineKeyboardButton(text=("⭐ Снять текущий" if is_cur else "⭐ Сделать текущим"), callback_data=f"proj:{project_id}:toggle_current"),
+            InlineKeyboardButton(
+                text=("Снять текущий проект" if is_cur else "Сделать текущим"),
+                callback_data=f"proj:{project_id}:toggle_current",
+            ),
         ])
 
         # Archive button

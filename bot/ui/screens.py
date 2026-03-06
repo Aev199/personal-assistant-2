@@ -161,11 +161,11 @@ async def ui_render_home(
         if not dt_local:
             return "без срока"
         if mode == "overdue":
-            return f"Р±С‹Р» {dt_local.strftime('%d.%m %H:%M')}"
+            return f"был {dt_local.strftime('%d.%m %H:%M')}"
         if mode == "today":
-            return f"РґРѕ {dt_local.strftime('%H:%M')}"
+            return f"до {dt_local.strftime('%H:%M')}"
         # work
-        return f"РґРѕ {dt_local.strftime('%d.%m %H:%M')}"
+        return f"до {dt_local.strftime('%d.%m %H:%M')}"
 
     def _preview_lines(marker: str, project: str, title: str, assignee: str, dt_local: datetime | None, mode: str) -> list[str]:
         proj = (project or "—").strip()
@@ -177,7 +177,7 @@ async def ui_render_home(
         if len(t) > 40:
             return [
                 f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   {h(a)} в†’ <i>{h(due)}</i>",
+                f"   {h(a)} → <i>{h(due)}</i>",
             ]
         return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h(due)}</i>"]
 
@@ -462,7 +462,7 @@ async def ui_render_stats(
                 ok_at = sync_row["last_ok_at"]
                 err_at = sync_row["last_error_at"]
                 if ok_at and (not err_at or ok_at >= err_at):
-                    sync_status_txt = f"вњ… {fmt_local(ok_at, tz)}"
+                    sync_status_txt = f"✅ {fmt_local(ok_at, tz)}"
                 elif err_at:
                     sync_status_txt = f"❌ {fmt_local(err_at, tz)}"
         except Exception:
@@ -480,10 +480,10 @@ async def ui_render_stats(
             f"📅 Задач на сегодня: <b>{int(today or 0)}</b>",
             f"🔔 Напомню: <i>{next_rem_txt}</i>",
             "",
-            "<b>нтеграции:</b>",
+            "<b>Интеграции:</b>",
             f"🔄 Obsidian: <i>{sync_status_txt}</i>",
             "",
-            "<b>РџСѓР»СЊСЃ:</b>",
+            "<b>Пульс:</b>",
             f"📁 Проектов: <b>{int(projects or 0)}</b> | ✅ Задач: <b>{int(active_tasks or 0)}</b>",
             f"📥 Неразобрано (Inbox): <b>{int(inbox_count or 0)}</b>",
         ]
@@ -695,7 +695,7 @@ async def ui_render_projects_portfolio(
 
             btn_label = code
             if is_cur:
-                btn_label = f"в­ђ {btn_label}"
+                btn_label = f"⭐ {btn_label}"
             elif overdue:
                 btn_label = f"🚨{overdue} {btn_label}"
 
@@ -1161,12 +1161,12 @@ async def ui_render_all_tasks(
     rows = list(rows or [])
 
     filter_titles = {
-        "all": "Р’СЃРµ",
+        "all": "Все",
         "overdue": "Просрочено",
         "today": "Сегодня",
         "nodate": "Без срока",
     }
-    filter_title = filter_titles.get(filter_key, "Р’СЃРµ")
+    filter_title = filter_titles.get(filter_key, "Все")
 
     lines: list[str] = [
         "📋 <b>Все задачи</b>",
@@ -1195,9 +1195,9 @@ async def ui_render_all_tasks(
             title_show = title if len(title) <= 90 else (title[:89] + "…")
             if len(title) > 48:
                 lines.append(f"• {h(title_show)}")
-                lines.append(f"  {h(assignee)} в†’ <i>{h('РґРѕ ' + due) if deadline_local else h(due)}</i>")
+                lines.append(f"  {h(assignee)} → <i>{h('до ' + due) if deadline_local else h(due)}</i>")
             else:
-                due_part = f"РґРѕ {due}" if deadline_local else due
+                due_part = f"до {due}" if deadline_local else due
                 lines.append(f"• {h(title_show)} — {h(assignee)}, <i>{h(due_part)}</i>")
 
     kb: list[list[InlineKeyboardButton]] = []
@@ -1279,10 +1279,10 @@ async def ui_render_work(
             t_show = t if len(t) <= 90 else (t[:89] + "…")
             return [
                 f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   {h(a)} в†’ <i>{h('РґРѕ ' + due) if dt_local else h(due)}</i>",
+                f"   {h(a)} → <i>{h('до ' + due) if dt_local else h(due)}</i>",
             ]
         t_show = t if len(t) <= 90 else (t[:89] + "…")
-        due_part = f"РґРѕ {due}" if dt_local else due
+        due_part = f"до {due}" if dt_local else due
         return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h(due_part)}</i>"]
 
     try:
@@ -1356,7 +1356,7 @@ async def ui_render_work(
     head = "<b>⚡ В РАБОТЕ</b>"
     if current_project_code and not current_project_is_inbox:
         head += f" — <b>{h(current_project_code)}</b>"
-    lines = [head, f"<i>Р’СЃРµРіРѕ: {total}</i>", ""]
+    lines = [head, f"<i>Всего: {total}</i>", ""]
     if toast_line:
         lines = [toast_line, ""] + lines
     if not rows:
@@ -1373,7 +1373,7 @@ async def ui_render_work(
     for r in rows:
         proj = (r.get("project") or "").strip()
         title = (r.get("title") or "").strip()
-        label = f"вљЎ{proj} {_short(title, 22)}" if proj else f"вљЎ{_short(title, 24)}"
+        label = f"⚡{proj} {_short(title, 22)}" if proj else f"⚡{_short(title, 24)}"
         task_buttons.append(InlineKeyboardButton(text=label, callback_data=f"task:{r['id']}"))
     kb.extend(kb_columns(task_buttons, 2))
 
@@ -1434,10 +1434,10 @@ async def ui_render_inbox(
             t_show = t if len(t) <= 90 else (t[:89] + "…")
             return [
                 f"📥 {h(t_show)}",
-                f"   {h(a)} в†’ <i>{h('РґРѕ ' + due) if dt_local else h(due)}</i>",
+                f"   {h(a)} → <i>{h('до ' + due) if dt_local else h(due)}</i>",
             ]
         t_show = t if len(t) <= 90 else (t[:89] + "…")
-        due_part = f"РґРѕ {due}" if dt_local else due
+        due_part = f"до {due}" if dt_local else due
         return [f"📥 {h(t_show)} — {h(a)}, <i>{h(due_part)}</i>"]
 
     toast_line: str | None = None
@@ -1589,7 +1589,7 @@ async def ui_render_overdue(
             t_show = t if len(t) <= 90 else (t[:89] + "…")
             return [
                 f"🔥 <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   {h(a)} в†’ <i>{h('Р±С‹Р» ' + due)}</i>",
+                f"   {h(a)} → <i>{h('был ' + due)}</i>",
             ]
         t_show = t if len(t) <= 90 else (t[:89] + "…")
         return [f"🔥 <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h('был ' + due)}</i>"]

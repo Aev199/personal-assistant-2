@@ -30,6 +30,7 @@ _quick_rel_dt_re = re.compile(
     r"\b(\u0441\u0435\u0433\u043e\u0434\u043d\u044f|\u0437\u0430\u0432\u0442\u0440\u0430|\u043f\u043e\u0441\u043b\u0435\u0437\u0430\u0432\u0442\u0440\u0430)\b(?:\s*(?:\u0432\s*)?(\d{1,2})[:.](\d{2}))?",
     re.IGNORECASE,
 )
+_quick_time_only_re = re.compile(r"\b(?:\u0432\s*)?(\d{1,2}):(\d{2})\b", re.IGNORECASE)
 _quick_relative_day_offsets = {
     "\u0441\u0435\u0433\u043e\u0434\u043d\u044f": 0,
     "\u0437\u0430\u0432\u0442\u0440\u0430": 1,
@@ -51,6 +52,7 @@ _quick_month_markers = [
     "\u0434\u0435\u043a",
     ".",
 ]
+_quick_orphan_prep_re = re.compile(r"(?iu)\b(?:\u0434\u043e|\u043a|\u043d\u0430|\u0432)\b")
 
 
 
@@ -98,32 +100,45 @@ def parse_datetime_ru(text: str, tz_name: str, *, prefer_future: bool = True) ->
         return None
     return ensure_tz(dt, tz_name)
 
-def quick_parse_datetime_ru(
+
+def _quick_cleanup_title(raw: str, span: tuple[int, int] | None) -> str:
+    if not raw:
+        return ""
+    if not span:
+        return raw.strip()
+
+    start, end = span
+    trim_chars = " \t\r\n,.;:!?" + "-\u2013\u2014"
+    cleaned = f"{raw[:start]} {raw[end:]}"
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"([(\[])\s+", r"\1", cleaned)
+    cleaned = re.sub(r"\s+([)\]])", r"\1", cleaned)
+    cleaned = cleaned.strip(trim_chars)
+    cleaned = re.sub(r"(?iu)^(?:\u0434\u043e|\u043a|\u043d\u0430|\u0432)\b[\s,.;:!?\-\u2013\u2014]*", "", cleaned)
+    cleaned = re.sub(r"(?iu)[\s,.;:!?\-\u2013\u2014]*(?:\u0434\u043e|\u043a|\u043d\u0430|\u0432)\b$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(trim_chars)
+    return cleaned or raw.strip()
+
+
+def _quick_parse_datetime_core(
     text: str,
     tz_name: str,
     *,
     prefer_future: bool = True,
     date_only_time: tuple[int, int] | None = None,
-) -> datetime | None:
-    """Best-effort datetime parser for Quick Add (RU).
-
-    We intentionally require a strong signal that user provided date/time.
-    This avoids accidental parsing of ordinary text.
-    """
+) -> tuple[datetime | None, tuple[int, int] | None]:
     raw = (text or "").strip()
     if not raw:
-        return None
+        return None, None
 
-    # Require a strong signal that user provided date/time.
-    # Keep the heuristic conservative: time, relative day, months, dots.
     raw_lower = raw.lower()
-
     if not (
         _quick_time_re.search(raw)
         or _quick_rel_re.search(raw)
         or any(k in raw_lower for k in _quick_month_markers)
     ):
-        return None
+        return None, None
 
     tz = _safe_zone(tz_name)
     now_local = datetime.now(tz)
@@ -142,10 +157,10 @@ def quick_parse_datetime_ru(
             elif date_only_time is not None:
                 hh, mm = date_only_time
             else:
-                return None
+                return None, None
             if 0 <= hh <= 23 and 0 <= mm <= 59:
                 base = now_local + timedelta(days=day_shift)
-                return base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                return base.replace(hour=hh, minute=mm, second=0, microsecond=0), rel_match.span()
 
     date_match = _quick_date_re.search(raw)
     if date_match:
@@ -159,7 +174,7 @@ def quick_parse_datetime_ru(
             elif date_only_time is not None:
                 hh, mm = date_only_time
             else:
-                return None
+                return None, None
             if not (0 <= hh <= 23 and 0 <= mm <= 59):
                 raise ValueError("invalid time")
             year = now_local.year if not year_raw else int(year_raw)
@@ -168,9 +183,22 @@ def quick_parse_datetime_ru(
             dt = datetime(year, month, day, hh, mm, tzinfo=tz)
             if prefer_future and dt < now_local and not year_raw:
                 dt = dt.replace(year=dt.year + 1)
-            return dt
+            return dt, date_match.span()
         except Exception:
             pass
+
+    time_match = _quick_time_only_re.search(raw)
+    if time_match:
+        try:
+            hh = int(time_match.group(1))
+            mm = int(time_match.group(2))
+        except Exception:
+            hh = mm = -1
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            dt = now_local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if prefer_future and dt <= now_local:
+                dt = dt + timedelta(days=1)
+            return dt, time_match.span()
 
     try:
         dt = dateparser.parse(
@@ -184,13 +212,52 @@ def quick_parse_datetime_ru(
             },
         )
     except Exception:
-        return None
-
+        return None, None
     if not dt:
-        return None
+        return None, None
+    return ensure_tz(dt, tz_name), None
 
-    # dateparser may return naive dt even with RETURN_AS_TIMEZONE_AWARE; normalize to tz-aware.
-    return ensure_tz(dt, tz_name)
+def quick_parse_datetime_ru(
+    text: str,
+    tz_name: str,
+    *,
+    prefer_future: bool = True,
+    date_only_time: tuple[int, int] | None = None,
+) -> datetime | None:
+    """Best-effort datetime parser for Quick Add (RU).
+
+    We intentionally require a strong signal that user provided date/time.
+    This avoids accidental parsing of ordinary text.
+    """
+    dt, _ = _quick_parse_datetime_core(
+        text,
+        tz_name,
+        prefer_future=prefer_future,
+        date_only_time=date_only_time,
+    )
+    return dt
+
+
+def quick_extract_datetime_ru(
+    text: str,
+    tz_name: str,
+    *,
+    prefer_future: bool = True,
+    date_only_time: tuple[int, int] | None = None,
+) -> tuple[str, datetime | None]:
+    """Extract quick datetime and remove the matched fragment from title text."""
+    raw = (text or "").strip()
+    if not raw:
+        return "", None
+    dt, span = _quick_parse_datetime_core(
+        raw,
+        tz_name,
+        prefer_future=prefer_future,
+        date_only_time=date_only_time,
+    )
+    if dt is None:
+        return raw, None
+    return _quick_cleanup_title(raw, span), dt
 
 
 def quick_parse_duration_min(text: str) -> int | None:

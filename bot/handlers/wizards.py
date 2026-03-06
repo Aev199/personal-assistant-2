@@ -52,6 +52,7 @@ from bot.ui.state import ui_get_state, ui_set_state
 from bot.utils import (
     h,
     kb_columns,
+    quick_extract_datetime_ru,
     quick_parse_datetime_ru,
     try_delete_user_message,
 )
@@ -1428,18 +1429,19 @@ async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyn
         return
 
     tz = _tz_from_deps(deps)
-    dt = quick_parse_datetime_ru(raw, deps.tz_name, date_only_time=(18, 0))
+    title, dt = quick_extract_datetime_ru(raw, deps.tz_name, date_only_time=(18, 0))
     deadline_local = dt.astimezone(tz) if dt and dt.tzinfo else (dt.replace(tzinfo=tz) if dt else None)
+    title = (title or "").strip() or raw
 
     async with db_pool.acquire() as conn:
         inbox_id = await ensure_inbox_project_id(conn)
         task_id = await conn.fetchval(
             "INSERT INTO tasks (project_id, title, assignee_id, deadline) VALUES ($1,$2,NULL,$3) RETURNING id",
             inbox_id,
-            raw,
+            title,
             to_deadline_db(deadline_local, deps) if deadline_local else None,
         )
-        await db_add_event(conn, "task_created", inbox_id, int(task_id), f"🆕 INBOX #{task_id} {raw}")
+        await db_add_event(conn, "task_created", inbox_id, int(task_id), f"🆕 INBOX #{task_id} {title}")
 
     fire_and_forget(
         background_project_sync(int(inbox_id), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
@@ -1455,7 +1457,7 @@ async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyn
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text=f"✅ Добавлено во <b>Входящие</b>:\n{h(raw)}",
+        text=f"✅ Добавлено во <b>Входящие</b>:\n{h(title)}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
         parse_mode="HTML",
     )

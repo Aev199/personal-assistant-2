@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from bot.utils.datetime import quick_parse_datetime_ru
+from bot.utils.datetime import quick_extract_datetime_ru, quick_parse_datetime_ru
 
 
 MSK = ZoneInfo("Europe/Moscow")
@@ -45,6 +45,24 @@ class QuickParseDatetimeTests(unittest.TestCase):
         text = r"\u0432\u0441\u0442\u0440\u0435\u0447\u0430 12.03".encode("ascii").decode("unicode_escape")
         dt = quick_parse_datetime_ru(text, "Europe/Moscow")
         self.assertIsNone(dt)
+
+    def test_extract_removes_relative_datetime_from_title(self) -> None:
+        text = r"\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0447\u0435\u0442 \u0437\u0430\u0432\u0442\u0440\u0430 15:30".encode("ascii").decode("unicode_escape")
+        title, dt = quick_extract_datetime_ru(text, "Europe/Moscow", date_only_time=(18, 0))
+        self.assertEqual(title, r"\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0447\u0435\u0442".encode("ascii").decode("unicode_escape"))
+        self.assertIsNotNone(dt)
+
+    def test_extract_removes_orphan_preposition_after_date_cut(self) -> None:
+        text = r"\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0447\u0435\u0442 \u0434\u043e 12.03".encode("ascii").decode("unicode_escape")
+        title, dt = quick_extract_datetime_ru(text, "Europe/Moscow", date_only_time=(18, 0))
+        self.assertEqual(title, r"\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0447\u0435\u0442".encode("ascii").decode("unicode_escape"))
+        self.assertIsNotNone(dt)
+
+    def test_extract_can_cut_leading_date_fragment(self) -> None:
+        text = r"12.03 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0447\u0435\u0442".encode("ascii").decode("unicode_escape")
+        title, dt = quick_extract_datetime_ru(text, "Europe/Moscow", date_only_time=(18, 0))
+        self.assertEqual(title, r"\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043e\u0442\u0447\u0435\u0442".encode("ascii").decode("unicode_escape"))
+        self.assertIsNotNone(dt)
 
 
 if __name__ == "__main__":

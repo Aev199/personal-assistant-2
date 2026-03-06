@@ -331,7 +331,7 @@ async def ui_render_home(
         # Note: "Проекты" есть в нижней ReplyKeyboard, поэтому не дублируем на главной.
         kb.append([
             InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
-            InlineKeyboardButton(text="💡 дея", callback_data="quick:idea"),
+            InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
         ])
 
         # Row 2: inbox processing / inbox access
@@ -494,7 +494,7 @@ async def ui_render_stats(
         stats_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="в¬…пёЏ Р¤РѕРєСѓСЃ", callback_data="nav:home"),
+                    InlineKeyboardButton(text="⬅️ Фокус", callback_data="nav:home"),
                     InlineKeyboardButton(text="🔄 Обновить", callback_data="home:stats"),
                 ],
                 [
@@ -522,7 +522,7 @@ async def ui_render_stats(
         fallback_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="в¬…пёЏ Р¤РѕРєСѓСЃ", callback_data="nav:home"),
+                    InlineKeyboardButton(text="⬅️ Фокус", callback_data="nav:home"),
                     InlineKeyboardButton(text="🔄 Обновить", callback_data="home:stats"),
                 ]
             ]
@@ -642,7 +642,7 @@ async def ui_render_projects_portfolio(
                         InlineKeyboardButton(text="➕ Задача", callback_data="add:task"),
                     ],
                     [InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all")],
-                    [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
+                    [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
                 ]
             )
             text = "📭 <b>Активных проектов пока нет.</b>\n\nСоздайте первый проект 👇"
@@ -718,7 +718,7 @@ async def ui_render_projects_portfolio(
             InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
             InlineKeyboardButton(text="🧺 Глобальные хвосты", callback_data="nav:global_tails"),
         ])
-        kb.append([InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")])
+        kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
 
         return await ui_render(
             bot=message.bot,
@@ -782,7 +782,7 @@ async def ui_render_team(
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add")],
-                        [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
+                        [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
                     ]
                 ),
                 screen="team",
@@ -847,7 +847,7 @@ async def ui_render_team(
         kb.extend(kb_columns(member_buttons, 2))
         kb.append([
             InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add"),
-            InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
+            InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
 
         return await ui_render(
@@ -1220,7 +1220,7 @@ async def ui_render_all_tasks(
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:all:{filter_key}:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:all:{filter_key}:{page-1}"))
     if (page + 1) * page_size < total:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:all:{filter_key}:{page+1}"))
     if nav_row:
@@ -1228,7 +1228,7 @@ async def ui_render_all_tasks(
 
     kb.append([
         InlineKeyboardButton(text="⬅️ Проекты", callback_data="nav:projects"),
-        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
     ])
 
     return await ui_render(
@@ -1379,14 +1379,14 @@ async def ui_render_work(
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:work:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:work:{page-1}"))
     if (page + 1) * page_size < total:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:work:{page+1}"))
     if nav_row:
         kb.append(nav_row)
 
     kb.append([
-        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"),
     ])
 
@@ -1532,7 +1532,7 @@ async def ui_render_inbox(
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:inbox:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:inbox:{page-1}"))
     if (page + 1) * page_size < total:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:inbox:{page+1}"))
     if nav_row:
@@ -1540,7 +1540,7 @@ async def ui_render_inbox(
 
     kb.append([
         InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:inbox:{page}"),
-        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
     ])
 
     return await ui_render(
@@ -1658,7 +1658,7 @@ async def ui_render_overdue(
         # Pagination
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:
-            nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:overdue:{page-1}"))
+            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:overdue:{page-1}"))
         if (page + 1) * page_size < total:
             nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:overdue:{page+1}"))
         if nav_row:
@@ -1666,7 +1666,7 @@ async def ui_render_overdue(
 
     kb.append([
         InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:overdue:{page}"),
-        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
     ])
 
     return await ui_render(

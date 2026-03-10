@@ -130,6 +130,8 @@ class GeminiAdapter:
                         "reminder_text": {"type": "string"},
                         "remind_at_local": {"type": ["string", "null"]},
                         "project_code": {"type": ["string", "null"]},
+                        "project_name": {"type": ["string", "null"]},
+                        "assignee_name": {"type": ["string", "null"]},
                         "screen": {
                             "type": ["string", "null"],
                             "enum": [

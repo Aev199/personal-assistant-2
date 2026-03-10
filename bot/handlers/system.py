@@ -26,6 +26,7 @@ from bot.handlers.common import (
     split_wizard_message_target,
 )
 from bot.services.background import fire_and_forget
+from bot.services.freeform_intake import handle_freeform_text, handle_freeform_voice
 from bot.services.vault_sync import background_project_sync
 from bot.ui import (
     ensure_main_menu,
@@ -718,6 +719,16 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
     await ensure_main_menu(message, db_pool)
 
     raw = (message.text or "").strip()
+    if raw and not raw.startswith("/"):
+        handled = await handle_freeform_text(
+            message,
+            deps=deps,
+            db_pool=db_pool,
+            raw_text=raw,
+            source="text",
+        )
+        if handled:
+            return
     if not raw:
         toast = "⚠️ Я понимаю только текст. Нажмите ❓ Help."
     elif raw.startswith("/"):
@@ -730,6 +741,38 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
             payload = ui_payload_with_toast(payload, toast, ttl_sec=25)
+            await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
+    except Exception:
+        pass
+
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+
+
+async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+
+    await state.clear()
+
+    if db_pool is None:
+        return await message.answer("⚠️ Голосовые сообщения доступны только при подключённой БД и LLM.")
+
+    await try_delete_user_message(message)
+    await ensure_main_menu(message, db_pool)
+
+    handled = await handle_freeform_voice(
+        message,
+        deps=deps,
+        db_pool=db_pool,
+    )
+    if handled:
+        return
+
+    try:
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, int(message.chat.id))
+            payload = _ui_payload_get(ui_state)
+            payload = ui_payload_with_toast(payload, "⚠️ Не удалось обработать голосовое сообщение.", ttl_sec=25)
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
     except Exception:
         pass
@@ -758,4 +801,5 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "сегодня")
     dp.message.register(msg_overdue_button, lambda m: m.text and canon(m.text) == "просрочки")
 
+    dp.message.register(msg_voice_freeform, StateFilter(None), lambda m: bool(m.voice or m.audio))
     dp.message.register(cmd_unknown, StateFilter(None))

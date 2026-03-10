@@ -18,6 +18,7 @@ import asyncpg
 
 from bot.adapters.google_tasks_adapter import GoogleTasksAdapter
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter
+from bot.adapters.gemini_adapter import GeminiAdapter
 from bot.adapters.webdav_adapter import WebDavAdapter
 from bot.services.vault_manager import VaultManager
 
@@ -39,6 +40,7 @@ class AppDeps:
     vault: VaultManager
     gtasks: GoogleTasksAdapter
     icloud: ICloudCalDAVAdapter
+    llm: GeminiAdapter | None = None
 
     # Filled during startup
     db_pool: Optional[asyncpg.Pool] = None

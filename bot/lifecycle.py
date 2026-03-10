@@ -57,6 +57,7 @@ def make_on_startup(
     cloud,
     gtasks,
     icloud,
+    llm,
     database_url: str,
     webhook_url: str,
     webhook_path: str,
@@ -83,6 +84,13 @@ def make_on_startup(
                 log.info("iCloud CalDAV enabled")
             except Exception as e:
                 log.warning("iCloud CalDAV startup failed", error_type=type(e).__name__, error_message=str(e))
+
+        if getattr(llm, "enabled", False):
+            try:
+                await llm.startup()
+                log.info("Gemini LLM enabled")
+            except Exception as e:
+                log.warning("Gemini LLM startup failed", error_type=type(e).__name__, error_message=str(e))
 
         # DB pool
         mn, mx, timeout = _db_pool_params()
@@ -166,6 +174,11 @@ def make_on_startup(
                     if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
                         try:
                             await icloud.close()
+                        except Exception:
+                            pass
+                    if getattr(llm, "enabled", False):
+                        try:
+                            await llm.close()
                         except Exception:
                             pass
                     try:
@@ -301,7 +314,7 @@ def make_on_startup(
     return _on_startup
 
 
-def make_on_shutdown(*, dp: Dispatcher, cloud, gtasks, icloud):
+def make_on_shutdown(*, dp: Dispatcher, cloud, gtasks, icloud, llm):
     async def _on_shutdown(bot: Bot) -> None:
         log = _get_log(dp)
 
@@ -320,6 +333,12 @@ def make_on_shutdown(*, dp: Dispatcher, cloud, gtasks, icloud):
         if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
             try:
                 await icloud.close()
+            except Exception:
+                pass
+
+        if getattr(llm, "enabled", False):
+            try:
+                await llm.close()
             except Exception:
                 pass
 

@@ -9,12 +9,15 @@ Legacy monolith (if ever needed) lives outside the :mod:`bot` package.
 
 from __future__ import annotations
 
+import os
+
 from aiogram import Bot, Dispatcher
 
 from bot.adapters.webdav_adapter import WebDavAdapter
 from bot.services.vault_manager import VaultManager
 from bot.adapters.google_tasks_adapter import GoogleTasksAdapter
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudCalDAVAuth
+from bot.adapters.gemini_adapter import GeminiAdapter
 from bot.deps import AppDeps
 
 from bot.handlers import (
@@ -46,7 +49,7 @@ def build_core(
     """Create bot, dispatcher and integrations.
 
     Returns:
-        (bot, dp, cloud, vault, gtasks, icloud)
+        (bot, dp, cloud, vault, gtasks, icloud, llm)
 
     Side effects:
         Stores a single dependency container under ``dp.workflow_data['deps']``.
@@ -79,6 +82,13 @@ def build_core(
     icloud = ICloudCalDAVAdapter(
         ICloudCalDAVAuth(apple_id=icloud_apple_id, app_password=icloud_app_password)
     )
+    llm = GeminiAdapter(
+        api_key=os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""),
+        base_url=os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+        llm_model=os.getenv("GEMINI_LLM_MODEL", "gemini-2.5-flash"),
+        transcribe_model=os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-2.5-flash"),
+        timeout_sec=int(os.getenv("GEMINI_TIMEOUT_SEC", "45")),
+    )
 
     deps = AppDeps(
         admin_id=int(admin_id or 0),
@@ -87,6 +97,7 @@ def build_core(
         vault=vault,
         gtasks=gtasks,
         icloud=icloud,
+        llm=llm,
     )
 
     # Expose deps for DI in handler modules
@@ -95,4 +106,4 @@ def build_core(
     except Exception:
         pass
 
-    return bot, dp, cloud, vault, gtasks, icloud
+    return bot, dp, cloud, vault, gtasks, icloud, llm

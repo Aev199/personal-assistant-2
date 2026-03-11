@@ -60,6 +60,36 @@ def _to_local(dt_utc_naive, tz_name: str):
 from bot.keyboards import back_home_kb, main_menu_kb
 
 
+async def _render_with_recovery(
+    render_fn,
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    preferred_message_id: int | None = None,
+    tz_name: str | None = None,
+) -> int:
+    kwargs = {
+        "preferred_message_id": preferred_message_id,
+        "force_new": False,
+    }
+    if tz_name is not None:
+        kwargs["tz_name"] = tz_name
+
+    final_id = await render_fn(message, db_pool, **kwargs)
+    if int(final_id or 0) > 0:
+        return int(final_id)
+
+    try:
+        async with db_pool.acquire() as conn:
+            await ui_set_state(conn, int(message.chat.id), ui_message_id=None)
+    except Exception:
+        pass
+
+    kwargs["force_new"] = True
+    retry_id = await render_fn(message, db_pool, **kwargs)
+    return int(retry_id or 0)
+
+
 async def _reply_wizard_context(
     state: FSMContext,
     *,
@@ -215,12 +245,12 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
     await state.clear()
     await try_delete_user_message(message)
     await cleanup_main_menu_anchor(message, db_pool)
-    final_id = await ui_render_home(
+    final_id = await _render_with_recovery(
+        ui_render_home,
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
     )
     await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
@@ -241,12 +271,12 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
     await state.clear()
     await try_delete_user_message(message)
     await cleanup_main_menu_anchor(message, db_pool)
-    final_id = await ui_render_home(
+    final_id = await _render_with_recovery(
+        ui_render_home,
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
     )
     await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
@@ -766,12 +796,12 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
     await try_delete_user_message(message)
     from bot.ui import ui_render_projects_portfolio
 
-    final_id = await ui_render_projects_portfolio(
+    final_id = await _render_with_recovery(
+        ui_render_projects_portfolio,
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
     )
     await cleanup_stale_wizard_message(
         message.bot,
@@ -792,12 +822,12 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
     await try_delete_user_message(message)
     from bot.ui import ui_render_today
 
-    final_id = await ui_render_today(
+    final_id = await _render_with_recovery(
+        ui_render_today,
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
     )
     await cleanup_stale_wizard_message(
         message.bot,
@@ -818,12 +848,12 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
     await try_delete_user_message(message)
     from bot.ui import ui_render_overdue
 
-    final_id = await ui_render_overdue(
+    final_id = await _render_with_recovery(
+        ui_render_overdue,
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
     )
     await cleanup_stale_wizard_message(
         message.bot,

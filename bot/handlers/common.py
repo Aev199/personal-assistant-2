@@ -195,15 +195,14 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     await try_delete_user_message(message)
 
     if token in {"главное меню", "меню", "домой"}:
-        final_id = await _render_with_recovery(
-            ui_render_home,
+        final_id = await ui_render_home(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
+            force_new=False,
         )
     elif token == "проекты":
-        final_id = await _render_with_recovery(
-            ui_render_projects_portfolio,
+        final_id = await ui_render_projects_portfolio(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,

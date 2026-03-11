@@ -1030,6 +1030,7 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
 def register(dp: Dispatcher) -> None:
     dp.message.register(cmd_start, CommandStart())
     dp.message.register(cmd_menu, Command("menu"))
+    dp.message.register(cmd_menu, lambda m: m.text and canon(m.text) in {"главное меню", "меню", "домой"})
     dp.message.register(cmd_tz, Command("tz"))
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(msg_undo_last, StateFilter(None), lambda m: m.text and canon(m.text) in {"undo", "отмени", "отмени последнее"})

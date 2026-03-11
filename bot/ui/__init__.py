@@ -18,6 +18,7 @@ from .screens import (
     ui_render_work,
     ui_render_inbox,
     ui_render_team,
+    cleanup_main_menu_anchor,
     ensure_main_menu,
 )
 
@@ -35,5 +36,6 @@ __all__ = [
     "ui_render_work",
     "ui_render_inbox",
     "ui_render_team",
+    "cleanup_main_menu_anchor",
     "ensure_main_menu",
 ]

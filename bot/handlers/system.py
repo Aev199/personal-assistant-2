@@ -20,6 +20,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.db.projects import ensure_inbox_project_id
 from bot.db.user_settings import get_current_project_id
+from bot.fsm.states import FreeformFollowup
 from bot.handlers.common import (
     cleanup_stale_wizard_message,
     get_wizard_message_data,
@@ -29,7 +30,7 @@ from bot.services.background import fire_and_forget
 from bot.services.freeform_intake import handle_freeform_text, handle_freeform_voice
 from bot.services.vault_sync import background_project_sync
 from bot.ui import (
-    ensure_main_menu,
+    cleanup_main_menu_anchor,
     ui_render,
     ui_render_add_menu,
     ui_render_help,
@@ -83,7 +84,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
     )
     await state.clear()
     await try_delete_user_message(message)
-    await ensure_main_menu(message, db_pool)
+    await cleanup_main_menu_anchor(message, db_pool)
     final_id = await ui_render_home(
         message,
         db_pool,
@@ -108,7 +109,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
     )
     await state.clear()
     await try_delete_user_message(message)
-    await ensure_main_menu(message, db_pool)
+    await cleanup_main_menu_anchor(message, db_pool)
     final_id = await ui_render_home(
         message,
         db_pool,
@@ -199,7 +200,7 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
 
     if db_pool is not None:
         await try_delete_user_message(message)
-        await ensure_main_menu(message, db_pool)
+        await cleanup_main_menu_anchor(message, db_pool)
         final_id = await ui_render_help(
             message,
             db_pool,
@@ -699,6 +700,108 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
     )
 
 
+async def _freeform_followup_base_text(state: FSMContext) -> str:
+    try:
+        data = await state.get_data()
+    except Exception:
+        return ""
+    return str(data.get("freeform_base_text") or "").strip()
+
+
+async def _freeform_followup_missing_context(
+    message: Message,
+    state: FSMContext,
+    deps: AppDeps,
+    db_pool: asyncpg.Pool,
+) -> None:
+    await state.clear()
+    try:
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, int(message.chat.id))
+            payload = _ui_payload_get(ui_state)
+            payload = ui_payload_with_toast(payload, "Контекст уточнения потерян. Повторите запрос целиком.", ttl_sec=25)
+            await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
+    except Exception:
+        pass
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+
+
+async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+
+    if db_pool is None:
+        await state.clear()
+        return await message.answer("⚠️ Уточнение доступно только при подключённой БД и LLM.")
+
+    base_text = await _freeform_followup_base_text(state)
+    if not base_text:
+        return await _freeform_followup_missing_context(message, state, deps, db_pool)
+
+    await try_delete_user_message(message)
+    await cleanup_main_menu_anchor(message, db_pool)
+
+    handled = await handle_freeform_text(
+        message,
+        deps=deps,
+        db_pool=db_pool,
+        raw_text=message.text or "",
+        source="text",
+        state=state,
+        prepend_text=base_text,
+    )
+    if handled:
+        return
+
+    try:
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, int(message.chat.id))
+            payload = _ui_payload_get(ui_state)
+            payload = ui_payload_with_toast(payload, "Не удалось обработать уточнение. Попробуйте ещё раз.", ttl_sec=25)
+            await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
+    except Exception:
+        pass
+
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+
+
+async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+
+    if db_pool is None:
+        await state.clear()
+        return await message.answer("⚠️ Голосовые уточнения доступны только при подключённой БД и LLM.")
+
+    base_text = await _freeform_followup_base_text(state)
+    if not base_text:
+        return await _freeform_followup_missing_context(message, state, deps, db_pool)
+
+    await try_delete_user_message(message)
+    await cleanup_main_menu_anchor(message, db_pool)
+
+    handled = await handle_freeform_voice(
+        message,
+        deps=deps,
+        db_pool=db_pool,
+        state=state,
+        prepend_text=base_text,
+    )
+    if handled:
+        return
+
+    try:
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, int(message.chat.id))
+            payload = _ui_payload_get(ui_state)
+            payload = ui_payload_with_toast(payload, "Не удалось обработать голосовое уточнение. Попробуйте ещё раз.", ttl_sec=25)
+            await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
+    except Exception:
+        pass
+
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+
+
 async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
@@ -716,7 +819,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
         )
 
     await try_delete_user_message(message)
-    await ensure_main_menu(message, db_pool)
+    await cleanup_main_menu_anchor(message, db_pool)
 
     raw = (message.text or "").strip()
     if raw and not raw.startswith("/"):
@@ -726,6 +829,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             db_pool=db_pool,
             raw_text=raw,
             source="text",
+            state=state,
         )
         if handled:
             return
@@ -758,12 +862,13 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
         return await message.answer("⚠️ Голосовые сообщения доступны только при подключённой БД и LLM.")
 
     await try_delete_user_message(message)
-    await ensure_main_menu(message, db_pool)
+    await cleanup_main_menu_anchor(message, db_pool)
 
     handled = await handle_freeform_voice(
         message,
         deps=deps,
         db_pool=db_pool,
+        state=state,
     )
     if handled:
         return
@@ -801,5 +906,7 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "сегодня")
     dp.message.register(msg_overdue_button, lambda m: m.text and canon(m.text) == "просрочки")
 
+    dp.message.register(msg_freeform_followup_voice, StateFilter(FreeformFollowup.awaiting_text), lambda m: bool(m.voice or m.audio))
+    dp.message.register(msg_freeform_followup_text, StateFilter(FreeformFollowup.awaiting_text), F.text)
     dp.message.register(msg_voice_freeform, StateFilter(None), lambda m: bool(m.voice or m.audio))
     dp.message.register(cmd_unknown, StateFilter(None))

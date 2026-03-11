@@ -20,6 +20,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
+        is_persistent=True,
         selective=True,
     )
 

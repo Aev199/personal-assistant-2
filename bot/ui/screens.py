@@ -103,6 +103,33 @@ async def ensure_main_menu(message: Message, db_pool: asyncpg.Pool) -> None:
         return
 
 
+async def cleanup_main_menu_anchor(message: Message, db_pool: asyncpg.Pool) -> None:
+    """Delete stored reply-keyboard anchor, if any.
+
+    The keyboard itself is client-side state; removing the transport message is
+    safe once the keyboard was already shown.
+    """
+
+    chat_id = int(message.chat.id)
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT menu_message_id FROM user_settings WHERE chat_id=$1",
+            chat_id,
+        )
+        menu_mid = row["menu_message_id"] if row else None
+        if not menu_mid:
+            return
+        await conn.execute(
+            "UPDATE user_settings SET menu_message_id=NULL, updated_at=NOW() WHERE chat_id=$1",
+            chat_id,
+        )
+
+    try:
+        await message.bot.delete_message(chat_id=chat_id, message_id=int(menu_mid))
+    except Exception:
+        return
+
+
 def _tz_name() -> str:
     return resolve_tz_name("Europe/Moscow")
 

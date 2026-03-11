@@ -85,3 +85,9 @@ class AddSuperTaskWizard(StatesGroup):
 
     entering_title = State()
     confirming = State()
+
+
+class FreeformFollowup(StatesGroup):
+    """Short follow-up after free-form intake for clarifications."""
+
+    awaiting_text = State()

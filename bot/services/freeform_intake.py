@@ -7,16 +7,19 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import TypeVar
 from zoneinfo import ZoneInfo
 
 import asyncpg
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot.db import db_add_event, ensure_inbox_project_id, get_current_project_id
 from bot.deps import AppDeps
+from bot.fsm.states import FreeformFollowup
 from bot.services.background import fire_and_forget
+from bot.services.gtasks_service import due_from_local_date, get_or_create_list_id
 from bot.services.vault_sync import background_project_sync
 from bot.tz import fmt_local, resolve_tz_name, to_db_utc
 from bot.ui.screens import (
@@ -59,14 +62,21 @@ SUPPORTED_SCREENS = {
 class IntakeIntent:
     action: str
     title: str = ""
+    idea_text: str = ""
     deadline_local: str | None = None
     reminder_text: str = ""
     remind_at_local: str | None = None
+    calendar_kind: str | None = None
+    start_at_local: str | None = None
+    duration_min: int | None = None
     project_code: str | None = None
     project_name: str | None = None
     assignee_name: str | None = None
-    screen: str | None = None
     reply: str = ""
+    needs_followup: bool = False
+    followup_prompt: str = ""
+    followup_action: str | None = None
+    missing_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,61 +96,97 @@ def _clean(s: object) -> str:
     return str(s or "").strip()
 
 
-def _normalize_screen(value: object) -> str | None:
-    screen = _clean(value).lower()
-    aliases = {
-        "all": "all_tasks",
-        "all_tasks": "all_tasks",
-        "projects": "projects",
-        "today": "today",
-        "overdue": "overdue",
-        "work": "work",
-        "inbox": "inbox",
-        "help": "help",
-        "home": "home",
-        "add": "add",
-        "team": "team",
-        "stats": "stats",
-    }
-    norm = aliases.get(screen)
-    return norm if norm in SUPPORTED_SCREENS else None
-
-
 def _normalize_intake_payload(payload: object) -> IntakeIntent:
     data = payload if isinstance(payload, dict) else {}
     action = _clean(data.get("action")).lower()
-    if action not in {"task", "reminder", "nav", "reply"}:
+    if action not in {"task", "personal_task", "reminder", "event", "idea", "reply"}:
         action = "reply"
+    requested_action = action
 
     title = _clean(data.get("title"))
+    idea_text = _clean(data.get("idea_text") or data.get("text") or data.get("title"))
     reminder_text = _clean(data.get("reminder_text") or data.get("text"))
     reply = _clean(data.get("reply"))
+    calendar_kind = _clean(data.get("calendar_kind")).lower() or None
+    if calendar_kind not in {"work", "personal"}:
+        calendar_kind = None
+    start_at_local = _clean(data.get("start_at_local")) or None
+    try:
+        duration_min = int(data.get("duration_min")) if data.get("duration_min") is not None else None
+    except Exception:
+        duration_min = None
     project_code = _clean(data.get("project_code")).upper() or None
     project_name = _clean(data.get("project_name")) or None
     assignee_name = _clean(data.get("assignee_name")) or None
-    screen = _normalize_screen(data.get("screen"))
+    needs_followup = False
+    followup_prompt = ""
+    followup_action: str | None = None
+    missing_fields: list[str] = []
 
     if action == "task" and not title:
         action = "reply"
-        reply = reply or "\u041d\u0435 \u0441\u043c\u043e\u0433 \u0441\u043e\u0431\u0440\u0430\u0442\u044c \u0437\u0430\u0434\u0430\u0447\u0443 \u0438\u0437 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f."
+        needs_followup = True
+        followup_action = requested_action
+        missing_fields = ["title"]
+        followup_prompt = reply or "\u041d\u0435 \u0441\u043c\u043e\u0433 \u0432\u044b\u0434\u0435\u043b\u0438\u0442\u044c \u0437\u0430\u0434\u0430\u0447\u0443. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435, \u0447\u0442\u043e \u043d\u0443\u0436\u043d\u043e \u0441\u0434\u0435\u043b\u0430\u0442\u044c."
+        reply = reply or followup_prompt
+    if action == "personal_task" and not title:
+        action = "reply"
+        needs_followup = True
+        followup_action = requested_action
+        missing_fields = ["title"]
+        followup_prompt = reply or "\u041d\u0435 \u0432\u0438\u0436\u0443 \u0442\u0435\u043a\u0441\u0442 \u043b\u0438\u0447\u043d\u043e\u0439 \u0437\u0430\u0434\u0430\u0447\u0438. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435, \u0447\u0442\u043e \u043d\u0443\u0436\u043d\u043e \u0441\u0434\u0435\u043b\u0430\u0442\u044c."
+        reply = reply or followup_prompt
     if action == "reminder" and (not reminder_text or not _clean(data.get("remind_at_local"))):
         action = "reply"
-        reply = reply or "\u041d\u0435 \u0441\u043c\u043e\u0433 \u0441\u043e\u0431\u0440\u0430\u0442\u044c \u043d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u0435 \u0438\u0437 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f."
-    if action == "nav" and not screen:
+        needs_followup = True
+        followup_action = requested_action
+        if not reminder_text:
+            missing_fields.append("reminder_text")
+        if not _clean(data.get("remind_at_local")):
+            missing_fields.append("remind_at_local")
+        followup_prompt = reply or "\u0423\u043a\u0430\u0436\u0438\u0442\u0435, \u043a\u043e\u0433\u0434\u0430 \u043d\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c. \u041d\u0430\u043f\u0440\u0438\u043c\u0435\u0440: \u0437\u0430\u0432\u0442\u0440\u0430 \u0432 10:00."
+        reply = reply or followup_prompt
+    if action == "event" and (not title or not calendar_kind or not start_at_local or duration_min is None):
         action = "reply"
-        reply = reply or "\u041d\u0435 \u043f\u043e\u043d\u044f\u043b, \u043a\u0430\u043a\u043e\u0439 \u044d\u043a\u0440\u0430\u043d \u043d\u0443\u0436\u043d\u043e \u043e\u0442\u043a\u0440\u044b\u0442\u044c."
+        needs_followup = True
+        followup_action = requested_action
+        if not title:
+            missing_fields.append("title")
+        if not calendar_kind:
+            missing_fields.append("calendar_kind")
+        if not start_at_local:
+            missing_fields.append("start_at_local")
+        if duration_min is None:
+            missing_fields.append("duration_min")
+        followup_prompt = reply or "\u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0441\u043e\u0431\u044b\u0442\u0438\u0435: \u043a\u0430\u043b\u0435\u043d\u0434\u0430\u0440, \u0432\u0440\u0435\u043c\u044f \u0438 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435."
+        reply = reply or followup_prompt
+    if action == "idea" and not idea_text:
+        action = "reply"
+        needs_followup = True
+        followup_action = requested_action
+        missing_fields = ["idea_text"]
+        followup_prompt = reply or "\u041d\u0435 \u0432\u0438\u0436\u0443 \u0442\u0435\u043a\u0441\u0442 \u0438\u0434\u0435\u0438. \u041f\u0440\u0438\u0448\u043b\u0438\u0442\u0435 \u0435\u0451 \u043e\u0434\u043d\u043e\u0439 \u0444\u0440\u0430\u0437\u043e\u0439."
+        reply = reply or followup_prompt
 
     return IntakeIntent(
         action=action,
         title=title,
+        idea_text=idea_text,
         deadline_local=_clean(data.get("deadline_local")) or None,
         reminder_text=reminder_text,
         remind_at_local=_clean(data.get("remind_at_local")) or None,
+        calendar_kind=calendar_kind,
+        start_at_local=start_at_local,
+        duration_min=duration_min,
         project_code=project_code,
         project_name=project_name,
         assignee_name=assignee_name,
-        screen=screen,
         reply=reply,
+        needs_followup=needs_followup,
+        followup_prompt=followup_prompt,
+        followup_action=followup_action,
+        missing_fields=tuple(dict.fromkeys(field for field in missing_fields if field)),
     )
 
 
@@ -155,6 +201,109 @@ def _parse_local_dt(value: str | None, tz_name: str) -> datetime | None:
         except Exception:
             pass
     return parse_datetime_ru(raw, tz_name, prefer_future=True)
+
+
+def _merge_freeform_text(base_text: str | None, raw_text: str | None) -> str:
+    parts = [_clean(base_text), _clean(raw_text)]
+    return "\n".join(part for part in parts if part)
+
+
+def _action_hint_from_text(raw_text: str) -> str | None:
+    text = _clean(raw_text)
+    if not text:
+        return None
+    lowered = canon(text)
+    marker_map = {
+        "идея:": "idea",
+        "идея ": "idea",
+        "личное:": "personal_task",
+        "личная задача:": "personal_task",
+        "личное дело:": "personal_task",
+        "рабочее:": "task",
+        "рабочая задача:": "task",
+        "рабочая задача ": "task",
+        "событие:": "event",
+        "в календарь:": "event",
+    }
+    for marker, action in marker_map.items():
+        if lowered.startswith(marker):
+            return action
+    if lowered.startswith("напомни"):
+        return "reminder"
+    return None
+
+
+async def _followup_context(state: FSMContext | None) -> dict[str, object]:
+    if state is None:
+        return {}
+    try:
+        current = await state.get_state()
+        if current != FreeformFollowup.awaiting_text.state:
+            return {}
+        data = await state.get_data()
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _build_classification_user_prompt(
+    *,
+    raw_text: str,
+    prepend_text: str | None,
+    followup_data: dict[str, object],
+) -> str:
+    text = _clean(raw_text)
+    base_text = _clean(followup_data.get("freeform_base_text") or prepend_text)
+    pending_action = _clean(followup_data.get("freeform_pending_action")).lower()
+    missing_fields = tuple(
+        _clean(item)
+        for item in (followup_data.get("freeform_missing_fields") or [])
+        if _clean(item)
+    )
+    action_hint = _clean(followup_data.get("freeform_action_hint")).lower() or _clean(_action_hint_from_text(base_text or text)).lower()
+
+    if base_text and text and base_text != text:
+        parts = [
+            "This is a clarification turn for a previously incomplete request.",
+            f"Original request:\n{base_text}",
+        ]
+        if pending_action:
+            parts.append(f"Expected action: {pending_action}.")
+        if missing_fields:
+            parts.append(f"Still missing fields: {', '.join(missing_fields)}.")
+        if action_hint:
+            parts.append(f"Strong action hint: {action_hint}.")
+        parts.append(f"User clarification:\n{text}")
+        parts.append("Return one final executable JSON object for the combined request.")
+        return "\n\n".join(parts)
+
+    if action_hint:
+        return f"Strong action hint: {action_hint}.\n\nUser message:\n{text or base_text}"
+    return _merge_freeform_text(prepend_text, raw_text)
+
+
+def _parse_duration_min(value: object) -> int | None:
+    try:
+        duration = int(value)
+    except Exception:
+        return None
+    if 5 <= duration <= 12 * 60:
+        return duration
+    return None
+
+
+def _event_summary(kind: str, title: str, project_code: str | None) -> str:
+    if kind == "work":
+        work_tpl = os.getenv("ICLOUD_WORK_SUMMARY_TEMPLATE", "{project_prefix}{title}")
+        prefix = ""
+        code = _clean(project_code)
+        if code and not title.startswith(f"{code}:"):
+            prefix = f"{code}: "
+        return work_tpl.format(title=title, project=code, project_prefix=prefix).strip()
+    personal_tpl = os.getenv("ICLOUD_PERSONAL_SUMMARY_TEMPLATE", "{title}")
+    return personal_tpl.format(title=title, project="", project_prefix="").strip()
 
 
 async def _render_screen(
@@ -206,6 +355,44 @@ async def _rerender_with_toast(message: Message, db_pool: asyncpg.Pool, deps: Ap
     if screen not in SUPPORTED_SCREENS:
         screen = "home"
     return await _render_screen(message, db_pool, deps, screen=screen, payload=payload)
+
+
+async def _clear_followup_state(state: FSMContext | None) -> None:
+    if state is None:
+        return
+    try:
+        current = await state.get_state()
+    except Exception:
+        return
+    if current == FreeformFollowup.awaiting_text.state:
+        await state.clear()
+
+
+async def _start_followup(
+    message: Message,
+    *,
+    deps: AppDeps,
+    db_pool: asyncpg.Pool,
+    state: FSMContext | None,
+    prompt: str,
+    base_text: str,
+    source: str,
+    pending_action: str | None = None,
+    missing_fields: tuple[str, ...] | list[str] = (),
+) -> bool:
+    prompt_text = _clean(prompt) or "\u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0437\u0430\u043f\u0440\u043e\u0441."
+    if state is not None:
+        await state.clear()
+        await state.update_data(
+            freeform_base_text=base_text,
+            freeform_source=source,
+            freeform_pending_action=_clean(pending_action).lower() or None,
+            freeform_missing_fields=[_clean(field) for field in missing_fields if _clean(field)],
+            freeform_action_hint=_action_hint_from_text(base_text),
+        )
+        await state.set_state(FreeformFollowup.awaiting_text)
+    await _rerender_with_toast(message, db_pool, deps, prompt_text)
+    return True
 
 
 def _canon_phrase(value: object) -> str:
@@ -439,18 +626,31 @@ def _intake_system_prompt(
         "Return JSON only, without markdown.\n"
         f"User local time: {now_local.strftime('%Y-%m-%d %H:%M')} ({tz_name}). "
         f"Current project: {project}.\n"
-        "Allowed actions: task, reminder, nav, reply.\n"
+        "Allowed actions: task, personal_task, reminder, event, idea, reply.\n"
         "For action=task return:\n"
         "- title: concise actionable task title without assignee/project/deadline boilerplate;\n"
         "- deadline_local: YYYY-MM-DD HH:MM or null;\n"
         "- project_code: exact code from AVAILABLE_PROJECTS or null;\n"
         "- project_name: mentioned project name if the user referenced a project but exact code is uncertain; else null;\n"
         "- assignee_name: exact person name from AVAILABLE_TEAM if the user referenced an assignee; else null.\n"
+        "For action=personal_task return:\n"
+        "- title: concise personal todo title;\n"
+        "- deadline_local: YYYY-MM-DD HH:MM or null.\n"
         "For action=reminder return reminder_text and remind_at_local (YYYY-MM-DD HH:MM).\n"
-        "For action=nav return screen from: home, projects, today, overdue, all_tasks, work, inbox, help, add, team, stats.\n"
+        "For action=event return:\n"
+        "- title: concise event title;\n"
+        "- calendar_kind: work or personal;\n"
+        "- start_at_local: YYYY-MM-DD HH:MM;\n"
+        "- duration_min: integer duration in minutes;\n"
+        "- project_code/project_name only when the work event clearly belongs to a project.\n"
+        "For action=idea return idea_text with the raw idea to store in Google Tasks.\n"
         "Use action=reply only if the request is not actionable or required data is missing.\n"
-        "Prefer reminder when the user explicitly asks to remind. Prefer nav for show/open/list screen requests. "
+        "Prefer reminder when the user explicitly asks to remind. "
+        "Prefer event for meetings, calls, appointments, calendar bookings, and time blocks. "
+        "Prefer idea for thoughts, concepts, brainstorm items, things to capture without a deadline. "
+        "Prefer personal_task for personal todos, errands, purchases, and household tasks tracked in Google Tasks. "
         "Prefer task for actionable work items.\n"
+        "If the user prompt includes 'Strong action hint: <action>', follow it unless the request is clearly impossible.\n"
         "Never invent project codes or team members outside the provided lists.\n"
         "AVAILABLE_PROJECTS:\n"
         f"{project_lines}\n"
@@ -467,11 +667,14 @@ async def handle_freeform_text(
     db_pool: asyncpg.Pool,
     raw_text: str,
     source: str = "text",
+    state: FSMContext | None = None,
+    prepend_text: str | None = None,
 ) -> bool:
     llm = getattr(deps, "llm", None)
     if llm is None or not getattr(llm, "enabled", False):
         return False
 
+    followup_data = await _followup_context(state)
     text = _clean(raw_text)
     if not text:
         return False
@@ -489,6 +692,11 @@ async def handle_freeform_text(
         )
 
     try:
+        user_prompt = _build_classification_user_prompt(
+            raw_text=text,
+            prepend_text=prepend_text,
+            followup_data=followup_data,
+        )
         payload = await llm.classify_intake(
             system_prompt=_intake_system_prompt(
                 now_local=datetime.now(tz),
@@ -497,19 +705,40 @@ async def handle_freeform_text(
                 projects=projects,
                 team=team,
             ),
-            user_prompt=text,
+            user_prompt=user_prompt,
         )
         intent = _normalize_intake_payload(payload)
     except Exception:
         logger.exception("freeform classify failed", extra={"source": source})
         return False
 
-    if intent.action == "nav" and intent.screen:
-        await _render_screen(message, db_pool, deps, screen=intent.screen, payload={})
-        return True
+    if intent.needs_followup and intent.followup_prompt:
+        return await _start_followup(
+            message,
+            deps=deps,
+            db_pool=db_pool,
+            state=state,
+            prompt=intent.followup_prompt,
+            base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+            source=source,
+            pending_action=intent.followup_action,
+            missing_fields=intent.missing_fields,
+        )
 
     if intent.action == "task":
         deadline_local = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
+        if intent.deadline_local and deadline_local is None:
+            return await _start_followup(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                prompt="\u041d\u0435 \u0441\u043c\u043e\u0433 \u0440\u0430\u0437\u043e\u0431\u0440\u0430\u0442\u044c \u0441\u0440\u043e\u043a \u0437\u0430\u0434\u0430\u0447\u0438. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0434\u0430\u0442\u0443 \u0438 \u0432\u0440\u0435\u043c\u044f.",
+                base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                source=source,
+                pending_action="task",
+                missing_fields=("deadline_local",),
+            )
         try:
             async with db_pool.acquire() as conn:
                 project_id, project_code, project_error = await _resolve_project(
@@ -521,7 +750,18 @@ async def handle_freeform_text(
                     projects=projects,
                 )
                 if project_error or project_id is None:
-                    raise ValueError(project_error or "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u043f\u0440\u0435\u0434\u0435\u043b\u0438\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442 \u0434\u043b\u044f \u0437\u0430\u0434\u0430\u0447\u0438.")
+                    return await _start_followup(
+                        message,
+                        deps=deps,
+                        db_pool=db_pool,
+                        state=state,
+                        prompt=(project_error or "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u043f\u0440\u0435\u0434\u0435\u043b\u0438\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442 \u0434\u043b\u044f \u0437\u0430\u0434\u0430\u0447\u0438.")
+                        + " \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u043a\u043e\u0434 \u0438\u043b\u0438 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0435\u043a\u0442\u0430.",
+                        base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                        source=source,
+                        pending_action="task",
+                        missing_fields=("project_code",),
+                    )
 
                 assignee_id, assignee_name, assignee_error = _resolve_assignee(
                     requested_name=intent.assignee_name,
@@ -529,7 +769,17 @@ async def handle_freeform_text(
                     team=team,
                 )
                 if assignee_error:
-                    raise ValueError(assignee_error)
+                    return await _start_followup(
+                        message,
+                        deps=deps,
+                        db_pool=db_pool,
+                        state=state,
+                        prompt=assignee_error + " \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0438\u043c\u044f \u0438\u043b\u0438 \u0443\u0431\u0435\u0440\u0438\u0442\u0435 \u0438\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044f.",
+                        base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                        source=source,
+                        pending_action="task",
+                        missing_fields=("assignee_name",),
+                    )
 
                 task_id = await conn.fetchval(
                     "INSERT INTO tasks (project_id, title, assignee_id, deadline) VALUES ($1,$2,$3,$4) RETURNING id",
@@ -563,13 +813,11 @@ async def handle_freeform_text(
                 ),
                 label="vault_sync",
             )
-        except ValueError as e:
-            await _rerender_with_toast(message, db_pool, deps, str(e))
-            return True
         except Exception:
             logger.exception("freeform task create failed", extra={"source": source})
             return False
 
+        await _clear_followup_state(state)
         meta_parts: list[str] = []
         if project_code:
             meta_parts.append(f"[{project_code}]")
@@ -583,19 +831,276 @@ async def handle_freeform_text(
         await _rerender_with_toast(message, db_pool, deps, toast)
         return True
 
-    if intent.action == "reminder":
-        remind_local = _parse_local_dt(intent.remind_at_local, tz_name)
-        if remind_local is None:
-            await _rerender_with_toast(message, db_pool, deps, "\u041d\u0435 \u0441\u043c\u043e\u0433 \u0440\u0430\u0437\u043e\u0431\u0440\u0430\u0442\u044c \u0434\u0430\u0442\u0443 \u043d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u044f.")
-            return True
-        if remind_local <= datetime.now(tz):
+    if intent.action == "personal_task":
+        gtasks = getattr(deps, "gtasks", None)
+        if gtasks is None or not gtasks.enabled():
+            await _clear_followup_state(state)
             await _rerender_with_toast(
                 message,
                 db_pool,
                 deps,
-                "\u0412\u0440\u0435\u043c\u044f \u043d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u044f \u0443\u0436\u0435 \u043f\u0440\u043e\u0448\u043b\u043e. \u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u0431\u0443\u0434\u0443\u0449\u0435\u0435 \u0432\u0440\u0435\u043c\u044f.",
+                "\u274c Google Tasks \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d \u0434\u043b\u044f \u043b\u0438\u0447\u043d\u044b\u0445 \u0437\u0430\u0434\u0430\u0447.",
             )
             return True
+
+        due_local = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
+        if intent.deadline_local and due_local is None:
+            return await _start_followup(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                prompt="\u041d\u0435 \u0441\u043c\u043e\u0433 \u0440\u0430\u0437\u043e\u0431\u0440\u0430\u0442\u044c \u0441\u0440\u043e\u043a \u043b\u0438\u0447\u043d\u043e\u0439 \u0437\u0430\u0434\u0430\u0447\u0438. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0434\u0430\u0442\u0443 \u0438\u043b\u0438 \u0443\u0431\u0435\u0440\u0438\u0442\u0435 \u0441\u0440\u043e\u043a.",
+                base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                source=source,
+                pending_action="personal_task",
+                missing_fields=("deadline_local",),
+            )
+
+        list_name = os.getenv("GTASKS_PERSONAL_LIST", "\u041b\u0438\u0447\u043d\u043e\u0435")
+        try:
+            list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
+            due_utc = due_from_local_date(due_local, tz)
+            await gtasks.create_task(list_id, intent.title, due=due_utc)
+            async with db_pool.acquire() as conn:
+                due_txt = due_local.strftime("%d.%m %H:%M") if due_local else "\u0431\u0435\u0437 \u0441\u0440\u043e\u043a\u0430"
+                await db_add_event(conn, "personal_task_created", None, None, f"LLM/{source}: {intent.title} ({due_txt})")
+        except Exception:
+            logger.exception("freeform personal task create failed", extra={"source": source})
+            return False
+
+        await _clear_followup_state(state)
+        if due_local is None:
+            toast = f"\u2705 \u041b\u0438\u0447\u043d\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430: {intent.title}"
+        else:
+            toast = f"\u2705 \u041b\u0438\u0447\u043d\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430: {intent.title} \u00b7 \u0434\u043e {due_local.strftime('%d.%m')}"
+        await _rerender_with_toast(message, db_pool, deps, toast)
+        return True
+
+    if intent.action == "event":
+        start_local = _parse_local_dt(intent.start_at_local, tz_name)
+        if start_local is None:
+            return await _start_followup(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                prompt="\u041d\u0435 \u0441\u043c\u043e\u0433 \u0440\u0430\u0437\u043e\u0431\u0440\u0430\u0442\u044c \u0432\u0440\u0435\u043c\u044f \u0441\u043e\u0431\u044b\u0442\u0438\u044f. \u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u0434\u0430\u0442\u0443 \u0438 \u0432\u0440\u0435\u043c\u044f.",
+                base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                source=source,
+                pending_action="event",
+                missing_fields=("start_at_local",),
+            )
+        duration_min = _parse_duration_min(intent.duration_min)
+        if duration_min is None:
+            return await _start_followup(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                prompt="\u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0434\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u0441\u043e\u0431\u044b\u0442\u0438\u044f \u0432 \u043c\u0438\u043d\u0443\u0442\u0430\u0445.",
+                base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                source=source,
+                pending_action="event",
+                missing_fields=("duration_min",),
+            )
+        if start_local <= datetime.now(tz):
+            return await _start_followup(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                prompt="\u0412\u0440\u0435\u043c\u044f \u0441\u043e\u0431\u044b\u0442\u0438\u044f \u0443\u0436\u0435 \u043f\u0440\u043e\u0448\u043b\u043e. \u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u0431\u0443\u0434\u0443\u0449\u0435\u0435 \u0432\u0440\u0435\u043c\u044f.",
+                base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                source=source,
+                pending_action="event",
+                missing_fields=("start_at_local",),
+            )
+        if not (os.getenv("ICLOUD_APPLE_ID", "").strip() and os.getenv("ICLOUD_APP_PASSWORD", "").strip()):
+            await _clear_followup_state(state)
+            await _rerender_with_toast(
+                message,
+                db_pool,
+                deps,
+                "\u274c iCloud CalDAV \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d.",
+            )
+            return True
+
+        kind = intent.calendar_kind or "personal"
+        if kind == "work":
+            cal_url = os.getenv("ICLOUD_CALENDAR_URL_WORK", "").strip()
+            if not cal_url:
+                await _clear_followup_state(state)
+                await _rerender_with_toast(
+                    message,
+                    db_pool,
+                    deps,
+                    "\u274c \u041d\u0435 \u0437\u0430\u0434\u0430\u043d ICLOUD_CALENDAR_URL_WORK \u0434\u043b\u044f \u0440\u0430\u0431\u043e\u0447\u0438\u0445 \u0441\u043e\u0431\u044b\u0442\u0438\u0439.",
+                )
+                return True
+        else:
+            cal_url = os.getenv("ICLOUD_CALENDAR_URL_PERSONAL", "").strip()
+            if not cal_url:
+                await _clear_followup_state(state)
+                await _rerender_with_toast(
+                    message,
+                    db_pool,
+                    deps,
+                    "\u274c \u041d\u0435 \u0437\u0430\u0434\u0430\u043d ICLOUD_CALENDAR_URL_PERSONAL \u0434\u043b\u044f \u043b\u0438\u0447\u043d\u044b\u0445 \u0441\u043e\u0431\u044b\u0442\u0438\u0439.",
+                )
+                return True
+
+        project_id: int | None = None
+        project_code: str | None = None
+        if kind == "work":
+            try:
+                async with db_pool.acquire() as conn:
+                    project_id, project_code, project_error = await _resolve_project(
+                        conn,
+                        requested_code=intent.project_code,
+                        requested_name=intent.project_name,
+                        raw_text=text,
+                        current_project_id=current_project_id,
+                        projects=projects,
+                    )
+                    if project_error or project_id is None:
+                        return await _start_followup(
+                            message,
+                            deps=deps,
+                            db_pool=db_pool,
+                            state=state,
+                            prompt=(project_error or "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u043f\u0440\u0435\u0434\u0435\u043b\u0438\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442 \u0434\u043b\u044f \u0441\u043e\u0431\u044b\u0442\u0438\u044f.")
+                            + " \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u043a\u043e\u0434 \u0438\u043b\u0438 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0435\u043a\u0442\u0430.",
+                            base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                            source=source,
+                            pending_action="event",
+                            missing_fields=("project_code",),
+                        )
+            except Exception:
+                logger.exception("freeform event project resolve failed", extra={"source": source})
+                return False
+
+        summary = _event_summary(kind, intent.title, project_code)
+        dtstart_utc = start_local.astimezone(timezone.utc)
+        dtend_utc = dtstart_utc + timedelta(minutes=duration_min)
+        try:
+            ics_url, success = await deps.icloud.create_event(
+                calendar_url=cal_url,
+                summary=summary,
+                dtstart_utc=dtstart_utc,
+                dtend_utc=dtend_utc,
+            )
+            async with db_pool.acquire() as conn:
+                if success:
+                    await conn.execute(
+                        """
+                        INSERT INTO icloud_events (calendar_url, summary, dtstart_utc, dtend_utc, sync_status, ics_url)
+                        VALUES ($1, $2, $3, $4, 'synced', $5)
+                        """,
+                        cal_url,
+                        summary,
+                        dtstart_utc,
+                        dtend_utc,
+                        ics_url or "",
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        INSERT INTO icloud_events (calendar_url, summary, dtstart_utc, dtend_utc, sync_status, last_error)
+                        VALUES ($1, $2, $3, $4, 'pending', 'Initial sync failed')
+                        """,
+                        cal_url,
+                        summary,
+                        dtstart_utc,
+                        dtend_utc,
+                    )
+                event_text = f"LLM/{source}: {_clean(kind)} event {start_local.strftime('%d.%m %H:%M')} ({duration_min} min) - {summary}"
+                if ics_url:
+                    event_text += f"\n{ics_url}"
+                await db_add_event(
+                    conn,
+                    "ical_event_created",
+                    int(project_id) if project_id else None,
+                    None,
+                    event_text,
+                )
+            if kind == "work" and project_id:
+                fire_and_forget(
+                    background_project_sync(
+                        int(project_id),
+                        db_pool,
+                        deps.vault,
+                        error_logger=(deps.db_log_error or (lambda _w, _e, _c=None: None)),
+                    ),
+                    label="vault_sync",
+                )
+        except Exception:
+            logger.exception("freeform event create failed", extra={"source": source})
+            return False
+
+        await _clear_followup_state(state)
+        kind_label = "\u0440\u0430\u0431\u043e\u0447\u0435\u0435" if kind == "work" else "\u043b\u0438\u0447\u043d\u043e\u0435"
+        toast = f"\u2705 \u0421\u043e\u0431\u044b\u0442\u0438\u0435: {start_local.strftime('%d.%m %H:%M')} \u00b7 {kind_label}"
+        await _rerender_with_toast(message, db_pool, deps, toast)
+        return True
+
+    if intent.action == "idea":
+        gtasks = getattr(deps, "gtasks", None)
+        if gtasks is None or not gtasks.enabled():
+            await _clear_followup_state(state)
+            await _rerender_with_toast(
+                message,
+                db_pool,
+                deps,
+                "\u274c Google Tasks \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d \u0434\u043b\u044f \u0438\u0434\u0435\u0439.",
+            )
+            return True
+
+        ideas_list = os.getenv("GTASKS_IDEAS_LIST", "\u0418\u0434\u0435\u0438")
+        try:
+            list_id = await get_or_create_list_id(db_pool, gtasks, ideas_list)
+            await gtasks.create_task(list_id, intent.idea_text)
+            async with db_pool.acquire() as conn:
+                await db_add_event(conn, "idea_captured", None, None, f"LLM/{source}: {intent.idea_text}")
+        except Exception:
+            logger.exception("freeform idea create failed", extra={"source": source})
+            return False
+
+        await _clear_followup_state(state)
+        await _rerender_with_toast(
+            message,
+            db_pool,
+            deps,
+            f"\u2705 \u0418\u0434\u0435\u044f \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0430 \u0432 \u00ab{ideas_list}\u00bb.",
+        )
+        return True
+
+    if intent.action == "reminder":
+        remind_local = _parse_local_dt(intent.remind_at_local, tz_name)
+        if remind_local is None:
+            return await _start_followup(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                prompt="\u041d\u0435 \u0441\u043c\u043e\u0433 \u0440\u0430\u0437\u043e\u0431\u0440\u0430\u0442\u044c \u0434\u0430\u0442\u0443 \u043d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u044f. \u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u0434\u0430\u0442\u0443 \u0438 \u0432\u0440\u0435\u043c\u044f.",
+                base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                source=source,
+                pending_action="reminder",
+                missing_fields=("remind_at_local",),
+            )
+        if remind_local <= datetime.now(tz):
+            return await _start_followup(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                prompt="\u0412\u0440\u0435\u043c\u044f \u043d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u044f \u0443\u0436\u0435 \u043f\u0440\u043e\u0448\u043b\u043e. \u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u0431\u0443\u0434\u0443\u0449\u0435\u0435 \u0432\u0440\u0435\u043c\u044f.",
+                base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                source=source,
+                pending_action="reminder",
+                missing_fields=("remind_at_local",),
+            )
         try:
             async with db_pool.acquire() as conn:
                 await conn.execute(
@@ -612,16 +1117,25 @@ async def handle_freeform_text(
             logger.exception("freeform reminder create failed", extra={"source": source})
             return False
 
+        await _clear_followup_state(state)
         when_txt = remind_local.strftime("%d.%m %H:%M")
         await _rerender_with_toast(message, db_pool, deps, f"\u2705 \u041d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u0435: {when_txt}")
         return True
 
     reply = intent.reply or "\u041d\u0435 \u043f\u043e\u043d\u044f\u043b \u0437\u0430\u043f\u0440\u043e\u0441."
+    await _clear_followup_state(state)
     await _rerender_with_toast(message, db_pool, deps, reply)
     return True
 
 
-async def handle_freeform_voice(message: Message, *, deps: AppDeps, db_pool: asyncpg.Pool) -> bool:
+async def handle_freeform_voice(
+    message: Message,
+    *,
+    deps: AppDeps,
+    db_pool: asyncpg.Pool,
+    state: FSMContext | None = None,
+    prepend_text: str | None = None,
+) -> bool:
     llm = getattr(deps, "llm", None)
     if llm is None or not getattr(llm, "enabled", False):
         return False
@@ -668,6 +1182,8 @@ async def handle_freeform_voice(message: Message, *, deps: AppDeps, db_pool: asy
         db_pool=db_pool,
         raw_text=transcript,
         source="voice",
+        state=state,
+        prepend_text=prepend_text,
     )
 
 

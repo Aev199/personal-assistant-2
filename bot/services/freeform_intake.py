@@ -450,11 +450,11 @@ async def _render_screen(
         page = int((payload or {}).get("page") or 0)
         return await ui_render_inbox(message, db_pool, tz_name=tz_name, page=page, force_new=False)
     if screen == "help":
-        return await ui_render_help(message, db_pool, tz_name=tz_name, force_new=False)
+        return await ui_render_help(message, db_pool, force_new=False)
     if screen == "add":
-        return await ui_render_add_menu(message, db_pool, tz_name=tz_name, force_new=False)
+        return await ui_render_add_menu(message, db_pool, force_new=False)
     if screen == "team":
-        return await ui_render_team(message, db_pool, tz_name=tz_name, force_new=False)
+        return await ui_render_team(message, db_pool, force_new=False)
     if screen == "stats":
         return await ui_render_stats(message, db_pool, tz_name=tz_name, force_new=False)
     return await ui_render_home(message, db_pool, tz_name=tz_name, force_new=False)

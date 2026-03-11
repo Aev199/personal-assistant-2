@@ -60,9 +60,9 @@ async def ensure_main_menu(message: Message, db_pool: asyncpg.Pool) -> None:
         )
         menu_mid = row["menu_message_id"] if row else None
 
-    # Use visually blank text so anchor doesn't distract.
-    _ANCHOR_TEXT_A = "ㅤ"  # Hangul filler (renders as blank)
-    _ANCHOR_TEXT_B = "ㅤㅤ"
+    # Keep anchor compact but explicit so recovery does not look like a blank phantom message.
+    _ANCHOR_TEXT_A = "⌨️ Главное меню"
+    _ANCHOR_TEXT_B = "⌨️ Меню активно"
 
     if menu_mid:
         try:

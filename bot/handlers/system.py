@@ -18,6 +18,7 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from bot.db import db_add_event, db_log_error
 from bot.db.projects import ensure_inbox_project_id
 from bot.db.user_settings import get_current_project_id
 from bot.fsm.states import FreeformFollowup
@@ -31,6 +32,7 @@ from bot.services.freeform_intake import handle_freeform_text, handle_freeform_v
 from bot.services.vault_sync import background_project_sync
 from bot.ui import (
     cleanup_main_menu_anchor,
+    ensure_main_menu,
     ui_render,
     ui_render_add_menu,
     ui_render_help,
@@ -38,7 +40,7 @@ from bot.ui import (
     ui_get_state,
     ui_set_state,
 )
-from bot.ui.state import _ui_payload_get, ui_payload_with_toast
+from bot.ui.state import _ui_payload_get, ui_payload_get_undo, ui_payload_with_toast
 from bot.utils import canon, fmt_msk, h, try_delete_user_message, fmt_task_line_html
 from bot.ui.render import ui_safe_edit as safe_edit
 
@@ -74,6 +76,134 @@ async def _reply_wizard_context(
     return wizard_chat_id, preferred_message_id, stale_wizard_msg_id
 
 
+def _clear_recent_fingerprint(payload: dict, fingerprint: str | None) -> dict:
+    p = dict(payload or {})
+    if not fingerprint:
+        return p
+    p["llm_recent"] = [
+        item
+        for item in (p.get("llm_recent") or [])
+        if isinstance(item, dict) and str(item.get("fingerprint") or "") != str(fingerprint)
+    ]
+    return p
+
+
+async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+
+    await state.clear()
+    if db_pool is None:
+        return await message.answer("⚠️ Undo доступен только при подключённой БД.")
+
+    await try_delete_user_message(message)
+    await cleanup_main_menu_anchor(message, db_pool)
+
+    chat_id = int(message.chat.id)
+    work_project_id: int | None = None
+    toast = "Нечего отменять."
+
+    try:
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, chat_id)
+            payload = _ui_payload_get(ui_state)
+            undo = ui_payload_get_undo(payload, undo_type="llm_create")
+            if not undo:
+                payload.pop("undo", None)
+                await ui_set_state(conn, chat_id, ui_payload=payload)
+            else:
+                action = str(undo.get("action") or "").strip().lower()
+                fingerprint = str(undo.get("fingerprint") or "").strip() or None
+
+                if action == "task":
+                    task_id = int(undo.get("task_id") or 0)
+                    row = await conn.fetchrow("SELECT project_id, title FROM tasks WHERE id=$1", task_id)
+                    if row:
+                        work_project_id = int(row["project_id"])
+                        await conn.execute("DELETE FROM tasks WHERE id=$1", task_id)
+                        await db_add_event(conn, "task_undo", work_project_id, None, f"↩️ Отмена создания задачи #{task_id} {row['title']}")
+                        toast = f"↩️ Отменил задачу: {row['title']}"
+                    else:
+                        toast = "Задача уже отсутствует."
+                elif action == "reminder":
+                    reminder_id = int(undo.get("reminder_id") or 0)
+                    text = await conn.fetchval("SELECT text FROM reminders WHERE id=$1", reminder_id)
+                    await conn.execute("DELETE FROM reminders WHERE id=$1", reminder_id)
+                    await db_add_event(conn, "reminder_undo", None, None, f"↩️ Отмена напоминания: {text or reminder_id}")
+                    toast = f"↩️ Напоминание отменено: {text or 'без текста'}"
+                elif action == "personal_task":
+                    gtasks = getattr(deps, "gtasks", None)
+                    list_id = str(undo.get("list_id") or "")
+                    g_task_id = str(undo.get("g_task_id") or "")
+                    title = str(undo.get("title") or "личное дело")
+                    if gtasks is None or not gtasks.enabled() or not list_id or not g_task_id:
+                        raise RuntimeError("Google Tasks undo unavailable")
+                    await gtasks.delete_task(list_id, g_task_id)
+                    await db_add_event(conn, "personal_task_undo", None, None, f"↩️ Отмена личной задачи: {title}")
+                    toast = f"↩️ Личное дело отменено: {title}"
+                elif action == "idea":
+                    gtasks = getattr(deps, "gtasks", None)
+                    list_id = str(undo.get("list_id") or "")
+                    g_task_id = str(undo.get("g_task_id") or "")
+                    title = str(undo.get("title") or "идея")
+                    if gtasks is None or not gtasks.enabled() or not list_id or not g_task_id:
+                        raise RuntimeError("Google Tasks undo unavailable")
+                    await gtasks.delete_task(list_id, g_task_id)
+                    await db_add_event(conn, "idea_undo", None, None, f"↩️ Отмена идеи: {title}")
+                    toast = f"↩️ Идея отменена: {title}"
+                elif action == "event":
+                    icloud = getattr(deps, "icloud", None)
+                    ics_url = str(undo.get("ics_url") or "")
+                    calendar_url = str(undo.get("calendar_url") or "")
+                    summary = str(undo.get("summary") or "событие")
+                    dtstart_utc = str(undo.get("dtstart_utc") or "")
+                    dtend_utc = str(undo.get("dtend_utc") or "")
+                    work_project_id = int(undo.get("project_id") or 0) or None
+                    if ics_url:
+                        if icloud is None:
+                            raise RuntimeError("iCloud undo unavailable")
+                        ok = await icloud.delete_event(ics_url)
+                        if not ok:
+                            raise RuntimeError("Failed to delete iCloud event")
+                    if ics_url:
+                        await conn.execute("DELETE FROM icloud_events WHERE ics_url=$1", ics_url)
+                    else:
+                        await conn.execute(
+                            "DELETE FROM icloud_events WHERE calendar_url=$1 AND summary=$2 AND dtstart_utc=$3::timestamptz AND dtend_utc=$4::timestamptz",
+                            calendar_url,
+                            summary,
+                            dtstart_utc,
+                            dtend_utc,
+                        )
+                    await db_add_event(conn, "ical_event_undo", work_project_id, None, f"↩️ Отмена события: {summary}")
+                    toast = f"↩️ Событие отменено: {summary}"
+
+                payload.pop("undo", None)
+                payload = _clear_recent_fingerprint(payload, fingerprint)
+                await ui_set_state(conn, chat_id, ui_payload=payload)
+    except Exception as e:
+        await db_log_error(db_pool, "msg_undo_last", e, {"chat_id": chat_id})
+        toast = "Не удалось выполнить undo."
+
+    if work_project_id:
+        fire_and_forget(
+            background_project_sync(int(work_project_id), db_pool, deps.vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
+            label="vault_sync",
+        )
+
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    await ensure_main_menu(message, db_pool)
+    try:
+        async with db_pool.acquire() as conn:
+            ui_state = await ui_get_state(conn, chat_id)
+            payload = _ui_payload_get(ui_state)
+            payload = ui_payload_with_toast(payload, toast, ttl_sec=25)
+            await ui_set_state(conn, chat_id, ui_payload=payload)
+    except Exception:
+        pass
+    await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+
+
 
 async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
@@ -92,6 +222,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
         preferred_message_id=preferred_message_id,
         force_new=False,
     )
+    await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
         message.bot,
         chat_id=wizard_chat_id,
@@ -117,6 +248,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
         preferred_message_id=preferred_message_id,
         force_new=False,
     )
+    await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
         message.bot,
         chat_id=wizard_chat_id,
@@ -207,6 +339,7 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
             preferred_message_id=preferred_message_id,
             force_new=False,
         )
+        await ensure_main_menu(message, db_pool)
         await cleanup_stale_wizard_message(
             message.bot,
             chat_id=wizard_chat_id,
@@ -724,6 +857,7 @@ async def _freeform_followup_missing_context(
     except Exception:
         pass
     await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    await ensure_main_menu(message, db_pool)
 
 
 async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -751,6 +885,7 @@ async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: 
         prepend_text=base_text,
     )
     if handled:
+        await ensure_main_menu(message, db_pool)
         return
 
     try:
@@ -763,6 +898,7 @@ async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: 
         pass
 
     await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    await ensure_main_menu(message, db_pool)
 
 
 async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -788,6 +924,7 @@ async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps:
         prepend_text=base_text,
     )
     if handled:
+        await ensure_main_menu(message, db_pool)
         return
 
     try:
@@ -800,6 +937,7 @@ async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps:
         pass
 
     await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    await ensure_main_menu(message, db_pool)
 
 
 async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -832,6 +970,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             state=state,
         )
         if handled:
+            await ensure_main_menu(message, db_pool)
             return
     if not raw:
         toast = "⚠️ Я понимаю только текст. Нажмите ❓ Help."
@@ -850,6 +989,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
         pass
 
     await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    await ensure_main_menu(message, db_pool)
 
 
 async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps, db_pool: asyncpg.Pool | None = None):
@@ -871,6 +1011,7 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
         state=state,
     )
     if handled:
+        await ensure_main_menu(message, db_pool)
         return
 
     try:
@@ -883,6 +1024,7 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
         pass
 
     await ui_render_home(message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
+    await ensure_main_menu(message, db_pool)
 
 
 def register(dp: Dispatcher) -> None:
@@ -890,6 +1032,7 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(cmd_menu, Command("menu"))
     dp.message.register(cmd_tz, Command("tz"))
     dp.message.register(cmd_help, Command("help"))
+    dp.message.register(msg_undo_last, StateFilter(None), lambda m: m.text and canon(m.text) in {"undo", "отмени", "отмени последнее"})
     dp.message.register(cmd_add_menu, lambda m: m.text and canon(m.text) in {"добавить", "➕ добавить"})
     dp.message.register(cmd_help_button_router, lambda m: m.text and canon(m.text) in {"help", "помощь"})
 

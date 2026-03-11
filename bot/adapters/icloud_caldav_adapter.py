@@ -138,6 +138,32 @@ class ICloudCalDAVAdapter:
                 return "", False
         return ics_url, True
 
+    async def delete_event(self, ics_url: str) -> bool:
+        if not ics_url:
+            return False
+        if self._session is None:
+            raise RuntimeError("CalDAV session not started")
+
+        auth = aiohttp.BasicAuth(self._auth.apple_id, self._auth.app_password)
+        for attempt in range(4):
+            try:
+                async with self._session.delete(ics_url, auth=auth) as resp:
+                    if resp.status in (200, 204, 404):
+                        return True
+                    if resp.status in (409, 423) and attempt < 3:
+                        await asyncio.sleep(0.2 * (attempt + 1))
+                        continue
+                    txt = await resp.text()
+                    logging.error(f"CalDAV DELETE failed: HTTP {resp.status}: {txt[:300]}")
+                    return False
+            except aiohttp.ClientError as e:
+                if attempt < 3:
+                    await asyncio.sleep(0.3 * (attempt + 1))
+                    continue
+                logging.error(f"CalDAV delete network error: {e}")
+                return False
+        return False
+
 
 def _escape(s: str) -> str:
     # Minimal iCalendar escaping

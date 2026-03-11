@@ -203,6 +203,12 @@ class FreeformIntakeTests(unittest.TestCase):
             "personal_task",
         )
 
+    def test_action_hint_detects_explicit_idea_marker(self) -> None:
+        self.assertEqual(_action_hint_from_text("\u0418\u0434\u0435\u044f: voice digest"), "idea")
+
+    def test_action_hint_detects_explicit_reminder_marker(self) -> None:
+        self.assertEqual(_action_hint_from_text("\u041d\u0430\u043f\u043e\u043c\u043d\u0438 \u0437\u0430\u0432\u0442\u0440\u0430 \u0432 10:00"), "reminder")
+
     def test_build_classification_user_prompt_uses_structured_followup_context(self) -> None:
         prompt = _build_classification_user_prompt(
             raw_text="tomorrow at 10:00",
@@ -299,7 +305,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start_followup.await_args.kwargs["missing_fields"], ("deadline_local",))
 
     async def test_personal_task_creation_writes_audit_event(self) -> None:
-        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock())
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
         deps = SimpleNamespace(
             llm=SimpleNamespace(
                 enabled=True,
@@ -311,12 +317,22 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         state = AsyncMock()
         state.get_state = AsyncMock(return_value=None)
         message = SimpleNamespace(chat=SimpleNamespace(id=303))
+        payload_state = {"ui_payload": {}, "ui_screen": "home", "ui_message_id": None}
+
+        async def _ui_get_state(_conn, _chat_id):
+            return payload_state
+
+        async def _ui_set_state(_conn, _chat_id, **kwargs):
+            if "ui_payload" in kwargs and kwargs["ui_payload"] is not None:
+                payload_state["ui_payload"] = kwargs["ui_payload"]
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
             patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
             patch("bot.services.freeform_intake.db_add_event", AsyncMock()) as add_event,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+            patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
+            patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
         ):
             handled = await handle_freeform_text(
                 message,
@@ -333,7 +349,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_event.await_args.args[1], "personal_task_created")
 
     async def test_idea_creation_writes_audit_event(self) -> None:
-        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock())
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "i1"}))
         deps = SimpleNamespace(
             llm=SimpleNamespace(
                 enabled=True,
@@ -345,12 +361,22 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         state = AsyncMock()
         state.get_state = AsyncMock(return_value=None)
         message = SimpleNamespace(chat=SimpleNamespace(id=404))
+        payload_state = {"ui_payload": {}, "ui_screen": "home", "ui_message_id": None}
+
+        async def _ui_get_state(_conn, _chat_id):
+            return payload_state
+
+        async def _ui_set_state(_conn, _chat_id, **kwargs):
+            if "ui_payload" in kwargs and kwargs["ui_payload"] is not None:
+                payload_state["ui_payload"] = kwargs["ui_payload"]
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
             patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
             patch("bot.services.freeform_intake.db_add_event", AsyncMock()) as add_event,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+            patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
+            patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
         ):
             handled = await handle_freeform_text(
                 message,
@@ -365,6 +391,188 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         gtasks.create_task.assert_awaited_once()
         self.assertEqual(add_event.await_count, 1)
         self.assertEqual(add_event.await_args.args[1], "idea_captured")
+
+    async def test_explicit_idea_marker_bypasses_llm_and_goes_to_gtasks(self) -> None:
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "g1"}))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(side_effect=AssertionError("LLM should not be called for explicit idea marker")),
+            ),
+            gtasks=gtasks,
+            tz_name="Europe/Moscow",
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+        message = SimpleNamespace(chat=SimpleNamespace(id=505))
+        payload_state = {"ui_payload": {}, "ui_screen": "home", "ui_message_id": None}
+
+        async def _ui_get_state(_conn, _chat_id):
+            return payload_state
+
+        async def _ui_set_state(_conn, _chat_id, **kwargs):
+            if "ui_payload" in kwargs and kwargs["ui_payload"] is not None:
+                payload_state["ui_payload"] = kwargs["ui_payload"]
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
+            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+            patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
+            patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="\u0418\u0434\u0435\u044f: Voice digest",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+        gtasks.create_task.assert_awaited_once_with("ideas-list", "Voice digest")
+
+    async def test_explicit_personal_marker_bypasses_llm_and_goes_to_gtasks(self) -> None:
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(side_effect=AssertionError("LLM should not be called for explicit personal marker")),
+            ),
+            gtasks=gtasks,
+            tz_name="Europe/Moscow",
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+        message = SimpleNamespace(chat=SimpleNamespace(id=606))
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
+            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+            patch("bot.services.freeform_intake.ui_get_state", AsyncMock(return_value={"ui_payload": {}, "ui_screen": "home", "ui_message_id": None})),
+            patch("bot.services.freeform_intake.ui_set_state", AsyncMock()),
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="\u041b\u0438\u0447\u043d\u043e\u0435: \u043a\u0443\u043f\u0438\u0442\u044c \u0444\u0438\u043b\u044c\u0442\u0440",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+        gtasks.create_task.assert_awaited_once()
+        self.assertEqual(gtasks.create_task.await_args.args[1], "\u043a\u0443\u043f\u0438\u0442\u044c \u0444\u0438\u043b\u044c\u0442\u0440")
+
+    async def test_explicit_reminder_marker_can_bypass_llm_with_local_parser(self) -> None:
+        class _ReminderConn:
+            async def fetchval(self, query, *args):
+                if "RETURNING id" in query:
+                    return 123
+                return None
+
+        class _ReminderAcquire:
+            async def __aenter__(self):
+                return _ReminderConn()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _ReminderPool:
+            def acquire(self):
+                return _ReminderAcquire()
+
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(side_effect=AssertionError("LLM should not be called for locally parsable reminder")),
+            ),
+            tz_name="Europe/Moscow",
+            db_reminders_remind_at_timestamptz=False,
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+        message = SimpleNamespace(chat=SimpleNamespace(id=707))
+        payload_state = {"ui_payload": {}, "ui_screen": "home", "ui_message_id": None}
+
+        async def _ui_get_state(_conn, _chat_id):
+            return payload_state
+
+        async def _ui_set_state(_conn, _chat_id, **kwargs):
+            if "ui_payload" in kwargs and kwargs["ui_payload"] is not None:
+                payload_state["ui_payload"] = kwargs["ui_payload"]
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+            patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
+            patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_ReminderPool(),
+                raw_text="\u041d\u0430\u043f\u043e\u043c\u043d\u0438 \u0437\u0430\u0432\u0442\u0440\u0430 \u0432 10:00 \u043e\u043f\u043b\u0430\u0442\u0438\u0442\u044c \u0438\u043d\u0442\u0435\u0440\u043d\u0435\u0442",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+
+    async def test_duplicate_personal_task_is_blocked_with_recent_fingerprint(self) -> None:
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(enabled=True, classify_intake=AsyncMock(return_value={"action": "personal_task", "title": "Buy filter", "reply": ""})),
+            gtasks=gtasks,
+            tz_name="Europe/Moscow",
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+        message = SimpleNamespace(chat=SimpleNamespace(id=808))
+        payload_store = {"ui_payload": {}, "ui_screen": "home", "ui_message_id": None}
+
+        async def _ui_get_state(_conn, _chat_id):
+            return payload_store
+
+        async def _ui_set_state(_conn, _chat_id, **kwargs):
+            if "ui_payload" in kwargs and kwargs["ui_payload"] is not None:
+                payload_store["ui_payload"] = kwargs["ui_payload"]
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
+            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)) as rerender,
+            patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
+            patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
+        ):
+            first = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="Buy filter",
+                source="text",
+                state=state,
+            )
+            second = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="Buy filter",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        self.assertEqual(gtasks.create_task.await_count, 1)
+        self.assertGreaterEqual(rerender.await_count, 2)
 
 
 if __name__ == "__main__":

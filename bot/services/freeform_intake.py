@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import json
+import hashlib
 import logging
 import os
 import re
@@ -35,8 +37,8 @@ from bot.ui.screens import (
     ui_render_today,
     ui_render_work,
 )
-from bot.ui.state import _ui_payload_get, ui_get_state, ui_payload_with_toast, ui_set_state
-from bot.utils.datetime import parse_datetime_ru
+from bot.ui.state import _now_ts, _ui_payload_get, ui_get_state, ui_payload_with_toast, ui_payload_with_undo, ui_set_state
+from bot.utils.datetime import parse_datetime_ru, quick_extract_datetime_ru
 from bot.utils.text import canon
 
 
@@ -231,6 +233,119 @@ def _action_hint_from_text(raw_text: str) -> str | None:
     if lowered.startswith("напомни"):
         return "reminder"
     return None
+
+
+def _strip_prefixed_capture(raw_text: str, *, action_hint: str | None) -> str:
+    text = _clean(raw_text)
+    hint = _clean(action_hint).lower()
+    if not text:
+        return text
+    patterns: tuple[str, ...]
+    if hint == "idea":
+        patterns = (
+            r"^\s*идея\s*[:\-]\s*(.+)$",
+            r"^\s*идея\s+(.+)$",
+            r"^\s*idea\s*[:\-]\s*(.+)$",
+            r"^\s*idea\s+(.+)$",
+        )
+    elif hint == "personal_task":
+        patterns = (
+            r"^\s*личное\s*[:\-]\s*(.+)$",
+            r"^\s*личная задача\s*[:\-]\s*(.+)$",
+            r"^\s*личное дело\s*[:\-]\s*(.+)$",
+            r"^\s*personal\s*[:\-]\s*(.+)$",
+        )
+    elif hint == "reminder":
+        patterns = (
+            r"^\s*напомни(?:\s+мне)?\s*[:,\-]?\s*(.+)$",
+            r"^\s*remind(?:\s+me)?\s*[:,\-]?\s*(.+)$",
+        )
+    else:
+        return text
+    for pattern in patterns:
+        match = re.match(pattern, text, flags=re.IGNORECASE | re.UNICODE)
+        if match:
+            return _clean(match.group(1))
+    return text
+
+
+def _local_explicit_reminder_intent(raw_text: str, tz_name: str) -> IntakeIntent | None:
+    body = _strip_prefixed_capture(raw_text, action_hint="reminder")
+    if not body:
+        return _normalize_intake_payload({"action": "reminder", "reminder_text": "", "remind_at_local": None, "reply": ""})
+    reminder_text, remind_local = quick_extract_datetime_ru(body, tz_name, prefer_future=True, date_only_time=None)
+    if remind_local is None or not _clean(reminder_text):
+        return None
+    return _normalize_intake_payload(
+        {
+            "action": "reminder",
+            "reminder_text": _clean(reminder_text),
+            "remind_at_local": remind_local.strftime("%Y-%m-%d %H:%M"),
+            "reply": "",
+        }
+    )
+
+
+def _llm_fingerprint(action: str, **data: object) -> str:
+    payload = {"action": _clean(action).lower()}
+    for key, value in sorted(data.items()):
+        if isinstance(value, datetime):
+            payload[key] = value.isoformat()
+        else:
+            payload[key] = value
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _llm_recent_entries(payload: dict) -> list[dict]:
+    entries = []
+    for item in (payload or {}).get("llm_recent") or []:
+        if not isinstance(item, dict):
+            continue
+        exp = int(item.get("exp") or 0)
+        if exp and exp >= _now_ts():
+            entries.append(item)
+    return entries
+
+
+async def _find_recent_duplicate(db_pool: asyncpg.Pool, chat_id: int, fingerprint: str) -> dict | None:
+    async with db_pool.acquire() as conn:
+        ui_state = await ui_get_state(conn, int(chat_id))
+        payload = _ui_payload_get(ui_state)
+        entries = _llm_recent_entries(payload)
+        if len(entries) != len((payload or {}).get("llm_recent") or []):
+            payload["llm_recent"] = entries
+            await ui_set_state(conn, int(chat_id), ui_payload=payload)
+    return next((item for item in entries if str(item.get("fingerprint") or "") == fingerprint), None)
+
+
+async def _remember_llm_action(
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    fingerprint: str,
+    action: str,
+    summary: str,
+    undo: dict | None = None,
+) -> None:
+    ttl_sec = max(15, int(os.getenv("LLM_DEDUP_TTL_SEC", "45")))
+    entry = {
+        "fingerprint": fingerprint,
+        "action": _clean(action).lower(),
+        "summary": _clean(summary),
+        "exp": _now_ts() + ttl_sec,
+    }
+    async with db_pool.acquire() as conn:
+        ui_state = await ui_get_state(conn, int(message.chat.id))
+        payload = _ui_payload_get(ui_state)
+        recent = [item for item in _llm_recent_entries(payload) if str(item.get("fingerprint") or "") != fingerprint]
+        recent.insert(0, entry)
+        payload["llm_recent"] = recent[:8]
+        if undo:
+            undo_payload = dict(undo)
+            undo_payload["fingerprint"] = fingerprint
+            payload = ui_payload_with_undo(payload, undo_payload, ttl_sec=30)
+        await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
 
 
 async def _followup_context(state: FSMContext | None) -> dict[str, object]:
@@ -692,22 +807,61 @@ async def handle_freeform_text(
         )
 
     try:
-        user_prompt = _build_classification_user_prompt(
-            raw_text=text,
-            prepend_text=prepend_text,
-            followup_data=followup_data,
-        )
-        payload = await llm.classify_intake(
-            system_prompt=_intake_system_prompt(
-                now_local=datetime.now(tz),
-                tz_name=tz_name,
-                current_project_code=current_project_code,
-                projects=projects,
-                team=team,
-            ),
-            user_prompt=user_prompt,
-        )
-        intent = _normalize_intake_payload(payload)
+        action_hint = _clean(followup_data.get("freeform_action_hint")).lower() or _clean(
+            _action_hint_from_text(_clean(followup_data.get("freeform_base_text") or prepend_text or text))
+        ).lower()
+        if action_hint == "idea" and not followup_data:
+            intent = _normalize_intake_payload(
+                {
+                    "action": "idea",
+                    "idea_text": _strip_prefixed_capture(text, action_hint=action_hint),
+                    "reply": "",
+                }
+            )
+        elif action_hint == "personal_task" and not followup_data:
+            intent = _normalize_intake_payload(
+                {
+                    "action": "personal_task",
+                    "title": _strip_prefixed_capture(text, action_hint=action_hint),
+                    "reply": "",
+                }
+            )
+        elif action_hint == "reminder" and not followup_data:
+            intent = _local_explicit_reminder_intent(text, tz_name)
+            if intent is None:
+                user_prompt = _build_classification_user_prompt(
+                    raw_text=text,
+                    prepend_text=prepend_text,
+                    followup_data=followup_data,
+                )
+                payload = await llm.classify_intake(
+                    system_prompt=_intake_system_prompt(
+                        now_local=datetime.now(tz),
+                        tz_name=tz_name,
+                        current_project_code=current_project_code,
+                        projects=projects,
+                        team=team,
+                    ),
+                    user_prompt=user_prompt,
+                )
+                intent = _normalize_intake_payload(payload)
+        else:
+            user_prompt = _build_classification_user_prompt(
+                raw_text=text,
+                prepend_text=prepend_text,
+                followup_data=followup_data,
+            )
+            payload = await llm.classify_intake(
+                system_prompt=_intake_system_prompt(
+                    now_local=datetime.now(tz),
+                    tz_name=tz_name,
+                    current_project_code=current_project_code,
+                    projects=projects,
+                    team=team,
+                ),
+                user_prompt=user_prompt,
+            )
+            intent = _normalize_intake_payload(payload)
     except Exception:
         logger.exception("freeform classify failed", extra={"source": source})
         return False
@@ -781,6 +935,24 @@ async def handle_freeform_text(
                         missing_fields=("assignee_name",),
                     )
 
+                task_fingerprint = _llm_fingerprint(
+                    "task",
+                    title=intent.title,
+                    project_id=int(project_id),
+                    assignee_id=assignee_id,
+                    deadline=deadline_local,
+                )
+                duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), task_fingerprint)
+                if duplicate:
+                    await _clear_followup_state(state)
+                    await _rerender_with_toast(
+                        message,
+                        db_pool,
+                        deps,
+                        "Похоже, эта задача уже создана только что. Напишите «отмени», если это дубль.",
+                    )
+                    return True
+
                 task_id = await conn.fetchval(
                     "INSERT INTO tasks (project_id, title, assignee_id, deadline) VALUES ($1,$2,$3,$4) RETURNING id",
                     int(project_id),
@@ -804,6 +976,20 @@ async def handle_freeform_text(
                     int(task_id),
                     event_text,
                 )
+            await _remember_llm_action(
+                message,
+                db_pool,
+                fingerprint=task_fingerprint,
+                action="task",
+                summary=intent.title,
+                undo={
+                    "type": "llm_create",
+                    "action": "task",
+                    "task_id": int(task_id),
+                    "project_id": int(project_id),
+                    "title": intent.title,
+                },
+            )
             fire_and_forget(
                 background_project_sync(
                     int(project_id),
@@ -859,12 +1045,40 @@ async def handle_freeform_text(
 
         list_name = os.getenv("GTASKS_PERSONAL_LIST", "\u041b\u0438\u0447\u043d\u043e\u0435")
         try:
+            personal_fingerprint = _llm_fingerprint("personal_task", title=intent.title, due=due_local)
+            duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), personal_fingerprint)
+            if duplicate:
+                await _clear_followup_state(state)
+                await _rerender_with_toast(
+                    message,
+                    db_pool,
+                    deps,
+                    "Похоже, это личное дело уже добавлено. Напишите «отмени», если это дубль.",
+                )
+                return True
             list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
             due_utc = due_from_local_date(due_local, tz)
-            await gtasks.create_task(list_id, intent.title, due=due_utc)
+            created = await gtasks.create_task(list_id, intent.title, due=due_utc)
+            g_task_id = _clean((created or {}).get("id"))
             async with db_pool.acquire() as conn:
                 due_txt = due_local.strftime("%d.%m %H:%M") if due_local else "\u0431\u0435\u0437 \u0441\u0440\u043e\u043a\u0430"
                 await db_add_event(conn, "personal_task_created", None, None, f"LLM/{source}: {intent.title} ({due_txt})")
+            await _remember_llm_action(
+                message,
+                db_pool,
+                fingerprint=personal_fingerprint,
+                action="personal_task",
+                summary=intent.title,
+                undo={
+                    "type": "llm_create",
+                    "action": "personal_task",
+                    "list_id": list_id,
+                    "g_task_id": g_task_id,
+                    "title": intent.title,
+                }
+                if g_task_id
+                else None,
+            )
         except Exception:
             logger.exception("freeform personal task create failed", extra={"source": source})
             return False
@@ -984,6 +1198,24 @@ async def handle_freeform_text(
         dtstart_utc = start_local.astimezone(timezone.utc)
         dtend_utc = dtstart_utc + timedelta(minutes=duration_min)
         try:
+            event_fingerprint = _llm_fingerprint(
+                "event",
+                kind=kind,
+                title=intent.title,
+                project_id=project_id,
+                start=dtstart_utc,
+                duration_min=duration_min,
+            )
+            duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), event_fingerprint)
+            if duplicate:
+                await _clear_followup_state(state)
+                await _rerender_with_toast(
+                    message,
+                    db_pool,
+                    deps,
+                    "Похоже, это событие уже создано. Напишите «отмени», если это дубль.",
+                )
+                return True
             ics_url, success = await deps.icloud.create_event(
                 calendar_url=cal_url,
                 summary=summary,
@@ -1024,6 +1256,24 @@ async def handle_freeform_text(
                     None,
                     event_text,
                 )
+            await _remember_llm_action(
+                message,
+                db_pool,
+                fingerprint=event_fingerprint,
+                action="event",
+                summary=summary,
+                undo={
+                    "type": "llm_create",
+                    "action": "event",
+                    "kind": kind,
+                    "project_id": int(project_id) if project_id else None,
+                    "calendar_url": cal_url,
+                    "summary": summary,
+                    "dtstart_utc": dtstart_utc.isoformat(),
+                    "dtend_utc": dtend_utc.isoformat(),
+                    "ics_url": ics_url or "",
+                },
+            )
             if kind == "work" and project_id:
                 fire_and_forget(
                     background_project_sync(
@@ -1058,10 +1308,38 @@ async def handle_freeform_text(
 
         ideas_list = os.getenv("GTASKS_IDEAS_LIST", "\u0418\u0434\u0435\u0438")
         try:
+            idea_fingerprint = _llm_fingerprint("idea", idea_text=intent.idea_text)
+            duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), idea_fingerprint)
+            if duplicate:
+                await _clear_followup_state(state)
+                await _rerender_with_toast(
+                    message,
+                    db_pool,
+                    deps,
+                    "Похоже, эта идея уже добавлена. Напишите «отмени», если это дубль.",
+                )
+                return True
             list_id = await get_or_create_list_id(db_pool, gtasks, ideas_list)
-            await gtasks.create_task(list_id, intent.idea_text)
+            created = await gtasks.create_task(list_id, intent.idea_text)
+            g_task_id = _clean((created or {}).get("id"))
             async with db_pool.acquire() as conn:
                 await db_add_event(conn, "idea_captured", None, None, f"LLM/{source}: {intent.idea_text}")
+            await _remember_llm_action(
+                message,
+                db_pool,
+                fingerprint=idea_fingerprint,
+                action="idea",
+                summary=intent.idea_text,
+                undo={
+                    "type": "llm_create",
+                    "action": "idea",
+                    "list_id": list_id,
+                    "g_task_id": g_task_id,
+                    "title": intent.idea_text,
+                }
+                if g_task_id
+                else None,
+            )
         except Exception:
             logger.exception("freeform idea create failed", extra={"source": source})
             return False
@@ -1102,9 +1380,20 @@ async def handle_freeform_text(
                 missing_fields=("remind_at_local",),
             )
         try:
+            reminder_fingerprint = _llm_fingerprint("reminder", text=intent.reminder_text, remind_at=remind_local)
+            duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), reminder_fingerprint)
+            if duplicate:
+                await _clear_followup_state(state)
+                await _rerender_with_toast(
+                    message,
+                    db_pool,
+                    deps,
+                    "Похоже, это напоминание уже создано. Напишите «отмени», если это дубль.",
+                )
+                return True
             async with db_pool.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO reminders (text, remind_at, repeat) VALUES ($1,$2,'none')",
+                reminder_id = await conn.fetchval(
+                    "INSERT INTO reminders (text, remind_at, repeat) VALUES ($1,$2,'none') RETURNING id",
                     intent.reminder_text,
                     to_db_utc(
                         remind_local,
@@ -1113,6 +1402,19 @@ async def handle_freeform_text(
                     ),
                 )
                 await db_add_event(conn, "reminder_created", None, None, f"LLM/{source}: {intent.reminder_text}")
+            await _remember_llm_action(
+                message,
+                db_pool,
+                fingerprint=reminder_fingerprint,
+                action="reminder",
+                summary=intent.reminder_text,
+                undo={
+                    "type": "llm_create",
+                    "action": "reminder",
+                    "reminder_id": int(reminder_id),
+                    "text": intent.reminder_text,
+                },
+            )
         except Exception:
             logger.exception("freeform reminder create failed", extra={"source": source})
             return False

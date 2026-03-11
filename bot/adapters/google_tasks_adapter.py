@@ -138,6 +138,36 @@ class GoogleTasksAdapter:
             body["due"] = self._fmt_due(due)
         return await self._request("POST", f"/lists/{list_id}/tasks", json=body)
 
+    async def delete_task(self, list_id: str, task_id: str) -> bool:
+        if self._session is None:
+            await self.startup()
+        assert self._session is not None
+
+        token = await self._ensure_token()
+        url = f"{self.API_BASE}/lists/{list_id}/tasks/{task_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        backoff = 1.0
+        for attempt in range(5):
+            try:
+                async with self._session.delete(url, headers=headers) as resp:
+                    if resp.status in (200, 204, 404):
+                        return True
+                    if resp.status in (429, 500, 502, 503, 504):
+                        retry_after = resp.headers.get("Retry-After")
+                        wait_s = float(retry_after) if retry_after else backoff
+                        await asyncio.sleep(wait_s)
+                        backoff = min(backoff * 2, 10)
+                        continue
+                    data = await resp.text()
+                    raise RuntimeError(f"Google Tasks delete error ({resp.status}): {data}")
+            except aiohttp.ClientError as e:
+                logging.warning("Google Tasks delete network error (%s), retry %d", e, attempt + 1)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 10)
+
+        raise RuntimeError("Google Tasks delete failed after retries")
+
     async def get_task(self, list_id: str, task_id: str) -> dict:
         return await self._request("GET", f"/lists/{list_id}/tasks/{task_id}")
 

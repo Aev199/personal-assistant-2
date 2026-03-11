@@ -126,6 +126,7 @@ class GeminiAdapter:
                             "enum": ["task", "personal_task", "reminder", "event", "idea", "reply"],
                         },
                         "title": {"type": "string"},
+                        "idea_text": {"type": "string"},
                         "deadline_local": {"type": ["string", "null"]},
                         "reminder_text": {"type": "string"},
                         "remind_at_local": {"type": ["string", "null"]},

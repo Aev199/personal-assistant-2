@@ -112,15 +112,30 @@ def ui_payload_take_toast(payload: dict) -> tuple[str | None, dict]:
     return text, p
 
 
-def _undo_active(payload: dict, *, task_id: int | None = None) -> dict | None:
+def ui_payload_with_undo(payload: dict, undo: dict, ttl_sec: int = 30) -> dict:
+    p = dict(payload or {})
+    data = dict(undo or {})
+    data["exp"] = _now_ts() + max(1, int(ttl_sec or 30))
+    p["undo"] = data
+    return p
+
+
+def ui_payload_get_undo(payload: dict, *, undo_type: str | None = None) -> dict | None:
     undo = (payload or {}).get("undo")
     if not isinstance(undo, dict):
         return None
     exp = int(undo.get("exp") or 0)
     if exp and exp < _now_ts():
         return None
-    if task_id is not None and int(undo.get("task_id") or 0) != int(task_id):
+    if undo_type and str(undo.get("type") or "") != str(undo_type):
         return None
-    if undo.get("type") != "task_status":
+    return undo
+
+
+def _undo_active(payload: dict, *, task_id: int | None = None) -> dict | None:
+    undo = ui_payload_get_undo(payload, undo_type="task_status")
+    if not undo:
+        return None
+    if task_id is not None and int(undo.get("task_id") or 0) != int(task_id):
         return None
     return undo

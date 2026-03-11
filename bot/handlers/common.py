@@ -18,10 +18,14 @@ from bot.ui.screens import (
     ui_render_team,
     ui_render_today,
 )
+from bot.ui.state import ui_set_state
 from bot.utils import canon, try_delete_user_message
 
 
 MAIN_MENU_TOKENS = {
+    "главное меню",
+    "меню",
+    "домой",
     "сегодня",
     "проекты",
     "просрочки",
@@ -29,6 +33,37 @@ MAIN_MENU_TOKENS = {
     "добавить",
     "help",
 }
+
+
+async def _render_with_recovery(
+    render_fn,
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    preferred_message_id: int | None,
+) -> int:
+    final_id = await render_fn(
+        message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    if int(final_id or 0) > 0:
+        return int(final_id)
+
+    try:
+        async with db_pool.acquire() as conn:
+            await ui_set_state(conn, int(message.chat.id), ui_message_id=None)
+    except Exception:
+        pass
+
+    retry_id = await render_fn(
+        message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+        force_new=True,
+    )
+    return int(retry_id or 0)
 
 
 async def get_wizard_message_data(
@@ -104,11 +139,11 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     if raw.startswith("/help"):
         await state.clear()
         await try_delete_user_message(message)
-        final_id = await ui_render_help(
+        final_id = await _render_with_recovery(
+            ui_render_help,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
         await cleanup_stale_wizard_message(
             message.bot,
@@ -121,11 +156,11 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     if raw.startswith("/start") or raw.startswith("/menu"):
         await state.clear()
         await try_delete_user_message(message)
-        final_id = await ui_render_home(
+        final_id = await _render_with_recovery(
+            ui_render_home,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
         await cleanup_stale_wizard_message(
             message.bot,
@@ -138,11 +173,11 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     if raw.startswith("/"):
         await state.clear()
         await try_delete_user_message(message)
-        final_id = await ui_render_home(
+        final_id = await _render_with_recovery(
+            ui_render_home,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
         await cleanup_stale_wizard_message(
             message.bot,
@@ -159,47 +194,54 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     await state.clear()
     await try_delete_user_message(message)
 
-    if token == "проекты":
-        final_id = await ui_render_projects_portfolio(
+    if token in {"главное меню", "меню", "домой"}:
+        final_id = await _render_with_recovery(
+            ui_render_home,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+        )
+    elif token == "проекты":
+        final_id = await _render_with_recovery(
+            ui_render_projects_portfolio,
+            message,
+            db_pool,
+            preferred_message_id=preferred_message_id,
         )
     elif token == "сегодня":
-        final_id = await ui_render_today(
+        final_id = await _render_with_recovery(
+            ui_render_today,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
     elif token == "просрочки":
-        final_id = await ui_render_overdue(
+        final_id = await _render_with_recovery(
+            ui_render_overdue,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
     elif token == "добавить":
-        final_id = await ui_render_add_menu(
+        final_id = await _render_with_recovery(
+            ui_render_add_menu,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
     elif token == "help":
-        final_id = await ui_render_help(
+        final_id = await _render_with_recovery(
+            ui_render_help,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
     else:
-        final_id = await ui_render_team(
+        final_id = await _render_with_recovery(
+            ui_render_team,
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
         )
 
     await cleanup_stale_wizard_message(

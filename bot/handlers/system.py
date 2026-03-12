@@ -779,6 +779,7 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
+    await ensure_main_menu(message, db_pool)
 
 
 async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -804,6 +805,13 @@ async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
+    # make sure reply-keyboard anchor is present; this also helps when the
+    # SPA message was accidentally deleted by the user. previously the
+    # msg_home_button handler only rendered the home screen but did not
+    # recreate the bottom keyboard, which left users without an easy way to
+    # recover the UI. calling ensure_main_menu here guarantees both pieces of
+    # the SPA are restored.
+    await ensure_main_menu(message, db_pool)
 
 
 async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -830,6 +838,7 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
+    await ensure_main_menu(message, db_pool)
 
 
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -856,6 +865,7 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
+    await ensure_main_menu(message, db_pool)
 
 
 async def _freeform_followup_base_text(state: FSMContext) -> str:

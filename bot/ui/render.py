@@ -138,11 +138,21 @@ async def ui_render(
             except TelegramRetryAfter as e:
                 await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
             except TelegramBadRequest as e:
-                # Treat "not modified" as success but still persist state.
+                # Historically we treated a "message is not modified" error
+                # as a harmless success because the message already had the
+                # desired text.  Unfortunately a deleted message can sometimes
+                # produce the same error string, which means we never fall
+                # through to the "send new message" branch and the UI never
+                # gets recreated.  To make recovery more robust we still
+                # persist the id/cleanup, but we do *not* return; instead we
+                # keep trying other targets or ultimately send a brand-new
+                # message below.
                 if "message is not modified" in str(e).lower():
                     await _persist(ui_message_id=int(ui_msg_id))
                     await _cleanup_after_success(int(ui_msg_id))
-                    return int(ui_msg_id)
+                    # continue outer loop so that we attempt to send a new
+                    # message afterwards (fallback to fresh UI).
+                    continue
                 break
             except Exception:
                 break

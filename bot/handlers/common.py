@@ -17,6 +17,7 @@ from bot.ui.screens import (
     ui_render_projects_portfolio,
     ui_render_team,
     ui_render_today,
+    ensure_main_menu,
 )
 from bot.utils import canon, try_delete_user_message
 
@@ -118,6 +119,8 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             stale_message_id=stale_wizard_msg_id,
             final_message_id=final_id,
         )
+        # ensure the bottom keyboard anchor exists as well
+        await ensure_main_menu(message, db_pool)
         return True
 
     if raw.startswith("/start") or raw.startswith("/menu"):
@@ -135,6 +138,7 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             stale_message_id=stale_wizard_msg_id,
             final_message_id=final_id,
         )
+        await ensure_main_menu(message, db_pool)
         return True
 
     if raw.startswith("/"):
@@ -157,6 +161,11 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     token = canon(raw)
     if token not in MAIN_MENU_TOKENS:
         return False
+
+    # for any menu token we render the appropriate screen and refresh the
+    # reply-keyboard. this covers scenarios where the SPA message was deleted
+    # by the user; after the new screen is posted the keyboard anchor will also
+    # be recreated so users aren't stranded.
 
     await state.clear()
     await try_delete_user_message(message)
@@ -211,6 +220,8 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             force_new=False,
         )
 
+    # always restore reply keyboard anchor after rendering
+    await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
         message.bot,
         chat_id=wizard_chat_id,

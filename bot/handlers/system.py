@@ -31,7 +31,6 @@ from bot.services.background import fire_and_forget
 from bot.services.freeform_intake import handle_freeform_text, handle_freeform_voice
 from bot.services.vault_sync import background_project_sync
 from bot.ui import (
-    cleanup_main_menu_anchor,
     ensure_main_menu,
     ui_render,
     ui_render_add_menu,
@@ -97,7 +96,6 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
         return await message.answer("⚠️ Undo доступен только при подключённой БД.")
 
     await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
 
     chat_id = int(message.chat.id)
     work_project_id: int | None = None
@@ -214,13 +212,13 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
     )
     await state.clear()
     await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
+    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
     final_id = await ui_render_home(
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     if final_id == 0:
         # Fallback: send a simple message if SPA rendering failed completely
@@ -229,7 +227,6 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
             reply_markup=back_home_kb(),
         )
         final_id = sent_message.message_id
-    await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
         message.bot,
         chat_id=wizard_chat_id,
@@ -247,13 +244,13 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
     )
     await state.clear()
     await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
+    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
     final_id = await ui_render_home(
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     if final_id == 0:
         # Fallback: send a simple message if SPA rendering failed completely
@@ -262,24 +259,6 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
             reply_markup=back_home_kb(),
         )
         final_id = sent_message.message_id
-    await ensure_main_menu(message, db_pool)
-    await cleanup_stale_wizard_message(
-        message.bot,
-        chat_id=wizard_chat_id,
-        stale_message_id=stale_wizard_msg_id,
-        final_message_id=final_id,
-    )
-    await state.clear()
-    await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
-    final_id = await ui_render_home(
-        message,
-        db_pool,
-        tz_name=resolve_tz_name(deps.tz_name),
-        preferred_message_id=preferred_message_id,
-        force_new=False,
-    )
-    await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
         message.bot,
         chat_id=wizard_chat_id,
@@ -363,14 +342,13 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
 
     if db_pool is not None:
         await try_delete_user_message(message)
-        await cleanup_main_menu_anchor(message, db_pool)
+        anchor_sent = await ensure_main_menu(message, db_pool)
         final_id = await ui_render_help(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
-        await ensure_main_menu(message, db_pool)
         await cleanup_stale_wizard_message(
             message.bot,
             chat_id=wizard_chat_id,
@@ -396,11 +374,12 @@ async def cmd_add_menu(message: Message, state: FSMContext, db_pool: asyncpg.Poo
     )
     await state.clear()
     await try_delete_user_message(message)
+    anchor_sent = await ensure_main_menu(message, db_pool)
     final_id = await ui_render_add_menu(
         message,
         db_pool,
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     await cleanup_stale_wizard_message(
         message.bot,
@@ -419,11 +398,12 @@ async def cmd_help_button_router(message: Message, state: FSMContext, db_pool: a
     )
     await state.clear()
     await try_delete_user_message(message)
+    anchor_sent = await ensure_main_menu(message, db_pool)
     final_id = await ui_render_help(
         message,
         db_pool,
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     await cleanup_stale_wizard_message(
         message.bot,
@@ -797,12 +777,13 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
     await try_delete_user_message(message)
     from bot.ui import ui_render_projects_portfolio
 
+    anchor_sent = await ensure_main_menu(message, db_pool)
     final_id = await ui_render_projects_portfolio(
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     await cleanup_stale_wizard_message(
         message.bot,
@@ -810,7 +791,6 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
-    await ensure_main_menu(message, db_pool)
 
 
 async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -822,13 +802,13 @@ async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.
     )
     await state.clear()
     await try_delete_user_message(message)
-    
+    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
     final_id = await ui_render_home(
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     if final_id == 0:
         # Fallback: send a simple message if SPA rendering failed completely
@@ -843,13 +823,6 @@ async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
-    # make sure reply-keyboard anchor is present; this also helps when the
-    # SPA message was accidentally deleted by the user. previously the
-    # msg_home_button handler only rendered the home screen but did not
-    # recreate the bottom keyboard, which left users without an easy way to
-    # recover the UI. calling ensure_main_menu here guarantees both pieces of
-    # the SPA are restored.
-    await ensure_main_menu(message, db_pool)
 
 
 async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -863,12 +836,13 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
     await try_delete_user_message(message)
     from bot.ui import ui_render_today
 
+    anchor_sent = await ensure_main_menu(message, db_pool)
     final_id = await ui_render_today(
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     await cleanup_stale_wizard_message(
         message.bot,
@@ -876,7 +850,6 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
-    await ensure_main_menu(message, db_pool)
 
 
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -890,12 +863,13 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
     await try_delete_user_message(message)
     from bot.ui import ui_render_overdue
 
+    anchor_sent = await ensure_main_menu(message, db_pool)
     final_id = await ui_render_overdue(
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
         preferred_message_id=preferred_message_id,
-        force_new=False,
+        force_new=bool(anchor_sent),
     )
     await cleanup_stale_wizard_message(
         message.bot,
@@ -903,7 +877,6 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
         stale_message_id=stale_wizard_msg_id,
         final_message_id=final_id,
     )
-    await ensure_main_menu(message, db_pool)
 
 
 async def _freeform_followup_base_text(state: FSMContext) -> str:
@@ -946,7 +919,6 @@ async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: 
         return await _freeform_followup_missing_context(message, state, deps, db_pool)
 
     await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
 
     handled = await handle_freeform_text(
         message,
@@ -987,7 +959,6 @@ async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps:
         return await _freeform_followup_missing_context(message, state, deps, db_pool)
 
     await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
 
     handled = await handle_freeform_voice(
         message,
@@ -1030,7 +1001,6 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
         )
 
     await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
 
     raw = (message.text or "").strip()
     if raw and not raw.startswith("/"):
@@ -1075,7 +1045,6 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
         return await message.answer("⚠️ Голосовые сообщения доступны только при подключённой БД и LLM.")
 
     await try_delete_user_message(message)
-    await cleanup_main_menu_anchor(message, db_pool)
 
     handled = await handle_freeform_voice(
         message,

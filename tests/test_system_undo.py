@@ -72,7 +72,6 @@ class SystemUndoTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.handlers.system.ui_get_state", _ui_get_state),
             patch("bot.handlers.system.ui_set_state", _ui_set_state),
             patch("bot.handlers.system.try_delete_user_message", AsyncMock()),
-            patch("bot.handlers.system.cleanup_main_menu_anchor", AsyncMock()),
             patch("bot.handlers.system.ui_render_home", AsyncMock(return_value=1)),
             patch("bot.handlers.system.ensure_main_menu", AsyncMock()),
             patch("bot.handlers.system.db_add_event", AsyncMock()),

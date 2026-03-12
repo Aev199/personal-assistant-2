@@ -222,6 +222,13 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
         preferred_message_id=preferred_message_id,
         force_new=False,
     )
+    if final_id == 0:
+        # Fallback: send a simple message if SPA rendering failed completely
+        sent_message = await message.answer(
+            "⚠️ Не удалось отобразить главный экран. Попробуйте позже.",
+            reply_markup=back_home_kb(),
+        )
+        final_id = sent_message.message_id
     await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
         message.bot,
@@ -237,6 +244,30 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
         state,
         fallback_chat_id=int(message.chat.id),
+    )
+    await state.clear()
+    await try_delete_user_message(message)
+    await cleanup_main_menu_anchor(message, db_pool)
+    final_id = await ui_render_home(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    if final_id == 0:
+        # Fallback: send a simple message if SPA rendering failed completely
+        sent_message = await message.answer(
+            "⚠️ Не удалось отобразить главный экран. Попробуйте позже.",
+            reply_markup=back_home_kb(),
+        )
+        final_id = sent_message.message_id
+    await ensure_main_menu(message, db_pool)
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
     )
     await state.clear()
     await try_delete_user_message(message)
@@ -791,7 +822,7 @@ async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.
     )
     await state.clear()
     await try_delete_user_message(message)
-
+    
     final_id = await ui_render_home(
         message,
         db_pool,
@@ -799,6 +830,13 @@ async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.
         preferred_message_id=preferred_message_id,
         force_new=False,
     )
+    if final_id == 0:
+        # Fallback: send a simple message if SPA rendering failed completely
+        sent_message = await message.answer(
+            "⚠️ Не удалось отобразить главный экран. Попробуйте позже.",
+            reply_markup=back_home_kb(),
+        )
+        final_id = sent_message.message_id
     await cleanup_stale_wizard_message(
         message.bot,
         chat_id=wizard_chat_id,

@@ -781,6 +781,31 @@ async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyn
     )
 
 
+async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
+    await state.clear()
+    await try_delete_user_message(message)
+
+    final_id = await ui_render_home(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
+
+
 async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
@@ -1044,6 +1069,7 @@ def register(dp: Dispatcher) -> None:
 
     dp.callback_query.register(cb_global_tails, F.data == "nav:global_tails")
     dp.callback_query.register(cb_global_tails_pick, F.data.startswith("nav:tails_pick:"))
+    dp.message.register(msg_home_button, lambda m: m.text and canon(m.text) in {"главное меню", "домой"})
 
     dp.message.register(msg_projects_button, lambda m: m.text and canon(m.text) == "проекты")
     dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "сегодня")

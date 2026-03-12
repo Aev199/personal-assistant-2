@@ -22,6 +22,8 @@ from bot.utils import canon, try_delete_user_message
 
 
 MAIN_MENU_TOKENS = {
+    "главное меню",
+    "домой",
     "сегодня",
     "проекты",
     "просрочки",
@@ -159,7 +161,14 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     await state.clear()
     await try_delete_user_message(message)
 
-    if token == "проекты":
+    if token in {"главное меню", "домой"}:
+        final_id = await ui_render_home(
+            message,
+            db_pool,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    elif token == "проекты":
         final_id = await ui_render_projects_portfolio(
             message,
             db_pool,

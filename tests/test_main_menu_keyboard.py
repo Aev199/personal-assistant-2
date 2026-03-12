@@ -9,6 +9,7 @@ class MainMenuKeyboardTests(unittest.TestCase):
         self.assertTrue(kb.is_persistent)
         self.assertTrue(kb.resize_keyboard)
         self.assertFalse(kb.one_time_keyboard)
+        self.assertEqual(kb.keyboard[0][0].text, "🏠 Главное меню")
 
 
 if __name__ == "__main__":

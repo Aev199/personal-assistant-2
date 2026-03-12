@@ -107,11 +107,12 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     if raw.startswith("/help"):
         await state.clear()
         await try_delete_user_message(message)
+        anchor_sent = await ensure_main_menu(message, db_pool)
         final_id = await ui_render_help(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
         await cleanup_stale_wizard_message(
             message.bot,
@@ -119,18 +120,17 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             stale_message_id=stale_wizard_msg_id,
             final_message_id=final_id,
         )
-        # ensure the bottom keyboard anchor exists as well
-        await ensure_main_menu(message, db_pool)
         return True
 
     if raw.startswith("/start") or raw.startswith("/menu"):
         await state.clear()
         await try_delete_user_message(message)
+        anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
         final_id = await ui_render_home(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
         await cleanup_stale_wizard_message(
             message.bot,
@@ -138,17 +138,17 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             stale_message_id=stale_wizard_msg_id,
             final_message_id=final_id,
         )
-        await ensure_main_menu(message, db_pool)
         return True
 
     if raw.startswith("/"):
         await state.clear()
         await try_delete_user_message(message)
+        anchor_sent = await ensure_main_menu(message, db_pool)
         final_id = await ui_render_home(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
         await cleanup_stale_wizard_message(
             message.bot,
@@ -169,59 +169,59 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
 
     await state.clear()
     await try_delete_user_message(message)
+    recreate_anchor = token in {"главное меню", "домой"}
+    anchor_sent = await ensure_main_menu(message, db_pool, recreate=recreate_anchor)
 
     if token in {"главное меню", "домой"}:
         final_id = await ui_render_home(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
     elif token == "проекты":
         final_id = await ui_render_projects_portfolio(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
     elif token == "сегодня":
         final_id = await ui_render_today(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
     elif token == "просрочки":
         final_id = await ui_render_overdue(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
     elif token == "добавить":
         final_id = await ui_render_add_menu(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
     elif token == "help":
         final_id = await ui_render_help(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
     else:
         final_id = await ui_render_team(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,
-            force_new=False,
+            force_new=bool(anchor_sent),
         )
 
-    # always restore reply keyboard anchor after rendering
-    await ensure_main_menu(message, db_pool)
     await cleanup_stale_wizard_message(
         message.bot,
         chat_id=wizard_chat_id,

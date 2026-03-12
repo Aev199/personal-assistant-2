@@ -15,7 +15,7 @@ class DummyPool:
     def __init__(self):
         self.conn = DummyConn()
 
-    async def acquire(self):
+    def acquire(self):
         class Ctx:
             async def __aenter__(self_inner):
                 return self.conn
@@ -27,15 +27,15 @@ class DummyPool:
 
 
 class UiRenderRecoveryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_not_modified_error_triggers_new_message(self) -> None:
-        # simulate a stored UI message id that does not actually exist; editing
-        # it raises a "message is not modified" error, and we expect a fresh
-        # send to happen instead of silently giving up.
+    @staticmethod
+    def _bad_request(message: str) -> TelegramBadRequest:
+        return TelegramBadRequest(SimpleNamespace(), message)
+
+    async def test_not_modified_error_is_treated_as_success(self) -> None:
         bot = SimpleNamespace()
-        bot.edit_message_text = AsyncMock(side_effect=TelegramBadRequest("message is not modified"))
+        bot.edit_message_text = AsyncMock(side_effect=self._bad_request("message is not modified"))
         bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=999))
 
-        # state returned by ui_get_state (we patch this so no DB access occurs)
         fake_state = {"ui_message_id": 42, "ui_screen": "home", "ui_payload": {}}
 
         with patch("bot.ui.render.ui_get_state", AsyncMock(return_value=fake_state)), \
@@ -49,7 +49,27 @@ class UiRenderRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 reply_markup=None,
             )
 
-        # ensure we attempted to send a new message after the bogus edit
+        bot.send_message.assert_not_awaited()
+        self.assertEqual(msg_id, 42)
+
+    async def test_missing_ui_message_triggers_new_message(self) -> None:
+        bot = SimpleNamespace()
+        bot.edit_message_text = AsyncMock(side_effect=self._bad_request("message to edit not found"))
+        bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=999))
+
+        fake_state = {"ui_message_id": 42, "ui_screen": "home", "ui_payload": {}}
+
+        with patch("bot.ui.render.ui_get_state", AsyncMock(return_value=fake_state)), \
+             patch("bot.ui.render.ui_set_state", AsyncMock()):
+            pool = DummyPool()
+            msg_id = await ui_render(
+                bot=bot,
+                db_pool=pool,
+                chat_id=123,
+                text="hello",
+                reply_markup=None,
+            )
+
         bot.send_message.assert_awaited_once()
         self.assertEqual(msg_id, 999)
 

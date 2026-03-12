@@ -40,15 +40,23 @@ async def _pop_screen_toast(db_pool: asyncpg.Pool, chat_id: int) -> str | None:
     return toast_line
 
 
-async def ensure_main_menu(message: Message, db_pool: asyncpg.Pool) -> None:
+async def ensure_main_menu(
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    refresh: bool = False,
+    recreate: bool = False,
+) -> bool:
     """Ensure the persistent bottom reply-keyboard is visible.
 
     Telegram clients may hide reply keyboards; the most reliable way to restore
     it is to (re)send a message that carries the ReplyKeyboardMarkup. To avoid
-    chat spam, we keep a single 'anchor' message id in DB and try to edit it;
-    if it was deleted, we create a new one and store its id. This anchor is a
-    Telegram-specific transport for ReplyKeyboardMarkup and is not part of the
-    SPA screen itself.
+    chat spam, we keep a single anchor message and leave it in place. By
+    default this function is a cheap no-op when the anchor already exists.
+
+    Returns ``True`` when a brand-new anchor message was sent. Callers can use
+    that to force a fresh SPA render below the anchor when they want the layout
+    to be "anchor first, SPA second".
     """
 
     chat_id = int(message.chat.id)
@@ -64,27 +72,34 @@ async def ensure_main_menu(message: Message, db_pool: asyncpg.Pool) -> None:
     _ANCHOR_TEXT_A = "⌨️ Главное меню"
     _ANCHOR_TEXT_B = "⌨️ Меню активно"
 
-    if menu_mid:
+    stale_menu_mid = int(menu_mid) if menu_mid else None
+    if stale_menu_mid and not refresh and not recreate:
+        return False
+
+    if stale_menu_mid and not recreate:
         try:
             await message.bot.edit_message_text(
                 chat_id=chat_id,
-                message_id=int(menu_mid),
+                message_id=stale_menu_mid,
                 text=_ANCHOR_TEXT_A,
                 reply_markup=main_menu_kb(),
             )
-            return
+            return False
         except TelegramBadRequest as e:
             if "message is not modified" in str(e).lower():
                 try:
                     await message.bot.edit_message_text(
                         chat_id=chat_id,
-                        message_id=int(menu_mid),
+                        message_id=stale_menu_mid,
                         text=_ANCHOR_TEXT_B,
                         reply_markup=main_menu_kb(),
                     )
-                    return
-                except Exception:
-                    return
+                    return False
+                except TelegramBadRequest as retry_error:
+                    if "message is not modified" in str(retry_error).lower():
+                        return False
+                except TelegramRetryAfter as retry_after:
+                    await asyncio.sleep(float(getattr(retry_after, "retry_after", 1.0)) + 0.1)
         except TelegramRetryAfter as e:
             await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
         except Exception:
@@ -99,8 +114,14 @@ async def ensure_main_menu(message: Message, db_pool: asyncpg.Pool) -> None:
                 chat_id,
                 int(anchor.message_id),
             )
+        if stale_menu_mid and stale_menu_mid != int(anchor.message_id):
+            try:
+                await message.bot.delete_message(chat_id=chat_id, message_id=stale_menu_mid)
+            except Exception:
+                pass
+        return True
     except Exception:
-        return
+        return False
 
 
 async def cleanup_main_menu_anchor(message: Message, db_pool: asyncpg.Pool) -> None:

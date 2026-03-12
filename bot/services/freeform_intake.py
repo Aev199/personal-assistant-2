@@ -308,14 +308,27 @@ def _llm_recent_entries(payload: dict) -> list[dict]:
     return entries
 
 
-async def _find_recent_duplicate(db_pool: asyncpg.Pool, chat_id: int, fingerprint: str) -> dict | None:
-    async with db_pool.acquire() as conn:
-        ui_state = await ui_get_state(conn, int(chat_id))
+async def _find_recent_duplicate(
+    db_pool: asyncpg.Pool,
+    chat_id: int,
+    fingerprint: str,
+    *,
+    conn: asyncpg.Connection | None = None,
+) -> dict | None:
+    async def _load_entries(target_conn: asyncpg.Connection) -> list[dict]:
+        ui_state = await ui_get_state(target_conn, int(chat_id))
         payload = _ui_payload_get(ui_state)
         entries = _llm_recent_entries(payload)
         if len(entries) != len((payload or {}).get("llm_recent") or []):
             payload["llm_recent"] = entries
-            await ui_set_state(conn, int(chat_id), ui_payload=payload)
+            await ui_set_state(target_conn, int(chat_id), ui_payload=payload)
+        return entries
+
+    if conn is not None:
+        entries = await _load_entries(conn)
+    else:
+        async with db_pool.acquire() as conn:
+            entries = await _load_entries(conn)
     return next((item for item in entries if str(item.get("fingerprint") or "") == fingerprint), None)
 
 
@@ -942,7 +955,12 @@ async def handle_freeform_text(
                     assignee_id=assignee_id,
                     deadline=deadline_local,
                 )
-                duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), task_fingerprint)
+                duplicate = await _find_recent_duplicate(
+                    db_pool,
+                    int(message.chat.id),
+                    task_fingerprint,
+                    conn=conn,
+                )
                 if duplicate:
                     await _clear_followup_state(state)
                     await _rerender_with_toast(

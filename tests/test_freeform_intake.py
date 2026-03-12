@@ -304,6 +304,69 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start_followup.await_args.kwargs["pending_action"], "task")
         self.assertEqual(start_followup.await_args.kwargs["missing_fields"], ("deadline_local",))
 
+    async def test_task_duplicate_check_reuses_current_connection(self) -> None:
+        class _TaskConn:
+            async def fetchval(self, query, *args):
+                if "RETURNING id" in query:
+                    return 321
+                return None
+
+        class _TaskAcquire:
+            def __init__(self, conn):
+                self._conn = conn
+
+            async def __aenter__(self):
+                return self._conn
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _TaskPool:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def acquire(self):
+                return _TaskAcquire(self._conn)
+
+        conn = _TaskConn()
+        pool = _TaskPool(conn)
+        message = SimpleNamespace(chat=SimpleNamespace(id=202))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(return_value={"action": "task", "title": "Send report", "reply": ""}),
+            ),
+            tz_name="Europe/Moscow",
+            db_tasks_deadline_timestamptz=False,
+            vault=None,
+            db_log_error=None,
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(1, "OPS", [], []))),
+            patch("bot.services.freeform_intake._resolve_project", AsyncMock(return_value=(1, "OPS", None))),
+            patch("bot.services.freeform_intake._resolve_assignee", return_value=(None, None, None)),
+            patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(return_value=None)) as find_duplicate,
+            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake._remember_llm_action", AsyncMock()),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+            patch("bot.services.freeform_intake.background_project_sync", new=lambda *args, **kwargs: object()),
+            patch("bot.services.freeform_intake.fire_and_forget"),
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=pool,
+                raw_text="Send report",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+        self.assertIs(find_duplicate.await_args.kwargs["conn"], conn)
+
     async def test_personal_task_creation_writes_audit_event(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
         deps = SimpleNamespace(

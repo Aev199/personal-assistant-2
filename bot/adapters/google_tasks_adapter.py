@@ -30,7 +30,6 @@ class GoogleTasksAdapter:
         self._session: Optional[aiohttp.ClientSession] = None
         self._access_token: Optional[str] = None
         self._access_token_exp: float = 0.0
-        self._integration_disabled: bool = False  # Track if integration is disabled due to auth failure
 
     async def startup(self) -> None:
         if self._session is None:
@@ -43,21 +42,12 @@ class GoogleTasksAdapter:
             self._session = None
 
     def enabled(self) -> bool:
-        """Check if Google Tasks is configured and not disabled due to auth failure."""
-        return bool(self.auth.client_id and self.auth.client_secret and self.auth.refresh_token) and not self._integration_disabled
-    
-    def is_disabled(self) -> bool:
-        """Check if integration is disabled due to auth failure."""
-        return self._integration_disabled
-    
-    def disable_integration(self) -> None:
-        """Disable integration due to auth failure."""
-        self._integration_disabled = True
-        logging.warning("Google Tasks integration disabled due to authentication failure")
+        """Check if Google Tasks credentials are configured."""
+        return bool(self.auth.client_id and self.auth.client_secret and self.auth.refresh_token)
 
     async def _ensure_token(self) -> str:
         if not self.enabled():
-            raise RuntimeError("Google Tasks is not configured or disabled")
+            raise RuntimeError("Google Tasks is not configured")
         now = asyncio.get_event_loop().time()
         if self._access_token and now < self._access_token_exp - 30:
             return self._access_token
@@ -76,8 +66,8 @@ class GoogleTasksAdapter:
             async with self._session.post(self.TOKEN_URL, data=payload) as resp:
                 data = await resp.json(content_type=None)
                 if resp.status in (401, 403):
-                    # Auth failure - disable integration
-                    self.disable_integration()
+                    self._access_token = None
+                    self._access_token_exp = 0.0
                     raise RuntimeError(f"Google Tasks authentication failed ({resp.status}): {data}")
                 if resp.status >= 400:
                     raise RuntimeError(f"Token refresh failed ({resp.status}): {data}")

@@ -434,6 +434,20 @@ def _event_summary(kind: str, title: str, project_code: str | None) -> str:
     return personal_tpl.format(title=title, project="", project_prefix="").strip()
 
 
+def _gtasks_error_toast(kind_label: str, exc: Exception) -> str:
+    raw = _clean(exc)
+    lower = raw.lower()
+    if "authentication failed" in lower or "invalid_grant" in lower:
+        detail = "ошибка авторизации Google Tasks. Проверьте refresh token."
+    elif "not configured" in lower:
+        detail = "Google Tasks не настроен."
+    else:
+        detail = raw or "неизвестная ошибка."
+    if len(detail) > 160:
+        detail = detail[:157].rstrip() + "..."
+    return f"⚠️ Не удалось добавить {kind_label} в Google Tasks: {detail}"
+
+
 async def _render_screen(
     message: Message,
     db_pool: asyncpg.Pool,
@@ -820,10 +834,13 @@ async def handle_freeform_text(
         )
 
     try:
-        action_hint = _clean(followup_data.get("freeform_action_hint")).lower() or _clean(
-            _action_hint_from_text(_clean(followup_data.get("freeform_base_text") or prepend_text or text))
-        ).lower()
-        if action_hint == "idea" and not followup_data:
+        base_text = _clean(followup_data.get("freeform_base_text") or prepend_text)
+        action_hint = (
+            _clean(_action_hint_from_text(text)).lower()
+            or _clean(followup_data.get("freeform_action_hint")).lower()
+            or _clean(_action_hint_from_text(base_text)).lower()
+        )
+        if action_hint == "idea":
             intent = _normalize_intake_payload(
                 {
                     "action": "idea",
@@ -831,7 +848,7 @@ async def handle_freeform_text(
                     "reply": "",
                 }
             )
-        elif action_hint == "personal_task" and not followup_data:
+        elif action_hint == "personal_task":
             intent = _normalize_intake_payload(
                 {
                     "action": "personal_task",
@@ -839,7 +856,7 @@ async def handle_freeform_text(
                     "reply": "",
                 }
             )
-        elif action_hint == "reminder" and not followup_data:
+        elif action_hint == "reminder":
             intent = _local_explicit_reminder_intent(text, tz_name)
             if intent is None:
                 user_prompt = _build_classification_user_prompt(
@@ -1097,9 +1114,11 @@ async def handle_freeform_text(
                 if g_task_id
                 else None,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("freeform personal task create failed", extra={"source": source})
-            return False
+            await _clear_followup_state(state)
+            await _rerender_with_toast(message, db_pool, deps, _gtasks_error_toast("личную задачу", exc))
+            return True
 
         await _clear_followup_state(state)
         if due_local is None:
@@ -1358,9 +1377,11 @@ async def handle_freeform_text(
                 if g_task_id
                 else None,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("freeform idea create failed", extra={"source": source})
-            return False
+            await _clear_followup_state(state)
+            await _rerender_with_toast(message, db_pool, deps, _gtasks_error_toast("идею", exc))
+            return True
 
         await _clear_followup_state(state)
         await _rerender_with_toast(

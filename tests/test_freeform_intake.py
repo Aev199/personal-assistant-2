@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from bot.fsm.states import FreeformFollowup
 from bot.services.freeform_intake import (
     ProjectOption,
     TeamOption,
@@ -605,7 +606,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             "freeform_base_text": "создать задачу",
             "freeform_missing_fields": ["title"],
         })
-        state.get_state = AsyncMock(return_value="FreeformFollowup.awaiting_text")
+        state.get_state = AsyncMock(return_value=FreeformFollowup.awaiting_text.state)
         message = SimpleNamespace(chat=SimpleNamespace(id=909))
         payload_state = {"ui_payload": {}, "ui_screen": "home", "ui_message_id": None}
 
@@ -618,6 +619,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
             patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
             patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
@@ -633,7 +635,72 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        gtasks.create_task.assert_awaited_once_with("Идеи", "добавить чат-бот в проект")
+        deps.llm.classify_intake.assert_not_awaited()
+        gtasks.create_task.assert_awaited_once_with("ideas-list", "добавить чат-бот в проект")
+
+    async def test_personal_task_gtasks_error_is_shown_to_user(self) -> None:
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(side_effect=RuntimeError("invalid_grant")))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(return_value={"action": "personal_task", "title": "Buy filter", "reply": ""}),
+            ),
+            gtasks=gtasks,
+            tz_name="Europe/Moscow",
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+        message = SimpleNamespace(chat=SimpleNamespace(id=910))
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(return_value=None)),
+            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)) as rerender,
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="buy filter",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+        self.assertIn("ошибка авторизации Google Tasks", rerender.await_args.args[3])
+
+    async def test_idea_gtasks_error_is_shown_to_user(self) -> None:
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(side_effect=RuntimeError("boom")))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(return_value={"action": "idea", "idea_text": "Voice digest", "reply": ""}),
+            ),
+            gtasks=gtasks,
+            tz_name="Europe/Moscow",
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+        message = SimpleNamespace(chat=SimpleNamespace(id=911))
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(return_value=None)),
+            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)) as rerender,
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="voice digest",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+        self.assertIn("Не удалось добавить идею", rerender.await_args.args[3])
 
     async def test_duplicate_personal_task_is_blocked_with_recent_fingerprint(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))

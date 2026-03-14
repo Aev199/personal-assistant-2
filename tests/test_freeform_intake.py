@@ -588,6 +588,53 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
 
+    async def test_followup_with_explicit_marker_in_current_text_uses_local_parser(self) -> None:
+        gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "i1"}))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(side_effect=AssertionError("LLM should not be called when current text has explicit marker")),
+            ),
+            gtasks=gtasks,
+            tz_name="Europe/Moscow",
+        )
+        state = AsyncMock()
+        # Simulate followup state
+        state.get_data = AsyncMock(return_value={
+            "freeform_pending_action": "task",
+            "freeform_base_text": "создать задачу",
+            "freeform_missing_fields": ["title"],
+        })
+        state.get_state = AsyncMock(return_value="FreeformFollowup.awaiting_text")
+        message = SimpleNamespace(chat=SimpleNamespace(id=909))
+        payload_state = {"ui_payload": {}, "ui_screen": "home", "ui_message_id": None}
+
+        async def _ui_get_state(_conn, _chat_id):
+            return payload_state
+
+        async def _ui_set_state(_conn, _chat_id, **kwargs):
+            if "ui_payload" in kwargs and kwargs["ui_payload"] is not None:
+                payload_state["ui_payload"] = kwargs["ui_payload"]
+
+        with (
+            patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
+            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+            patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
+            patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="идея: добавить чат-бот в проект",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+        gtasks.create_task.assert_awaited_once_with("Идеи", "добавить чат-бот в проект")
+
     async def test_duplicate_personal_task_is_blocked_with_recent_fingerprint(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
         deps = SimpleNamespace(

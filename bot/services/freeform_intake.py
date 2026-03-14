@@ -390,7 +390,7 @@ def _build_classification_user_prompt(
         for item in (followup_data.get("freeform_missing_fields") or [])
         if _clean(item)
     )
-    action_hint = _clean(followup_data.get("freeform_action_hint")).lower() or _clean(_action_hint_from_text(base_text or text)).lower()
+    action_hint = _clean(followup_data.get("freeform_action_hint")).lower() or _clean(_action_hint_from_text(text)).lower() or _clean(_action_hint_from_text(base_text)).lower()
 
     if base_text and text and base_text != text:
         parts = [

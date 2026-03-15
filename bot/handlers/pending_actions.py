@@ -48,9 +48,9 @@ async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: A
                 pending_action_id=int(pending_action_id),
             )
             if pending and pending.get("status") == "executed":
-                await _toast_home(callback, db_pool, deps, "Действие уже выполнено")
+                await _toast_home(callback, db_pool, deps, "✅ Действие уже выполнено")
             else:
-                await _toast_home(callback, db_pool, deps, "Черновик уже недоступен")
+                await _toast_home(callback, db_pool, deps, "⏰ Черновик истёк. Отправьте запрос заново.")
             await try_delete_user_message(callback.message)
             return
         pending = await get_pending_action(
@@ -90,7 +90,7 @@ async def cb_llm_cancel(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
         return
     async with db_pool.acquire() as conn:
         await mark_pending_action_status(conn, pending_action_id=int(pending_action_id), status="cancelled")
-    await _toast_home(callback, db_pool, deps, "Черновик отменён")
+    await _toast_home(callback, db_pool, deps, "✖ Черновик отменён")
     await try_delete_user_message(callback.message)
 
 

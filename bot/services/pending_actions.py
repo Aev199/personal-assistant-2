@@ -38,6 +38,7 @@ def _can_write(conn: Any) -> bool:
 
 
 def _preview_text(kind: str, payload: dict[str, Any], *, tz_name: str) -> str:
+    header = "⏳ ЧЕРНОВИК\n"
     if kind == "task":
         bits = [f"Создать задачу: {payload.get('title') or ''}"]
         if payload.get("project_code"):
@@ -47,13 +48,13 @@ def _preview_text(kind: str, payload: dict[str, Any], *, tz_name: str) -> str:
         dt = _parse_iso_dt(payload.get("deadline_local"))
         if dt:
             bits.append(f"Срок: {dt.strftime('%d.%m %H:%M')}")
-        return "\n".join(bits)
+        return header + "\n".join(bits)
     if kind == "personal_task":
         bits = [f"Добавить личную задачу: {payload.get('title') or ''}"]
         dt = _parse_iso_dt(payload.get("deadline_local"))
         if dt:
             bits.append(f"Срок: {dt.strftime('%d.%m %H:%M')}")
-        return "\n".join(bits)
+        return header + "\n".join(bits)
     if kind == "event":
         bits = [f"Создать событие: {payload.get('title') or ''}"]
         bits.append(f"Календарь: {'рабочий' if payload.get('calendar_kind') == 'work' else 'личный'}")
@@ -64,14 +65,14 @@ def _preview_text(kind: str, payload: dict[str, Any], *, tz_name: str) -> str:
             bits.append(f"Длительность: {payload['duration_min']} мин")
         if payload.get("project_code"):
             bits.append(f"Проект: {payload['project_code']}")
-        return "\n".join(bits)
+        return header + "\n".join(bits)
     if kind == "idea":
-        return f"Добавить идею:\n{payload.get('idea_text') or ''}"
+        return header + f"Добавить идею:\n{payload.get('idea_text') or ''}"
     if kind == "reminder":
         dt = _parse_iso_dt(payload.get("remind_at_local"))
         when = dt.strftime("%d.%m %H:%M") if dt else "?"
-        return f"Создать напоминание:\n{payload.get('reminder_text') or ''}\nКогда: {when}"
-    return "Подтвердите действие."
+        return header + f"Создать напоминание:\n{payload.get('reminder_text') or ''}\nКогда: {when}"
+    return header + "Подтвердите действие."
 
 
 async def create_pending_preview(
@@ -109,8 +110,8 @@ async def create_pending_preview(
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Confirm", callback_data=f"llm:confirm:{pending_action_id}"),
-                InlineKeyboardButton(text="Cancel", callback_data=f"llm:cancel:{pending_action_id}"),
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"llm:confirm:{pending_action_id}"),
+                InlineKeyboardButton(text="✖ Отмена", callback_data=f"llm:cancel:{pending_action_id}"),
             ]
         ]
     )
@@ -185,7 +186,7 @@ async def execute_pending_action(
             ),
             label="vault_sync",
         )
-        return f"Задача сохранена: {payload.get('title') or ''}"
+        return f"✅ Задача создана: {payload.get('title') or ''}"
 
     if kind == "personal_task":
         gtasks = getattr(deps, "gtasks", None)
@@ -217,7 +218,7 @@ async def execute_pending_action(
                     action_key=f"pending-confirm:{pending_action_id}",
                 )
                 await mark_pending_action_status(conn, pending_action_id=pending_action_id, status="executed")
-        return f"Личная задача сохранена: {payload.get('title') or ''}"
+        return f"✅ Личная задача создана: {payload.get('title') or ''}"
 
     if kind == "idea":
         gtasks = getattr(deps, "gtasks", None)
@@ -247,7 +248,7 @@ async def execute_pending_action(
                     action_key=f"pending-confirm:{pending_action_id}",
                 )
                 await mark_pending_action_status(conn, pending_action_id=pending_action_id, status="executed")
-        return "Идея сохранена"
+        return "✅ Идея сохранена"
 
     if kind == "reminder":
         remind_local = _parse_iso_dt(payload.get("remind_at_local"))
@@ -294,7 +295,7 @@ async def execute_pending_action(
                 action_key=f"pending-confirm:{pending_action_id}",
             )
             await mark_pending_action_status(conn, pending_action_id=pending_action_id, status="executed")
-        return "Напоминание сохранено"
+        return "✅ Напоминание создано"
 
     if kind == "event":
         icloud = getattr(deps, "icloud", None)
@@ -332,7 +333,9 @@ async def execute_pending_action(
                 dtend_utc=dtend_utc,
                 uid=external_uid,
             )
+            synced = False
             if success:
+                synced = True
                 await conn.execute(
                     """
                     UPDATE icloud_events
@@ -390,6 +393,8 @@ async def execute_pending_action(
                 ),
                 label="vault_sync",
             )
-        return "Событие сохранено"
+        if synced:
+            return "✅ Событие создано и синхронизировано с iCloud"
+        return "⚠️ Событие сохранено локально. Синхронизация с iCloud запланирована."
 
     raise RuntimeError(f"Unsupported pending action kind: {kind}")

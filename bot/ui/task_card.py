@@ -13,8 +13,8 @@ def task_deadline_kb(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Сегодня 18:00", callback_data=f"task:{task_id}:dlset:today"),
-                InlineKeyboardButton(text="Завтра 18:00", callback_data=f"task:{task_id}:dlset:tomorrow"),
+                InlineKeyboardButton(text="📅 Сегодня 18:00", callback_data=f"task:{task_id}:dlset:today"),
+                InlineKeyboardButton(text="📅 Завтра 18:00", callback_data=f"task:{task_id}:dlset:tomorrow"),
             ],
             [
                 InlineKeyboardButton(text="+3 дня", callback_data=f"task:{task_id}:dlset:+3"),

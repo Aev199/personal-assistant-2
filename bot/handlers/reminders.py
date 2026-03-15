@@ -85,7 +85,7 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
                 new_time,
             )
 
-    await callback.answer(f"Отложено на {mins} мин.")
+    await callback.answer(f"⏸ Отложено на {mins} мин.")
     await try_delete_user_message(callback.message)
 
 

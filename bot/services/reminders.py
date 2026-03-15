@@ -50,12 +50,12 @@ async def send_reminder(
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="OK", callback_data="rem:close"),
-                InlineKeyboardButton(text="To task", callback_data=f"rem:task:{reminder_id}"),
+                InlineKeyboardButton(text="ОК", callback_data="rem:close"),
+                InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{reminder_id}"),
             ],
             [
-                InlineKeyboardButton(text="+15m", callback_data=snooze_15),
-                InlineKeyboardButton(text="+1h", callback_data=snooze_60),
+                InlineKeyboardButton(text="+15 мин", callback_data=snooze_15),
+                InlineKeyboardButton(text="+1 час", callback_data=snooze_60),
             ],
         ]
     )
@@ -65,7 +65,7 @@ async def send_reminder(
             await asyncio.wait_for(
                 bot.send_message(
                     chat_id=chat_id,
-                    text=f"Reminder:\n{text}",
+                    text=f"🔔 Напоминание:\n{text}",
                     reply_markup=kb,
                 ),
                 timeout=send_timeout_sec,

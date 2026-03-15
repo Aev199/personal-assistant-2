@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -57,6 +56,7 @@ class ICloudCalDAVAdapter:
         dtend_utc: datetime,
         description: str = "",
         location: str = "",
+        uid: str | None = None,
     ) -> tuple[str, bool]:
         """
         Create an event in the given calendar collection URL.
@@ -82,7 +82,7 @@ class ICloudCalDAVAdapter:
         else:
             dtend_utc = dtend_utc.astimezone(timezone.utc)
 
-        uid = str(uuid.uuid4())
+        uid = (uid or "").strip() or f"assistant-event-{int(dtstart_utc.timestamp())}-{abs(hash(summary)) % 1_000_000}"
         dtstamp = datetime.now(timezone.utc)
 
         def fmt(dt: datetime) -> str:

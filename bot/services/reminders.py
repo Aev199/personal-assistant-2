@@ -1,9 +1,4 @@
-"""Reminder services.
-
-This module contains *sending* logic and repeat scheduling helpers used by
-the /tick cron endpoint. Callback handlers for reminder notifications live in
-:mod:`bot.handlers.reminders`.
-"""
+"""Reminder services."""
 
 from __future__ import annotations
 
@@ -16,15 +11,14 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.utils import h
 from bot.services.logger import get_logger
+from bot.utils import h
 
 
 log = get_logger("bot.services.reminders")
 
 
 def _to_utc(dt: datetime | None) -> datetime | None:
-    """Normalize datetime to timezone-aware UTC. Treat naive as UTC."""
     if dt is None:
         return None
     if getattr(dt, "tzinfo", None) is None:
@@ -33,7 +27,6 @@ def _to_utc(dt: datetime | None) -> datetime | None:
 
 
 def _to_utc_naive(dt: datetime | None) -> datetime | None:
-    """Convert datetime to UTC naive for DB storage."""
     d = _to_utc(dt)
     if d is None:
         return None
@@ -47,18 +40,22 @@ async def send_reminder(
     reminder_id: int,
     text: str,
     send_timeout_sec: float = 10.0,
+    action_token: str = "",
 ) -> bool:
     """Send reminder with timeout and inline buttons; return True if sent."""
 
+    token = (action_token or "").replace("-", "")[:16]
+    snooze_15 = f"rem:snooze:15:{reminder_id}:{token}" if token else f"rem:snooze:15:{reminder_id}"
+    snooze_60 = f"rem:snooze:60:{reminder_id}:{token}" if token else f"rem:snooze:60:{reminder_id}"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Понял", callback_data="rem:close"),
-                InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{reminder_id}"),
+                InlineKeyboardButton(text="OK", callback_data="rem:close"),
+                InlineKeyboardButton(text="To task", callback_data=f"rem:task:{reminder_id}"),
             ],
             [
-                InlineKeyboardButton(text="⏸ +15 мин", callback_data=f"rem:snooze:15:{reminder_id}"),
-                InlineKeyboardButton(text="⏸ +1 час", callback_data=f"rem:snooze:60:{reminder_id}"),
+                InlineKeyboardButton(text="+15m", callback_data=snooze_15),
+                InlineKeyboardButton(text="+1h", callback_data=snooze_60),
             ],
         ]
     )
@@ -68,9 +65,8 @@ async def send_reminder(
             await asyncio.wait_for(
                 bot.send_message(
                     chat_id=chat_id,
-                    text=f"🔔 <b>НАПОМИНАНИЕ:</b>\n{h(text)}",
+                    text=f"Reminder:\n{text}",
                     reply_markup=kb,
-                    parse_mode="HTML",
                 ),
                 timeout=send_timeout_sec,
             )
@@ -85,17 +81,12 @@ async def send_reminder(
                 reminder_id=reminder_id,
                 chat_id=chat_id,
             )
-            # We intentionally do not retry on unknown errors too aggressively.
             return False
     return False
 
 
 def next_repeat_time_utc_naive(remind_at_dt: datetime, repeat: str, *, tz_name: str) -> datetime | None:
-    """Compute next remind_at as UTC-naive for DB storage.
-
-    The bot stores `remind_at` as a TIMESTAMP (naive) representing UTC.
-    Repeats are scheduled in the *local* timezone configured by TZ.
-    """
+    """Compute next remind_at as UTC-naive for DB storage."""
 
     base_utc = _to_utc(remind_at_dt)
     if base_utc is None:

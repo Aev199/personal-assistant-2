@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import asyncpg
 from aiohttp import web
@@ -46,11 +46,12 @@ class HttpContext:
 
     # env/config
     database_url: str
-    tick_secret: str
+    internal_api_key: str
     allow_public_tick: bool
     tick_timeout_sec: float
     tick_send_timeout_sec: float
     icloud_enabled: bool
+    mode: str = "polling-web"
 
     # backup env/config
     backup_storage_backend: str
@@ -68,6 +69,10 @@ class HttpContext:
     started_at_ts: float = 0.0
     tick_lock: asyncio.Lock | None = None
     backup_lock: asyncio.Lock | None = None
+    last_tick_started_at: float | None = None
+    last_tick_finished_at: float | None = None
+    last_tick_status: str = "never"
+    last_tick_result: dict[str, Any] | None = None
 
 
 def attach_routes(app: web.Application, ctx: HttpContext) -> None:
@@ -82,25 +87,39 @@ def attach_routes(app: web.Application, ctx: HttpContext) -> None:
     async def _health(request: web.Request) -> web.StreamResponse:
         return await handle_health(request, ctx)
 
+    async def _internal_status(request: web.Request) -> web.StreamResponse:
+        return await handle_internal_status(request, ctx)
+
     async def _backup(request: web.Request) -> web.StreamResponse:
         return await handle_backup(request, ctx)
+
+    async def _keepalive(request: web.Request) -> web.StreamResponse:
+        return await handle_keepalive(request, ctx)
 
     app.router.add_get("/tick", _tick)
     app.router.add_get("/ping", _ping)
     app.router.add_get("/health", _health)
+    app.router.add_get("/internal/status", _internal_status)
+    app.router.add_get("/keepalive", _keepalive)
     app.router.add_post("/backup", _backup)
+
+
+def _authorized(request: web.Request, ctx: HttpContext) -> bool:
+    if ctx.allow_public_tick:
+        return True
+    if not ctx.internal_api_key:
+        return False
+    return request.headers.get("X-Internal-Key", "") == ctx.internal_api_key
 
 
 async def handle_cron_tick(request: web.Request, ctx: HttpContext) -> web.StreamResponse:
     log = _log_from(ctx.deps)
 
     # Protection (required by default)
-    if not ctx.allow_public_tick:
-        if not ctx.tick_secret:
-            return web.Response(status=403, text="TICK_SECRET not configured")
-        key = request.query.get("key", "")
-        if key != ctx.tick_secret:
-            return web.Response(status=403, text="Forbidden")
+    if not _authorized(request, ctx):
+        if not ctx.internal_api_key:
+            return web.Response(status=403, text="INTERNAL_API_KEY not configured")
+        return web.Response(status=403, text="Forbidden")
 
     lock = ctx.tick_lock or asyncio.Lock()
     if lock.locked():
@@ -118,8 +137,10 @@ async def handle_cron_tick(request: web.Request, ctx: HttpContext) -> web.Stream
                 return web.Response(text="BUSY")
 
             try:
+                ctx.last_tick_started_at = time.time()
+                ctx.last_tick_status = "running"
                 async with lock:
-                    await asyncio.wait_for(
+                    result = await asyncio.wait_for(
                         do_tick_service(
                             pool,
                             bot=ctx.bot,
@@ -133,14 +154,23 @@ async def handle_cron_tick(request: web.Request, ctx: HttpContext) -> web.Stream
                         ),
                         timeout=ctx.tick_timeout_sec,
                     )
+                ctx.last_tick_result = result
+                ctx.last_tick_status = "ok"
             except asyncio.TimeoutError:
                 log.warning("tick timeout", timeout_sec=ctx.tick_timeout_sec)
+                ctx.last_tick_status = "timeout"
+                ctx.last_tick_result = {"ok": False, "error": "timeout"}
+                return web.json_response({"ok": False, "error": "timeout"}, status=504)
             except Exception as e:
                 log.error("tick failed", error=e)
                 err_logger = ctx.deps.db_log_error
                 if err_logger:
                     fire_and_forget(err_logger("tick", e), label="err:tick")
+                ctx.last_tick_status = "failed"
+                ctx.last_tick_result = {"ok": False, "error": str(e)}
+                return web.json_response({"ok": False, "error": str(e)}, status=500)
             finally:
+                ctx.last_tick_finished_at = time.time()
                 try:
                     await lock_conn.execute("SELECT pg_advisory_unlock($1)", LOCK_KEY_TICK)
                 except Exception:
@@ -156,7 +186,7 @@ async def handle_cron_tick(request: web.Request, ctx: HttpContext) -> web.Stream
         except Exception as e:
             log.warning("refresh_webhook failed", error_type=type(e).__name__, error_message=str(e))
 
-    return web.Response(text="OK")
+    return web.json_response(ctx.last_tick_result or {"ok": True})
 
 
 async def handle_ping(request: web.Request) -> web.StreamResponse:
@@ -171,8 +201,6 @@ async def handle_health(request: web.Request, ctx: HttpContext) -> web.StreamRes
       as *degraded* and should not restart the service.
     """
 
-    full = request.query.get("full") in ("1", "true", "yes")
-
     status: dict = {
         "ok": True,
         "ready": True,
@@ -180,6 +208,7 @@ async def handle_health(request: web.Request, ctx: HttpContext) -> web.StreamRes
         "uptime_sec": int(time.time() - (ctx.started_at_ts or time.time())),
         "db": False,
         "webdav": None,
+        "mode": ctx.mode,
     }
 
     # DB check (readiness gate)
@@ -212,21 +241,60 @@ async def handle_health(request: web.Request, ctx: HttpContext) -> web.StreamRes
         status["degraded"].append("webdav")
         status["webdav_error"] = str(e)
 
-    if full:
-        # Webhook info (best-effort)
-        try:
-            info = await asyncio.wait_for(ctx.bot.get_webhook_info(), timeout=5)
-            status["webhook_url"] = getattr(info, "url", "")
-            status["webhook_pending"] = getattr(info, "pending_update_count", None)
-            status["webhook_last_error"] = getattr(info, "last_error_message", None)
-        except Exception as e:
-            status["webhook_error"] = str(e)
-
-        status["icloud_enabled"] = bool(ctx.icloud_enabled)
-        status["mode"] = "webhook"
-
     http_status = 200 if status["ready"] else 503
     return web.json_response(status, status=http_status)
+
+
+async def handle_internal_status(request: web.Request, ctx: HttpContext) -> web.StreamResponse:
+    if not _authorized(request, ctx):
+        return web.Response(status=403, text="Forbidden")
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    due_backlog_count = 0
+    retry_backlog_count = 0
+    oldest_due_age_sec = 0
+    if pool:
+        async with pool.acquire() as conn:
+            due_backlog_count = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM reminders
+                    WHERE status = 'pending' AND next_attempt_at_utc <= NOW()
+                    """
+                )
+                or 0
+            )
+            retry_backlog_count = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM reminders
+                    WHERE status = 'retry'
+                    """
+                )
+                or 0
+            )
+            oldest_due_age_sec = int(
+                await conn.fetchval(
+                    """
+                    SELECT COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(next_attempt_at_utc))), 0)
+                    FROM reminders
+                    WHERE status IN ('pending', 'retry') AND next_attempt_at_utc <= NOW()
+                    """
+                )
+                or 0
+            )
+    body = {
+        "ok": True,
+        "mode": ctx.mode,
+        "last_tick_started_at": ctx.last_tick_started_at,
+        "last_tick_finished_at": ctx.last_tick_finished_at,
+        "last_tick_status": ctx.last_tick_status,
+        "last_tick_result": ctx.last_tick_result or {},
+        "due_backlog_count": due_backlog_count,
+        "retry_backlog_count": retry_backlog_count,
+        "oldest_due_age_sec": oldest_due_age_sec,
+        "polling_alive": bool(request.app.get("polling_task") and not request.app["polling_task"].done()),
+    }
+    return web.json_response(body)
 
 
 async def handle_backup(request: web.Request, ctx: HttpContext) -> web.StreamResponse:
@@ -235,12 +303,10 @@ async def handle_backup(request: web.Request, ctx: HttpContext) -> web.StreamRes
     log = _log_from(ctx.deps)
 
     # Protection (required by default)
-    if not ctx.allow_public_tick:
-        if not ctx.tick_secret:
-            return web.Response(status=403, text="TICK_SECRET not configured")
-        key = request.query.get("key", "")
-        if key != ctx.tick_secret:
-            return web.Response(status=403, text="Forbidden")
+    if not _authorized(request, ctx):
+        if not ctx.internal_api_key:
+            return web.Response(status=403, text="INTERNAL_API_KEY not configured")
+        return web.Response(status=403, text="Forbidden")
 
     if not ctx.backup_storage_backend:
         log.warning("Backup endpoint called but BACKUP_STORAGE_BACKEND not configured")
@@ -344,3 +410,13 @@ async def handle_backup(request: web.Request, ctx: HttpContext) -> web.StreamRes
     except Exception as e:
         log.error("backup lock failed", error=e)
         return web.Response(status=500, text="Lock error")
+
+
+async def handle_keepalive(request: web.Request, ctx: HttpContext) -> web.StreamResponse:
+    return web.json_response(
+        {
+            "ok": True,
+            "mode": ctx.mode,
+            "uptime_sec": int(time.time() - (ctx.started_at_ts or time.time())),
+        }
+    )

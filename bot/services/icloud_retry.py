@@ -38,7 +38,7 @@ async def retry_pending_icloud_events(
             events = await conn.fetch(
                 f"""
                 SELECT id, calendar_url, summary, dtstart_utc, dtend_utc,
-                       description, location, retry_count
+                       description, location, retry_count, external_uid
                 FROM icloud_events
                 WHERE sync_status = 'pending'
                   AND retry_count < {int(max_retries)}
@@ -75,6 +75,7 @@ async def retry_pending_icloud_events(
                 dtend_utc=event["dtend_utc"],
                 description=event.get("description") or "",
                 location=event.get("location") or "",
+                uid=(event.get("external_uid") or "") or f"assistant-event-{event_id}@local",
             )
 
             async with pool.acquire() as conn:

@@ -142,7 +142,7 @@ class GeminiAdapter:
                         "reply": {"type": "string"},
                     },
                     "required": ["action", "reply"],
-                    "additionalProperties": True,
+                    "additionalProperties": False,
                 },
             },
         }

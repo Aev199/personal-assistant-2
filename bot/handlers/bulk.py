@@ -15,6 +15,7 @@ from aiogram import Dispatcher, F
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.fsm.context import FSMContext
 
+from bot.db.runtime_state import clear_conversation_state, get_conversation_state, set_conversation_state
 from bot.deps import AppDeps
 
 from bot.db import db_add_event
@@ -30,8 +31,32 @@ from bot.keyboards import back_home_kb
 UTC = ZoneInfo("UTC")
 
 
-# In-memory sessions: chat_id -> {selected: set[int], page: int, total: int}
-bulk_sessions: dict[int, dict] = {}
+FLOW_NAME = "bulk_overdue"
+
+
+async def _load_bulk_session(conn: asyncpg.Connection, chat_id: int) -> dict:
+    state = await get_conversation_state(conn, chat_id, FLOW_NAME)
+    payload = dict((state or {}).get("payload") or {})
+    return {
+        "selected": {int(x) for x in (payload.get("selected") or []) if str(x).isdigit()},
+        "page": int(payload.get("page") or 0),
+        "total": int(payload.get("total") or 0),
+    }
+
+
+async def _save_bulk_session(conn: asyncpg.Connection, chat_id: int, session: dict) -> None:
+    await set_conversation_state(
+        conn,
+        chat_id,
+        FLOW_NAME,
+        step="active",
+        payload={
+            "selected": sorted(int(x) for x in set(session.get("selected", set()))),
+            "page": int(session.get("page") or 0),
+            "total": int(session.get("total") or 0),
+        },
+        ttl_sec=1800,
+    )
 
 
 async def _fetch_overdue_page(conn: asyncpg.Connection, page: int, page_size: int):
@@ -93,18 +118,17 @@ async def _render_bulk_message(
 async def _render_bulk(msg: Message, db_pool: asyncpg.Pool, chat_id: int, deps: AppDeps, page: int = 0) -> None:
     page = max(0, page)
     page_size = 8
-    sess = bulk_sessions.get(chat_id) or {"selected": set(), "page": 0}
-    selected: set[int] = set(sess.get("selected", set()))
 
     tz = ZoneInfo(deps.tz_name or "Europe/Moscow")
 
     async with db_pool.acquire() as conn:
+        sess = await _load_bulk_session(conn, chat_id)
+        selected: set[int] = set(sess.get("selected", set()))
         total, rows = await _fetch_overdue_page(conn, page, page_size)
-
-    sess["page"] = page
-    sess["total"] = total
-    sess["selected"] = selected
-    bulk_sessions[chat_id] = sess
+        sess["page"] = page
+        sess["total"] = total
+        sess["selected"] = selected
+        await _save_bulk_session(conn, chat_id, sess)
 
     parts = ["<b>🧹 РАЗГРЕСТИ ПРОСРОЧКИ</b>", "<i>Выберите задачи:</i>", ""]
     if not rows:
@@ -182,10 +206,14 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
     try:
         if action == "start":
             page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
-            bulk_sessions[chat_id] = {"selected": set(), "page": page}
+            async with db_pool.acquire() as conn:
+                await _save_bulk_session(conn, chat_id, {"selected": set(), "page": page, "total": 0})
             return await _render_bulk(callback.message, db_pool, chat_id, deps, page=page)
 
-        sess = bulk_sessions.get(chat_id) or {"selected": set(), "page": 0}
+        async with db_pool.acquire() as conn:
+            sess = await _load_bulk_session(conn, chat_id)
+        if not sess:
+            sess = {"selected": set(), "page": 0}
 
         if action == "toggle":
             tid = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
@@ -197,7 +225,8 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                 else:
                     sel.add(tid)
                 sess["selected"] = sel
-                bulk_sessions[chat_id] = sess
+                async with db_pool.acquire() as conn:
+                    await _save_bulk_session(conn, chat_id, sess)
             return await _render_bulk(callback.message, db_pool, chat_id, deps, page=page)
 
         if action == "page":
@@ -205,7 +234,8 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
             return await _render_bulk(callback.message, db_pool, chat_id, deps, page=page)
 
         if action == "cancel":
-            bulk_sessions.pop(chat_id, None)
+            async with db_pool.acquire() as conn:
+                await clear_conversation_state(conn, chat_id, FLOW_NAME)
             return await ui_render_overdue(callback.message, db_pool, force_new=False)
 
         if action == "act":
@@ -324,7 +354,8 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
                     else:
                         return await callback.answer("Неизвестное действие", show_alert=True)
 
-            bulk_sessions.pop(chat_id, None)
+            async with db_pool.acquire() as conn:
+                await clear_conversation_state(conn, chat_id, FLOW_NAME)
             return await ui_render_overdue(callback.message, db_pool, force_new=False)
 
     except Exception as e:

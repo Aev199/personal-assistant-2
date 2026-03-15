@@ -1,10 +1,4 @@
-"""App runtime / entrypoint.
-
-Wires aiohttp webhook delivery for aiogram and exposes a few auxiliary HTTP
-endpoints (/tick, /health, /ping, /backup).
-
-Telegram handlers are registered via :func:`bot.bootstrap.build_core`.
-"""
+"""App runtime / entrypoint."""
 
 from __future__ import annotations
 
@@ -151,11 +145,12 @@ def create_app_webhook() -> web.Application:
         bot=bot,
         deps=deps,
         database_url=database_url,
-        tick_secret=os.getenv("TICK_SECRET", ""),
+        internal_api_key=cfg.bot.internal_api_key,
         allow_public_tick=allow_public_tick,
         tick_timeout_sec=float(os.getenv("TICK_TIMEOUT_SEC", "25")),
         tick_send_timeout_sec=float(os.getenv("TICK_SEND_TIMEOUT_SEC", "8")),
         icloud_enabled=bool(os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", "")),
+        mode="webhook",
         backup_storage_backend=os.getenv("BACKUP_STORAGE_BACKEND", ""),
         backup_retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
         aws_s3_bucket=os.getenv("AWS_S3_BUCKET", ""),
@@ -221,6 +216,12 @@ def create_app_polling_web() -> web.Application:
     )
 
     database_url = cfg.database.url
+    log.info(
+        "runtime configured",
+        mode="polling-web",
+        admin_id=admin_id,
+        tz_name=tz_name,
+    )
 
     # Lifecycle (no webhook in polling mode)
     dp.startup.register(
@@ -248,11 +249,12 @@ def create_app_polling_web() -> web.Application:
         bot=bot,
         deps=deps,
         database_url=database_url,
-        tick_secret=os.getenv("TICK_SECRET", ""),
+        internal_api_key=cfg.bot.internal_api_key,
         allow_public_tick=os.getenv("ALLOW_PUBLIC_TICK", "").lower() in ("1", "true", "yes"),
         tick_timeout_sec=float(os.getenv("TICK_TIMEOUT_SEC", "25")),
         tick_send_timeout_sec=float(os.getenv("TICK_SEND_TIMEOUT_SEC", "8")),
         icloud_enabled=bool(os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", "")),
+        mode="polling-web",
         backup_storage_backend=os.getenv("BACKUP_STORAGE_BACKEND", ""),
         backup_retention_days=int(os.getenv("BACKUP_RETENTION_DAYS", "30")),
         aws_s3_bucket=os.getenv("AWS_S3_BUCKET", ""),
@@ -350,16 +352,8 @@ async def run_polling() -> None:
 
 
 def main() -> None:
-    # Mode selection:
-    # - If WEBHOOK_URL (or config bot.webhook_url) is set -> webhook web service.
-    # - Otherwise -> polling (best for Render Background Worker).
     load_dotenv()
-    cfg = load_config()
-    webhook_url = (cfg.bot.webhook_url or "").rstrip("/")
-    if webhook_url:
-        app = create_app_webhook()
-        host = os.getenv("HOST", "0.0.0.0")
-        port = int(os.getenv("PORT", "10000"))
-        web.run_app(app, host=host, port=port)
-    else:
-        asyncio.run(run_polling())
+    app = create_app_polling_web()
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "10000"))
+    web.run_app(app, host=host, port=port)

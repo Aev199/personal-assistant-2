@@ -1,7 +1,4 @@
-"""Reminder message handlers.
-
-These are invoked from reminder notifications sent by /tick.
-"""
+"""Reminder message handlers."""
 
 from __future__ import annotations
 
@@ -11,43 +8,81 @@ import asyncpg
 from aiogram import Dispatcher, F
 from aiogram.types import CallbackQuery
 
+from bot.db.runtime_state import record_action_journal
 from bot.deps import AppDeps
 from bot.tz import to_db_utc
-
 from bot.utils import try_delete_user_message
 
 
-
 async def cb_rem_close(callback: CallbackQuery, deps: AppDeps) -> None:
-    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return
     await callback.answer()
     await try_delete_user_message(callback.message)
 
 
 async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return
     try:
-        parts = callback.data.split(":")
+        parts = (callback.data or "").split(":")
         mins = int(parts[2])
         rem_id = int(parts[3])
+        action_token = parts[4] if len(parts) >= 5 else ""
     except Exception:
         return await callback.answer("Ошибка", show_alert=True)
 
+    action_key = f"snooze:{rem_id}:{mins}:{action_token or 'no-token'}"
     async with db_pool.acquire() as conn:
-        text = await conn.fetchval("SELECT text FROM reminders WHERE id=$1", rem_id)
-        if text:
-            new_time = datetime.now(timezone.utc) + timedelta(minutes=mins)
-            new_time_db = to_db_utc(
-                new_time,
-                tz_name=deps.tz_name,
-                store_tz=bool(getattr(deps, 'db_reminders_remind_at_timestamptz', False)),
+        journal_id = await record_action_journal(
+            conn,
+            chat_id=int(callback.message.chat.id),
+            source="callback",
+            action_type="reminder_snooze",
+            summary=f"reminder {rem_id} +{mins}m",
+            action_key=action_key,
+        )
+        if journal_id is None:
+            return await callback.answer("Уже обработано")
+
+        row = await conn.fetchrow(
+            "SELECT text, chat_id FROM reminders WHERE id=$1",
+            int(rem_id),
+        )
+        if not row:
+            return await callback.answer("Напоминание не найдено", show_alert=True)
+
+        new_time = datetime.now(timezone.utc) + timedelta(minutes=mins)
+        new_time_db = to_db_utc(
+            new_time,
+            tz_name=deps.tz_name,
+            store_tz=bool(getattr(deps, "db_reminders_remind_at_timestamptz", False)),
+        )
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE reminders
+                SET status='cancelled',
+                    cancelled_at_utc=NOW(),
+                    claim_token=NULL,
+                    claimed_at_utc=NULL
+                WHERE id=$1
+                """,
+                int(rem_id),
             )
             await conn.execute(
-                "INSERT INTO reminders (text, remind_at, repeat) VALUES ($1, $2, 'none')",
-                text,
+                """
+                INSERT INTO reminders (
+                    chat_id,
+                    text,
+                    remind_at,
+                    repeat,
+                    status,
+                    next_attempt_at_utc,
+                    is_sent
+                )
+                VALUES ($1, $2, $3, 'none', 'pending', $4, FALSE)
+                """,
+                int(row["chat_id"] or callback.message.chat.id),
+                str(row["text"] or ""),
                 new_time_db,
+                new_time,
             )
 
     await callback.answer(f"Отложено на {mins} мин.")

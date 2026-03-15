@@ -1014,10 +1014,23 @@ async def cb_add_reminder_repeat(callback: CallbackQuery, state: FSMContext, db_
 
         async with db_pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO reminders (text, remind_at, repeat) VALUES ($1, $2, $3)",
+                """
+                INSERT INTO reminders (
+                    chat_id,
+                    text,
+                    remind_at,
+                    repeat,
+                    status,
+                    next_attempt_at_utc,
+                    is_sent
+                )
+                VALUES ($1, $2, $3, $4, 'pending', $5, FALSE)
+                """,
+                int(callback.message.chat.id),
                 text_part,
                 remind_at_db,
                 repeat,
+                remind_at_dt.astimezone(UTC),
             )
             await db_add_event(conn, "reminder_created", None, None, f"Создано напоминание ({repeat}): {text_part}")
     except Exception as e:

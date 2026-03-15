@@ -15,6 +15,7 @@ from .reminders import register as register_reminders
 from .system import register as register_system
 from .inbox import register as register_inbox
 from .errors import register as register_errors
+from .pending_actions import register as register_pending_actions
 
 __all__ = [
     "register_nav",
@@ -28,4 +29,5 @@ __all__ = [
     "register_system",
     "register_inbox",
     "register_errors",
+    "register_pending_actions",
 ]

@@ -22,6 +22,7 @@ from bot.db.errors import db_log_error
 from bot.db.schema import ensure_schema
 from bot.services.background import fire_and_forget
 from bot.services.logger import StructuredLogger, get_logger
+from bot.services.tick import do_tick as do_tick_service
 from bot.services.webhook import delayed_set_webhook, webhook_keeper
 
 
@@ -310,6 +311,27 @@ def make_on_startup(
                 )
             except Exception:
                 pass
+        else:
+            async def _catchup_tick() -> None:
+                if deps is None or deps.db_pool is None:
+                    return
+                try:
+                    await do_tick_service(
+                        deps.db_pool,
+                        bot=bot,
+                        admin_id=deps.admin_id,
+                        tz_name=deps.tz_name,
+                        send_timeout_sec=float(os.getenv("TICK_SEND_TIMEOUT_SEC", "8")),
+                        icloud=deps.icloud,
+                        icloud_enabled=bool(os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", "")),
+                        error_logger=deps.db_log_error,
+                        logger=getattr(deps, "logger", None),
+                        time_budget_sec=float(os.getenv("TICK_STARTUP_BUDGET_SEC", "8")),
+                    )
+                except Exception as e:
+                    log.warning("startup catch-up tick failed", error_type=type(e).__name__, error_message=str(e))
+
+            fire_and_forget(_catchup_tick(), label="tick:start-catchup")
 
     return _on_startup
 

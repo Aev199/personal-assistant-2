@@ -19,6 +19,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.db import db_add_event, db_log_error
+from bot.db.runtime_state import (
+    clear_conversation_state,
+    forget_recent_action,
+    get_conversation_state,
+    get_latest_undo_action,
+    mark_action_undone,
+)
 from bot.db.projects import ensure_inbox_project_id
 from bot.db.user_settings import get_current_project_id
 from bot.fsm.states import FreeformFollowup
@@ -105,7 +112,10 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
         async with db_pool.acquire() as conn:
             ui_state = await ui_get_state(conn, chat_id)
             payload = _ui_payload_get(ui_state)
-            undo = ui_payload_get_undo(payload, undo_type="llm_create")
+            journal = await get_latest_undo_action(conn, chat_id=chat_id)
+            undo = dict((journal or {}).get("undo_payload") or {})
+            if not undo:
+                undo = ui_payload_get_undo(payload, undo_type="llm_create") or {}
             if not undo:
                 payload.pop("undo", None)
                 await ui_set_state(conn, chat_id, ui_payload=payload)
@@ -125,10 +135,26 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
                         toast = "Задача уже отсутствует."
                 elif action == "reminder":
                     reminder_id = int(undo.get("reminder_id") or 0)
-                    text = await conn.fetchval("SELECT text FROM reminders WHERE id=$1", reminder_id)
-                    await conn.execute("DELETE FROM reminders WHERE id=$1", reminder_id)
-                    await db_add_event(conn, "reminder_undo", None, None, f"↩️ Отмена напоминания: {text or reminder_id}")
-                    toast = f"↩️ Напоминание отменено: {text or 'без текста'}"
+                    row = await conn.fetchrow("SELECT text, status FROM reminders WHERE id=$1", reminder_id)
+                    if row and str(row["status"] or "") not in {"sent", "cancelled"}:
+                        await conn.execute(
+                            """
+                            UPDATE reminders
+                            SET status='cancelled',
+                                cancelled_at_utc=NOW(),
+                                claim_token=NULL,
+                                claimed_at_utc=NULL
+                            WHERE id=$1
+                            """,
+                            reminder_id,
+                        )
+                        text = str(row["text"] or "")
+                        await db_add_event(conn, "reminder_undo", None, None, f"↩️ Отмена напоминания: {text or reminder_id}")
+                        toast = f"↩️ Напоминание отменено: {text or 'без текста'}"
+                    elif row:
+                        toast = "Напоминание уже отправлено или отменено."
+                    else:
+                        toast = "Напоминание уже отсутствует."
                 elif action == "personal_task":
                     gtasks = getattr(deps, "gtasks", None)
                     list_id = str(undo.get("list_id") or "")
@@ -176,6 +202,9 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
                     await db_add_event(conn, "ical_event_undo", work_project_id, None, f"↩️ Отмена события: {summary}")
                     toast = f"↩️ Событие отменено: {summary}"
 
+                if journal and journal.get("id"):
+                    await mark_action_undone(conn, int(journal["id"]))
+                await forget_recent_action(conn, chat_id=chat_id, fingerprint=fingerprint)
                 payload.pop("undo", None)
                 payload = _clear_recent_fingerprint(payload, fingerprint)
                 await ui_set_state(conn, chat_id, ui_payload=payload)
@@ -879,12 +908,20 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
     )
 
 
-async def _freeform_followup_base_text(state: FSMContext) -> str:
+async def _freeform_followup_base_text(state: FSMContext, db_pool: asyncpg.Pool, chat_id: int) -> str:
     try:
         data = await state.get_data()
     except Exception:
+        data = {}
+    base_text = str((data or {}).get("freeform_base_text") or "").strip()
+    if base_text:
+        return base_text
+    async with db_pool.acquire() as conn:
+        persisted = await get_conversation_state(conn, chat_id, "freeform_followup")
+    if not persisted:
         return ""
-    return str(data.get("freeform_base_text") or "").strip()
+    payload = dict(persisted.get("payload") or {})
+    return str(payload.get("freeform_base_text") or "").strip()
 
 
 async def _freeform_followup_missing_context(
@@ -894,6 +931,8 @@ async def _freeform_followup_missing_context(
     db_pool: asyncpg.Pool,
 ) -> None:
     await state.clear()
+    async with db_pool.acquire() as conn:
+        await clear_conversation_state(conn, int(message.chat.id), "freeform_followup")
     try:
         async with db_pool.acquire() as conn:
             ui_state = await ui_get_state(conn, int(message.chat.id))
@@ -914,7 +953,7 @@ async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: 
         await state.clear()
         return await message.answer("⚠️ Уточнение доступно только при подключённой БД и LLM.")
 
-    base_text = await _freeform_followup_base_text(state)
+    base_text = await _freeform_followup_base_text(state, db_pool, int(message.chat.id))
     if not base_text:
         return await _freeform_followup_missing_context(message, state, deps, db_pool)
 
@@ -954,7 +993,7 @@ async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps:
         await state.clear()
         return await message.answer("⚠️ Голосовые уточнения доступны только при подключённой БД и LLM.")
 
-    base_text = await _freeform_followup_base_text(state)
+    base_text = await _freeform_followup_base_text(state, db_pool, int(message.chat.id))
     if not base_text:
         return await _freeform_followup_missing_context(message, state, deps, db_pool)
 

@@ -18,10 +18,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot.db import db_add_event, ensure_inbox_project_id, get_current_project_id
+from bot.db.runtime_state import (
+    clear_conversation_state,
+    find_recent_action,
+    get_conversation_state,
+    set_conversation_state,
+)
 from bot.deps import AppDeps
 from bot.fsm.states import FreeformFollowup
 from bot.services.background import fire_and_forget
 from bot.services.gtasks_service import due_from_local_date, get_or_create_list_id
+from bot.services.pending_actions import create_pending_preview
 from bot.services.vault_sync import background_project_sync
 from bot.tz import fmt_local, resolve_tz_name, to_db_utc
 from bot.ui.screens import (
@@ -37,7 +44,7 @@ from bot.ui.screens import (
     ui_render_today,
     ui_render_work,
 )
-from bot.ui.state import _now_ts, _ui_payload_get, ui_get_state, ui_payload_with_toast, ui_payload_with_undo, ui_set_state
+from bot.ui.state import _ui_payload_get, ui_get_state, ui_payload_with_toast, ui_set_state
 from bot.utils.datetime import parse_datetime_ru, quick_extract_datetime_ru
 from bot.utils.text import canon
 
@@ -297,17 +304,6 @@ def _llm_fingerprint(action: str, **data: object) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
-def _llm_recent_entries(payload: dict) -> list[dict]:
-    entries = []
-    for item in (payload or {}).get("llm_recent") or []:
-        if not isinstance(item, dict):
-            continue
-        exp = int(item.get("exp") or 0)
-        if exp and exp >= _now_ts():
-            entries.append(item)
-    return entries
-
-
 async def _find_recent_duplicate(
     db_pool: asyncpg.Pool,
     chat_id: int,
@@ -315,65 +311,36 @@ async def _find_recent_duplicate(
     *,
     conn: asyncpg.Connection | None = None,
 ) -> dict | None:
-    async def _load_entries(target_conn: asyncpg.Connection) -> list[dict]:
-        ui_state = await ui_get_state(target_conn, int(chat_id))
-        payload = _ui_payload_get(ui_state)
-        entries = _llm_recent_entries(payload)
-        if len(entries) != len((payload or {}).get("llm_recent") or []):
-            payload["llm_recent"] = entries
-            await ui_set_state(target_conn, int(chat_id), ui_payload=payload)
-        return entries
-
     if conn is not None:
-        entries = await _load_entries(conn)
-    else:
-        async with db_pool.acquire() as conn:
-            entries = await _load_entries(conn)
-    return next((item for item in entries if str(item.get("fingerprint") or "") == fingerprint), None)
+        return await find_recent_action(conn, chat_id=int(chat_id), fingerprint=fingerprint)
+    async with db_pool.acquire() as target_conn:
+        return await find_recent_action(target_conn, chat_id=int(chat_id), fingerprint=fingerprint)
 
 
-async def _remember_llm_action(
-    message: Message,
-    db_pool: asyncpg.Pool,
+async def _remember_llm_action(*args, **kwargs) -> None:
+    """Backward-compatible no-op kept for older tests and imports."""
+
+
+async def _followup_context(
+    state: FSMContext | None,
     *,
-    fingerprint: str,
-    action: str,
-    summary: str,
-    undo: dict | None = None,
-) -> None:
-    ttl_sec = max(15, int(os.getenv("LLM_DEDUP_TTL_SEC", "45")))
-    entry = {
-        "fingerprint": fingerprint,
-        "action": _clean(action).lower(),
-        "summary": _clean(summary),
-        "exp": _now_ts() + ttl_sec,
-    }
+    db_pool: asyncpg.Pool,
+    chat_id: int,
+) -> dict[str, object]:
+    if state is not None:
+        try:
+            current = await state.get_state()
+            if current == FreeformFollowup.awaiting_text.state:
+                data = await state.get_data()
+                if isinstance(data, dict) and data:
+                    return data
+        except Exception:
+            pass
     async with db_pool.acquire() as conn:
-        ui_state = await ui_get_state(conn, int(message.chat.id))
-        payload = _ui_payload_get(ui_state)
-        recent = [item for item in _llm_recent_entries(payload) if str(item.get("fingerprint") or "") != fingerprint]
-        recent.insert(0, entry)
-        payload["llm_recent"] = recent[:8]
-        if undo:
-            undo_payload = dict(undo)
-            undo_payload["fingerprint"] = fingerprint
-            payload = ui_payload_with_undo(payload, undo_payload, ttl_sec=30)
-        await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
-
-
-async def _followup_context(state: FSMContext | None) -> dict[str, object]:
-    if state is None:
+        persisted = await get_conversation_state(conn, int(chat_id), "freeform_followup")
+    if not persisted:
         return {}
-    try:
-        current = await state.get_state()
-        if current != FreeformFollowup.awaiting_text.state:
-            return {}
-        data = await state.get_data()
-    except Exception:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return data
+    return dict(persisted.get("payload") or {})
 
 
 def _build_classification_user_prompt(
@@ -499,15 +466,23 @@ async def _rerender_with_toast(message: Message, db_pool: asyncpg.Pool, deps: Ap
     return await _render_screen(message, db_pool, deps, screen=screen, payload=payload)
 
 
-async def _clear_followup_state(state: FSMContext | None) -> None:
+async def _clear_followup_state(
+    state: FSMContext | None,
+    *,
+    db_pool: asyncpg.Pool,
+    chat_id: int,
+) -> None:
     if state is None:
-        return
-    try:
-        current = await state.get_state()
-    except Exception:
-        return
-    if current == FreeformFollowup.awaiting_text.state:
-        await state.clear()
+        pass
+    else:
+        try:
+            current = await state.get_state()
+        except Exception:
+            current = None
+        if current == FreeformFollowup.awaiting_text.state:
+            await state.clear()
+    async with db_pool.acquire() as conn:
+        await clear_conversation_state(conn, int(chat_id), "freeform_followup")
 
 
 async def _start_followup(
@@ -523,16 +498,26 @@ async def _start_followup(
     missing_fields: tuple[str, ...] | list[str] = (),
 ) -> bool:
     prompt_text = _clean(prompt) or "\u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0437\u0430\u043f\u0440\u043e\u0441."
+    payload = {
+        "freeform_base_text": base_text,
+        "freeform_source": source,
+        "freeform_pending_action": _clean(pending_action).lower() or None,
+        "freeform_missing_fields": [_clean(field) for field in missing_fields if _clean(field)],
+        "freeform_action_hint": _action_hint_from_text(base_text),
+    }
     if state is not None:
         await state.clear()
-        await state.update_data(
-            freeform_base_text=base_text,
-            freeform_source=source,
-            freeform_pending_action=_clean(pending_action).lower() or None,
-            freeform_missing_fields=[_clean(field) for field in missing_fields if _clean(field)],
-            freeform_action_hint=_action_hint_from_text(base_text),
-        )
+        await state.update_data(**payload)
         await state.set_state(FreeformFollowup.awaiting_text)
+    async with db_pool.acquire() as conn:
+        await set_conversation_state(
+            conn,
+            int(message.chat.id),
+            "freeform_followup",
+            step="awaiting_text",
+            payload=payload,
+            ttl_sec=max(300, int(os.getenv("FREEFORM_FOLLOWUP_TTL_SEC", "1800"))),
+        )
     await _rerender_with_toast(message, db_pool, deps, prompt_text)
     return True
 
@@ -816,7 +801,7 @@ async def handle_freeform_text(
     if llm is None or not getattr(llm, "enabled", False):
         return False
 
-    followup_data = await _followup_context(state)
+    followup_data = await _followup_context(state, db_pool=db_pool, chat_id=int(message.chat.id))
     text = _clean(raw_text)
     if not text:
         return False
@@ -946,116 +931,63 @@ async def handle_freeform_text(
                         pending_action="task",
                         missing_fields=("project_code",),
                     )
-
                 assignee_id, assignee_name, assignee_error = _resolve_assignee(
                     requested_name=intent.assignee_name,
                     raw_text=text,
                     team=team,
                 )
-                if assignee_error:
-                    return await _start_followup(
-                        message,
-                        deps=deps,
-                        db_pool=db_pool,
-                        state=state,
-                        prompt=assignee_error + " \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0438\u043c\u044f \u0438\u043b\u0438 \u0443\u0431\u0435\u0440\u0438\u0442\u0435 \u0438\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044f.",
-                        base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
-                        source=source,
-                        pending_action="task",
-                        missing_fields=("assignee_name",),
-                    )
-
-                task_fingerprint = _llm_fingerprint(
-                    "task",
-                    title=intent.title,
-                    project_id=int(project_id),
-                    assignee_id=assignee_id,
-                    deadline=deadline_local,
+            if assignee_error:
+                return await _start_followup(
+                    message,
+                    deps=deps,
+                    db_pool=db_pool,
+                    state=state,
+                    prompt=assignee_error + " \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0438\u043c\u044f \u0438\u043b\u0438 \u0443\u0431\u0435\u0440\u0438\u0442\u0435 \u0438\u0441\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044f.",
+                    base_text=_clean(followup_data.get("freeform_base_text") or prepend_text or text),
+                    source=source,
+                    pending_action="task",
+                    missing_fields=("assignee_name",),
                 )
-                duplicate = await _find_recent_duplicate(
-                    db_pool,
-                    int(message.chat.id),
-                    task_fingerprint,
-                    conn=conn,
-                )
-                if duplicate:
-                    await _clear_followup_state(state)
-                    await _rerender_with_toast(
-                        message,
-                        db_pool,
-                        deps,
-                        "Похоже, эта задача уже создана только что. Напишите «отмени», если это дубль.",
-                    )
-                    return True
-
-                task_id = await conn.fetchval(
-                    "INSERT INTO tasks (project_id, title, assignee_id, deadline) VALUES ($1,$2,$3,$4) RETURNING id",
-                    int(project_id),
-                    intent.title,
-                    assignee_id,
-                    to_db_utc(
-                        deadline_local,
-                        tz_name=tz_name,
-                        store_tz=bool(getattr(deps, "db_tasks_deadline_timestamptz", False)),
-                    )
-                    if deadline_local
-                    else None,
-                )
-                event_text = f"LLM/{source}: [{project_code}] #{int(task_id)} {intent.title}"
-                if assignee_name:
-                    event_text += f" -> {assignee_name}"
-                await db_add_event(
-                    conn,
-                    "task_created",
-                    int(project_id),
-                    int(task_id),
-                    event_text,
-                )
-            await _remember_llm_action(
+            task_fingerprint = _llm_fingerprint(
+                "task",
+                title=intent.title,
+                project_id=int(project_id),
+                assignee_id=assignee_id,
+                deadline=deadline_local,
+            )
+            duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), task_fingerprint)
+            if duplicate:
+                await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+                await _rerender_with_toast(message, db_pool, deps, "Похожий черновик уже есть. Подтвердите или отмените его.")
+                return True
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+            await create_pending_preview(
                 message,
-                db_pool,
-                fingerprint=task_fingerprint,
-                action="task",
-                summary=intent.title,
-                undo={
-                    "type": "llm_create",
-                    "action": "task",
-                    "task_id": int(task_id),
-                    "project_id": int(project_id),
+                db_pool=db_pool,
+                deps=deps,
+                kind="task",
+                payload={
                     "title": intent.title,
+                    "project_id": int(project_id),
+                    "project_code": project_code,
+                    "assignee_id": assignee_id,
+                    "assignee_name": assignee_name,
+                    "deadline_local": deadline_local.isoformat() if deadline_local else "",
                 },
+                fingerprint=task_fingerprint,
+                summary=intent.title,
+                source=source,
             )
-            fire_and_forget(
-                background_project_sync(
-                    int(project_id),
-                    db_pool,
-                    deps.vault,
-                    error_logger=(deps.db_log_error or (lambda _w, _e, _c=None: None)),
-                ),
-                label="vault_sync",
-            )
+            await _rerender_with_toast(message, db_pool, deps, "Черновик задачи готов. Подтвердите действие в сообщении ниже.")
+            return True
         except Exception:
-            logger.exception("freeform task create failed", extra={"source": source})
+            logger.exception("freeform task draft failed", extra={"source": source})
             return False
-
-        await _clear_followup_state(state)
-        meta_parts: list[str] = []
-        if project_code:
-            meta_parts.append(f"[{project_code}]")
-        if assignee_name:
-            meta_parts.append(assignee_name)
-        if deadline_local:
-            meta_parts.append("\u0434\u043e " + fmt_local(to_db_utc(deadline_local, tz_name=tz_name, store_tz=False), tz))
-        toast = f"\u2705 \u0417\u0430\u0434\u0430\u0447\u0430: {intent.title}"
-        if meta_parts:
-            toast += " \u00b7 " + " \u00b7 ".join(meta_parts)
-        await _rerender_with_toast(message, db_pool, deps, toast)
-        return True
 
     if intent.action == "personal_task":
         gtasks = getattr(deps, "gtasks", None)
         if gtasks is None or not gtasks.enabled():
-            await _clear_followup_state(state)
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
             await _rerender_with_toast(
                 message,
                 db_pool,
@@ -1078,55 +1010,34 @@ async def handle_freeform_text(
                 missing_fields=("deadline_local",),
             )
 
-        list_name = os.getenv("GTASKS_PERSONAL_LIST", "\u041b\u0438\u0447\u043d\u043e\u0435")
         try:
             personal_fingerprint = _llm_fingerprint("personal_task", title=intent.title, due=due_local)
             duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), personal_fingerprint)
             if duplicate:
-                await _clear_followup_state(state)
-                await _rerender_with_toast(
-                    message,
-                    db_pool,
-                    deps,
-                    "Похоже, это личное дело уже добавлено. Напишите «отмени», если это дубль.",
-                )
+                await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+                await _rerender_with_toast(message, db_pool, deps, "Похожий черновик уже есть. Подтвердите или отмените его.")
                 return True
-            list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
-            due_utc = due_from_local_date(due_local, tz)
-            created = await gtasks.create_task(list_id, intent.title, due=due_utc)
-            g_task_id = _clean((created or {}).get("id"))
-            async with db_pool.acquire() as conn:
-                due_txt = due_local.strftime("%d.%m %H:%M") if due_local else "\u0431\u0435\u0437 \u0441\u0440\u043e\u043a\u0430"
-                await db_add_event(conn, "personal_task_created", None, None, f"LLM/{source}: {intent.title} ({due_txt})")
-            await _remember_llm_action(
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+            await create_pending_preview(
                 message,
-                db_pool,
-                fingerprint=personal_fingerprint,
-                action="personal_task",
-                summary=intent.title,
-                undo={
-                    "type": "llm_create",
-                    "action": "personal_task",
-                    "list_id": list_id,
-                    "g_task_id": g_task_id,
+                db_pool=db_pool,
+                deps=deps,
+                kind="personal_task",
+                payload={
                     "title": intent.title,
-                }
-                if g_task_id
-                else None,
+                    "deadline_local": due_local.isoformat() if due_local else "",
+                },
+                fingerprint=personal_fingerprint,
+                summary=intent.title,
+                source=source,
             )
+            await _rerender_with_toast(message, db_pool, deps, "Черновик личной задачи готов. Подтвердите действие в сообщении ниже.")
+            return True
         except Exception as exc:
-            logger.exception("freeform personal task create failed", extra={"source": source})
-            await _clear_followup_state(state)
+            logger.exception("freeform personal task draft failed", extra={"source": source})
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
             await _rerender_with_toast(message, db_pool, deps, _gtasks_error_toast("личную задачу", exc))
             return True
-
-        await _clear_followup_state(state)
-        if due_local is None:
-            toast = f"\u2705 \u041b\u0438\u0447\u043d\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430: {intent.title}"
-        else:
-            toast = f"\u2705 \u041b\u0438\u0447\u043d\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430: {intent.title} \u00b7 \u0434\u043e {due_local.strftime('%d.%m')}"
-        await _rerender_with_toast(message, db_pool, deps, toast)
-        return True
 
     if intent.action == "event":
         start_local = _parse_local_dt(intent.start_at_local, tz_name)
@@ -1168,7 +1079,7 @@ async def handle_freeform_text(
                 missing_fields=("start_at_local",),
             )
         if not (os.getenv("ICLOUD_APPLE_ID", "").strip() and os.getenv("ICLOUD_APP_PASSWORD", "").strip()):
-            await _clear_followup_state(state)
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
             await _rerender_with_toast(
                 message,
                 db_pool,
@@ -1181,7 +1092,7 @@ async def handle_freeform_text(
         if kind == "work":
             cal_url = os.getenv("ICLOUD_CALENDAR_URL_WORK", "").strip()
             if not cal_url:
-                await _clear_followup_state(state)
+                await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
                 await _rerender_with_toast(
                     message,
                     db_pool,
@@ -1192,7 +1103,7 @@ async def handle_freeform_text(
         else:
             cal_url = os.getenv("ICLOUD_CALENDAR_URL_PERSONAL", "").strip()
             if not cal_url:
-                await _clear_followup_state(state)
+                await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
                 await _rerender_with_toast(
                     message,
                     db_pool,
@@ -1233,7 +1144,6 @@ async def handle_freeform_text(
 
         summary = _event_summary(kind, intent.title, project_code)
         dtstart_utc = start_local.astimezone(timezone.utc)
-        dtend_utc = dtstart_utc + timedelta(minutes=duration_min)
         try:
             event_fingerprint = _llm_fingerprint(
                 "event",
@@ -1245,96 +1155,39 @@ async def handle_freeform_text(
             )
             duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), event_fingerprint)
             if duplicate:
-                await _clear_followup_state(state)
-                await _rerender_with_toast(
-                    message,
-                    db_pool,
-                    deps,
-                    "Похоже, это событие уже создано. Напишите «отмени», если это дубль.",
-                )
+                await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+                await _rerender_with_toast(message, db_pool, deps, "Похожий черновик уже есть. Подтвердите или отмените его.")
                 return True
-            ics_url, success = await deps.icloud.create_event(
-                calendar_url=cal_url,
-                summary=summary,
-                dtstart_utc=dtstart_utc,
-                dtend_utc=dtend_utc,
-            )
-            async with db_pool.acquire() as conn:
-                if success:
-                    await conn.execute(
-                        """
-                        INSERT INTO icloud_events (calendar_url, summary, dtstart_utc, dtend_utc, sync_status, ics_url)
-                        VALUES ($1, $2, $3, $4, 'synced', $5)
-                        """,
-                        cal_url,
-                        summary,
-                        dtstart_utc,
-                        dtend_utc,
-                        ics_url or "",
-                    )
-                else:
-                    await conn.execute(
-                        """
-                        INSERT INTO icloud_events (calendar_url, summary, dtstart_utc, dtend_utc, sync_status, last_error)
-                        VALUES ($1, $2, $3, $4, 'pending', 'Initial sync failed')
-                        """,
-                        cal_url,
-                        summary,
-                        dtstart_utc,
-                        dtend_utc,
-                    )
-                event_text = f"LLM/{source}: {_clean(kind)} event {start_local.strftime('%d.%m %H:%M')} ({duration_min} min) - {summary}"
-                if ics_url:
-                    event_text += f"\n{ics_url}"
-                await db_add_event(
-                    conn,
-                    "ical_event_created",
-                    int(project_id) if project_id else None,
-                    None,
-                    event_text,
-                )
-            await _remember_llm_action(
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+            await create_pending_preview(
                 message,
-                db_pool,
-                fingerprint=event_fingerprint,
-                action="event",
-                summary=summary,
-                undo={
-                    "type": "llm_create",
-                    "action": "event",
-                    "kind": kind,
-                    "project_id": int(project_id) if project_id else None,
+                db_pool=db_pool,
+                deps=deps,
+                kind="event",
+                payload={
+                    "title": intent.title,
+                    "calendar_kind": kind,
                     "calendar_url": cal_url,
                     "summary": summary,
-                    "dtstart_utc": dtstart_utc.isoformat(),
-                    "dtend_utc": dtend_utc.isoformat(),
-                    "ics_url": ics_url or "",
+                    "start_local": start_local.isoformat(),
+                    "duration_min": int(duration_min),
+                    "project_id": int(project_id) if project_id else None,
+                    "project_code": project_code,
                 },
+                fingerprint=event_fingerprint,
+                summary=summary,
+                source=source,
             )
-            if kind == "work" and project_id:
-                fire_and_forget(
-                    background_project_sync(
-                        int(project_id),
-                        db_pool,
-                        deps.vault,
-                        error_logger=(deps.db_log_error or (lambda _w, _e, _c=None: None)),
-                    ),
-                    label="vault_sync",
-                )
+            await _rerender_with_toast(message, db_pool, deps, "Черновик события готов. Подтвердите действие в сообщении ниже.")
+            return True
         except Exception:
-            logger.exception("freeform event create failed", extra={"source": source})
+            logger.exception("freeform event draft failed", extra={"source": source})
             return False
-
-        await _clear_followup_state(state)
-        kind_label = "\u0440\u0430\u0431\u043e\u0447\u0435\u0435" if kind == "work" else "\u043b\u0438\u0447\u043d\u043e\u0435"
-        toast = f"\u2705 \u0421\u043e\u0431\u044b\u0442\u0438\u0435: {start_local.strftime('%d.%m %H:%M')} \u00b7 {kind_label}"
-        await _rerender_with_toast(message, db_pool, deps, toast)
-        return True
 
     if intent.action == "idea":
         gtasks = getattr(deps, "gtasks", None)
         if gtasks is None or not gtasks.enabled():
-            await _clear_followup_state(state)
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
             await _rerender_with_toast(
                 message,
                 db_pool,
@@ -1348,49 +1201,27 @@ async def handle_freeform_text(
             idea_fingerprint = _llm_fingerprint("idea", idea_text=intent.idea_text)
             duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), idea_fingerprint)
             if duplicate:
-                await _clear_followup_state(state)
-                await _rerender_with_toast(
-                    message,
-                    db_pool,
-                    deps,
-                    "Похоже, эта идея уже добавлена. Напишите «отмени», если это дубль.",
-                )
+                await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+                await _rerender_with_toast(message, db_pool, deps, "Похожий черновик уже есть. Подтвердите или отмените его.")
                 return True
-            list_id = await get_or_create_list_id(db_pool, gtasks, ideas_list)
-            created = await gtasks.create_task(list_id, intent.idea_text)
-            g_task_id = _clean((created or {}).get("id"))
-            async with db_pool.acquire() as conn:
-                await db_add_event(conn, "idea_captured", None, None, f"LLM/{source}: {intent.idea_text}")
-            await _remember_llm_action(
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+            await create_pending_preview(
                 message,
-                db_pool,
+                db_pool=db_pool,
+                deps=deps,
+                kind="idea",
+                payload={"idea_text": intent.idea_text},
                 fingerprint=idea_fingerprint,
-                action="idea",
                 summary=intent.idea_text,
-                undo={
-                    "type": "llm_create",
-                    "action": "idea",
-                    "list_id": list_id,
-                    "g_task_id": g_task_id,
-                    "title": intent.idea_text,
-                }
-                if g_task_id
-                else None,
+                source=source,
             )
+            await _rerender_with_toast(message, db_pool, deps, "Черновик идеи готов. Подтвердите действие в сообщении ниже.")
+            return True
         except Exception as exc:
-            logger.exception("freeform idea create failed", extra={"source": source})
-            await _clear_followup_state(state)
+            logger.exception("freeform idea draft failed", extra={"source": source})
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
             await _rerender_with_toast(message, db_pool, deps, _gtasks_error_toast("идею", exc))
             return True
-
-        await _clear_followup_state(state)
-        await _rerender_with_toast(
-            message,
-            db_pool,
-            deps,
-            f"\u2705 \u0418\u0434\u0435\u044f \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0430 \u0432 \u00ab{ideas_list}\u00bb.",
-        )
-        return True
 
     if intent.action == "reminder":
         remind_local = _parse_local_dt(intent.remind_at_local, tz_name)
@@ -1422,49 +1253,31 @@ async def handle_freeform_text(
             reminder_fingerprint = _llm_fingerprint("reminder", text=intent.reminder_text, remind_at=remind_local)
             duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), reminder_fingerprint)
             if duplicate:
-                await _clear_followup_state(state)
-                await _rerender_with_toast(
-                    message,
-                    db_pool,
-                    deps,
-                    "Похоже, это напоминание уже создано. Напишите «отмени», если это дубль.",
-                )
+                await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+                await _rerender_with_toast(message, db_pool, deps, "Похожий черновик уже есть. Подтвердите или отмените его.")
                 return True
-            async with db_pool.acquire() as conn:
-                reminder_id = await conn.fetchval(
-                    "INSERT INTO reminders (text, remind_at, repeat) VALUES ($1,$2,'none') RETURNING id",
-                    intent.reminder_text,
-                    to_db_utc(
-                        remind_local,
-                        tz_name=tz_name,
-                        store_tz=bool(getattr(deps, "db_reminders_remind_at_timestamptz", False)),
-                    ),
-                )
-                await db_add_event(conn, "reminder_created", None, None, f"LLM/{source}: {intent.reminder_text}")
-            await _remember_llm_action(
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+            await create_pending_preview(
                 message,
-                db_pool,
-                fingerprint=reminder_fingerprint,
-                action="reminder",
-                summary=intent.reminder_text,
-                undo={
-                    "type": "llm_create",
-                    "action": "reminder",
-                    "reminder_id": int(reminder_id),
-                    "text": intent.reminder_text,
+                db_pool=db_pool,
+                deps=deps,
+                kind="reminder",
+                payload={
+                    "reminder_text": intent.reminder_text,
+                    "remind_at_local": remind_local.isoformat(),
                 },
+                fingerprint=reminder_fingerprint,
+                summary=intent.reminder_text,
+                source=source,
             )
+            await _rerender_with_toast(message, db_pool, deps, "Черновик напоминания готов. Подтвердите действие в сообщении ниже.")
+            return True
         except Exception:
-            logger.exception("freeform reminder create failed", extra={"source": source})
+            logger.exception("freeform reminder draft failed", extra={"source": source})
             return False
 
-        await _clear_followup_state(state)
-        when_txt = remind_local.strftime("%d.%m %H:%M")
-        await _rerender_with_toast(message, db_pool, deps, f"\u2705 \u041d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u0435: {when_txt}")
-        return True
-
     reply = intent.reply or "\u041d\u0435 \u043f\u043e\u043d\u044f\u043b \u0437\u0430\u043f\u0440\u043e\u0441."
-    await _clear_followup_state(state)
+    await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
     await _rerender_with_toast(message, db_pool, deps, reply)
     return True
 

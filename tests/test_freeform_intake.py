@@ -350,11 +350,8 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.services.freeform_intake._resolve_project", AsyncMock(return_value=(1, "OPS", None))),
             patch("bot.services.freeform_intake._resolve_assignee", return_value=(None, None, None)),
             patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(return_value=None)) as find_duplicate,
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
-            patch("bot.services.freeform_intake._remember_llm_action", AsyncMock()),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=11)),
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
-            patch("bot.services.freeform_intake.background_project_sync", new=lambda *args, **kwargs: object()),
-            patch("bot.services.freeform_intake.fire_and_forget"),
         ):
             handled = await handle_freeform_text(
                 message,
@@ -366,9 +363,9 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        self.assertIs(find_duplicate.await_args.kwargs["conn"], conn)
+        self.assertEqual(find_duplicate.await_args.args[1], 202)
 
-    async def test_personal_task_creation_writes_audit_event(self) -> None:
+    async def test_personal_task_creation_builds_pending_preview(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
         deps = SimpleNamespace(
             llm=SimpleNamespace(
@@ -392,8 +389,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()) as add_event,
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=21)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
             patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
             patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
@@ -408,11 +404,11 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        gtasks.create_task.assert_awaited_once()
-        self.assertEqual(add_event.await_count, 1)
-        self.assertEqual(add_event.await_args.args[1], "personal_task_created")
+        gtasks.create_task.assert_not_awaited()
+        self.assertEqual(create_preview.await_count, 1)
+        self.assertEqual(create_preview.await_args.kwargs["kind"], "personal_task")
 
-    async def test_idea_creation_writes_audit_event(self) -> None:
+    async def test_idea_creation_builds_pending_preview(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "i1"}))
         deps = SimpleNamespace(
             llm=SimpleNamespace(
@@ -436,8 +432,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()) as add_event,
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=22)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
             patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
             patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
@@ -452,9 +447,9 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        gtasks.create_task.assert_awaited_once()
-        self.assertEqual(add_event.await_count, 1)
-        self.assertEqual(add_event.await_args.args[1], "idea_captured")
+        gtasks.create_task.assert_not_awaited()
+        self.assertEqual(create_preview.await_count, 1)
+        self.assertEqual(create_preview.await_args.kwargs["kind"], "idea")
 
     async def test_explicit_idea_marker_bypasses_llm_and_goes_to_gtasks(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "g1"}))
@@ -480,8 +475,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=23)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
             patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
             patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
@@ -496,7 +490,8 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        gtasks.create_task.assert_awaited_once_with("ideas-list", "Voice digest")
+        self.assertEqual(create_preview.await_count, 1)
+        self.assertEqual(create_preview.await_args.kwargs["payload"]["idea_text"], "Voice digest")
 
     async def test_explicit_personal_marker_bypasses_llm_and_goes_to_gtasks(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
@@ -514,8 +509,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=24)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
             patch("bot.services.freeform_intake.ui_get_state", AsyncMock(return_value={"ui_payload": {}, "ui_screen": "home", "ui_message_id": None})),
             patch("bot.services.freeform_intake.ui_set_state", AsyncMock()),
@@ -530,8 +524,8 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        gtasks.create_task.assert_awaited_once()
-        self.assertEqual(gtasks.create_task.await_args.args[1], "\u043a\u0443\u043f\u0438\u0442\u044c \u0444\u0438\u043b\u044c\u0442\u0440")
+        self.assertEqual(create_preview.await_count, 1)
+        self.assertEqual(create_preview.await_args.kwargs["payload"]["title"], "\u043a\u0443\u043f\u0438\u0442\u044c \u0444\u0438\u043b\u044c\u0442\u0440")
 
     async def test_explicit_reminder_marker_can_bypass_llm_with_local_parser(self) -> None:
         class _ReminderConn:
@@ -573,7 +567,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=25)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
             patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
             patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
@@ -588,6 +582,8 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
+        self.assertEqual(create_preview.await_count, 1)
+        self.assertEqual(create_preview.await_args.kwargs["kind"], "reminder")
 
     async def test_followup_with_explicit_marker_in_current_text_uses_local_parser(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "i1"}))
@@ -619,8 +615,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=26)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
             patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
             patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
@@ -636,9 +631,9 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         deps.llm.classify_intake.assert_not_awaited()
-        gtasks.create_task.assert_awaited_once_with("ideas-list", "добавить чат-бот в проект")
+        self.assertEqual(create_preview.await_count, 1)
 
-    async def test_personal_task_gtasks_error_is_shown_to_user(self) -> None:
+    async def test_personal_task_builds_pending_preview_even_if_gtasks_would_fail_later(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(side_effect=RuntimeError("invalid_grant")))
         deps = SimpleNamespace(
             llm=SimpleNamespace(
@@ -655,7 +650,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
             patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(return_value=None)),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=30)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)) as rerender,
         ):
             handled = await handle_freeform_text(
@@ -668,9 +663,11 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        self.assertIn("ошибка авторизации Google Tasks", rerender.await_args.args[3])
+        self.assertEqual(create_preview.await_count, 1)
+        gtasks.create_task.assert_not_awaited()
+        self.assertIn("Черновик", rerender.await_args.args[3])
 
-    async def test_idea_gtasks_error_is_shown_to_user(self) -> None:
+    async def test_idea_builds_pending_preview_even_if_gtasks_would_fail_later(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(side_effect=RuntimeError("boom")))
         deps = SimpleNamespace(
             llm=SimpleNamespace(
@@ -687,7 +684,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
             patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(return_value=None)),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="ideas-list")),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=31)) as create_preview,
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)) as rerender,
         ):
             handled = await handle_freeform_text(
@@ -700,7 +697,9 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(handled)
-        self.assertIn("Не удалось добавить идею", rerender.await_args.args[3])
+        self.assertEqual(create_preview.await_count, 1)
+        gtasks.create_task.assert_not_awaited()
+        self.assertIn("Черновик", rerender.await_args.args[3])
 
     async def test_duplicate_personal_task_is_blocked_with_recent_fingerprint(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
@@ -723,8 +722,8 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.freeform_intake._load_freeform_context", AsyncMock(return_value=(None, "INBOX", [], []))),
-            patch("bot.services.freeform_intake.get_or_create_list_id", AsyncMock(return_value="personal-list")),
-            patch("bot.services.freeform_intake.db_add_event", AsyncMock()),
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=29)),
+            patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(side_effect=[None, {"fingerprint": "dup"}])),
             patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)) as rerender,
             patch("bot.services.freeform_intake.ui_get_state", _ui_get_state),
             patch("bot.services.freeform_intake.ui_set_state", _ui_set_state),
@@ -748,7 +747,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(first)
         self.assertTrue(second)
-        self.assertEqual(gtasks.create_task.await_count, 1)
+        gtasks.create_task.assert_not_awaited()
         self.assertGreaterEqual(rerender.await_count, 2)
 
 

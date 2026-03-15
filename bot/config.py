@@ -20,6 +20,7 @@ class BotConfig:
     """
     token: str
     admin_id: int = 0
+    internal_api_key: str = ""
     webhook_url: str = ""
     timezone: str = "Europe/Moscow"
 
@@ -162,6 +163,15 @@ def load_config() -> Config:
         raise ValueError("BOT_TOKEN environment variable is required")
     
     admin_id_str = os.getenv("ADMIN_ID", "0")
+    internal_api_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
+    try:
+        admin_id = int(admin_id_str or "0")
+    except Exception as exc:
+        raise ValueError("ADMIN_ID must be a valid integer") from exc
+    if admin_id <= 0:
+        raise ValueError("ADMIN_ID environment variable is required and must be > 0")
+    if not internal_api_key:
+        raise ValueError("INTERNAL_API_KEY environment variable is required")
 
     # Webhook URL is optional: support Render's RENDER_EXTERNAL_URL fallback.
     webhook_url = os.getenv("WEBHOOK_URL") or os.getenv("RENDER_EXTERNAL_URL", "")
@@ -173,7 +183,8 @@ def load_config() -> Config:
     # Bot configuration
     bot_config = BotConfig(
         token=bot_token,
-        admin_id=int(admin_id_str or "0"),
+        admin_id=admin_id,
+        internal_api_key=internal_api_key,
         webhook_url=webhook_url,
         # Prefer explicit app timezone variables to avoid provider defaults (TZ=UTC).
         timezone=resolve_tz_name("Europe/Moscow"),

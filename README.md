@@ -1,119 +1,124 @@
-# Personal Assistant Bot (aiogram 3 + asyncpg)
+# Personal Assistant Bot
 
-Проект приведён к «продакшн»-структуре: Telegram-логика отделена от HTTP-инфраструктуры, зависимости централизованы через контейнер `AppDeps`, legacy-монолит вынесен в архив `legacy_src/`.
+Single-user Telegram assistant built with `aiogram`, `asyncpg`, Gemini, Google Tasks, and iCloud CalDAV.
 
-## Как запустить
+This repo is now wired for a safer `Render Free` deployment model:
 
-```bash
-python bot.py
-```
+- `polling-web` is the supported runtime mode
+- `ADMIN_ID` is mandatory
+- all internal HTTP jobs use `X-Internal-Key`
+- reminders are DB-backed and claimed via a state machine
+- LLM actions are saved as drafts and require explicit confirmation
 
-По умолчанию это **webhook-воркер** (aiohttp + aiogram webhook).
+## Runtime contract
 
-## Обязательные переменные окружения
+- Single-user only. The bot rejects updates from users other than `ADMIN_ID`.
+- Postgres is the source of truth.
+- Reminders must survive restarts and cold starts.
+- Gemini may propose actions, but it must not execute them directly.
+- `Render Free` is still a compromise platform. Expect delayed delivery under cold starts.
 
-- `BOT_TOKEN` — токен бота
-- `DATABASE_URL` — строка подключения Postgres (asyncpg)
-- `WEBHOOK_URL` **или** `RENDER_EXTERNAL_URL` — публичный base URL сервиса (например, `https://my-bot.onrender.com`)
+## Required environment variables
 
-## Рекомендуемые переменные
+- `BOT_TOKEN`
+- `DATABASE_URL`
+- `ADMIN_ID`
+- `INTERNAL_API_KEY`
 
-- `WEBHOOK_PATH` — путь вебхука (по умолчанию `/webhook`)
-- `ADMIN_ID` — Telegram user id админа (0 = отключено)
-- `BOT_TIMEZONE` — таймзона приложения (по умолчанию `Europe/Moscow`) ✅
-- `TZ` — fallback таймзона (используется только если не `UTC`; некоторые хостинги ставят `TZ=UTC` по умолчанию)
+## Common optional environment variables
 
-## AI intake
+- `BOT_TIMEZONE` or `APP_TIMEZONE`
+- `LOG_LEVEL`
+- `LOG_FORMAT`
+- `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+- `GEMINI_LLM_MODEL`
+- `GEMINI_TRANSCRIBE_MODEL`
+- `GEMINI_TIMEOUT_SEC`
+- `GTASKS_PERSONAL_LIST`
+- `GTASKS_IDEAS_LIST`
+- `ICLOUD_APPLE_ID`
+- `ICLOUD_APP_PASSWORD`
+- `ICLOUD_CALENDAR_URL_WORK`
+- `ICLOUD_CALENDAR_URL_PERSONAL`
+- `BACKUP_STORAGE_BACKEND`
+- `BACKUP_RETENTION_DAYS`
 
-Для свободного ввода и голосовых сообщений настройте:
+## Local run
 
-- `GEMINI_API_KEY` или `GOOGLE_API_KEY`
-- `GEMINI_LLM_MODEL` (по умолчанию `gemini-2.5-flash`)
-- `GEMINI_TRANSCRIBE_MODEL` (по умолчанию `gemini-2.5-flash`)
-- `GEMINI_TIMEOUT_SEC` (по умолчанию `45`)
-- `LLM_VOICE_MAX_BYTES` (по умолчанию `8388608`)
-
-Что умеет поток:
-
-- Любой обычный текст вне активных wizard-ов маршрутизируется в создание рабочей задачи, личной задачи, напоминания, идеи или события календаря.
-- Голосовые и аудиофайлы сначала транскрибируются, затем проходят через тот же intake.
-- Рабочие и личные события создаются через iCloud CalDAV в календари `ICLOUD_CALENDAR_URL_WORK` / `ICLOUD_CALENDAR_URL_PERSONAL`.
-- Личные задачи сохраняются в Google Tasks в список `GTASKS_PERSONAL_LIST`.
-- Идеи сохраняются в Google Tasks в список `GTASKS_IDEAS_LIST`.
-- Если модели не хватило данных (например, даты, проекта, длительности или исполнителя), бот сохраняет короткий follow-up контекст и ждёт уточнение следующим сообщением.
-
-## HTTP эндпоинты
-
-- `GET /ping` — liveness (процесс жив)
-- `GET /health` — readiness (готовность: **зависит только от БД**; интеграции могут быть `degraded`)
-- `GET /tick?key=...` — cron-тик (reminders/ретраи/сервисные задачи)
-- `POST /backup?key=...` — backup БД
-
-### Защита tick/backup
-
-По умолчанию `/tick` и `/backup` закрыты.
-
-- `TICK_SECRET` — **обязателен** (если не задан, endpoints вернут 403)
-- `ALLOW_PUBLIC_TICK=1` — разрешить tick/backup без секрета (не рекомендуется)
-
-Также используется **Postgres advisory lock**, чтобы tick/backup не выполнялись параллельно на разных воркерах/инстансах.
-
-## Логирование
-
-- `LOG_FORMAT=json|plain` (по умолчанию `json`)
-- `LOG_LEVEL=DEBUG|INFO|WARNING|ERROR` (по умолчанию `INFO`)
-
-Логи редактируют очевидные секреты (token/password/authorization и т.п.).
-
-## Бэкапы (опционально)
-
-`BACKUP_STORAGE_BACKEND` выбирает backend:
-
-- `s3`:
-  - `AWS_S3_BUCKET`, `AWS_S3_REGION`
-- `dropbox`:
-  - `DROPBOX_ACCESS_TOKEN`, `DROPBOX_BACKUP_PATH`
-- `gcs`:
-  - `GCS_BUCKET`, `GCS_PROJECT_ID`, `GCS_CREDENTIALS_JSON`
-
-Параметры:
-- `BACKUP_RETENTION_DAYS` (по умолчанию `30`)
-
-## Render (рекомендуемый деплой)
-
-1. Создай **Web Service**
-2. Start Command: `python bot.py`
-3. Переменные окружения: минимум из раздела выше
-4. Cron jobs (Render Cron / внешний cron):
-   - `GET https://<host>/tick?key=<TICK_SECRET>`
-   - `POST https://<host>/backup?key=<TICK_SECRET>`
-
-## Архив legacy
-
-`legacy_src/app_monolith.py` сохранён только как история/референс и **не используется** в прод-рантайме.
-
-
-## Deploy
-
-### Requirements
-- Python 3.11+
-- Postgres (DATABASE_URL)
-
-### Install
 ```bash
 pip install -r requirements.txt
-# optional cloud backends:
-# pip install -r requirements-optional.txt
-```
-
-### Run locally
-```bash
-export BOT_TOKEN=...
-export DATABASE_URL=postgresql://...
 python bot.py
 ```
 
-### Production notes
-- By default startup will **fail fast** if DB schema bootstrap fails.
-  To disable (not recommended): `SCHEMA_BOOTSTRAP_STRICT=0`
-- HTTP server listens on `PORT` (default 10000).
+The app starts an HTTP server and runs Telegram polling in a background task.
+
+## HTTP endpoints
+
+- `GET /ping`
+  - liveness
+- `GET /health`
+  - public readiness check, no sensitive details
+- `GET /keepalive`
+  - lightweight endpoint for Render keep-warm cron
+- `GET /tick`
+  - protected cron endpoint for reminders and retries
+- `GET /internal/status`
+  - protected operational status
+- `POST /backup`
+  - protected backup trigger
+
+Protected endpoints require:
+
+```text
+X-Internal-Key: <INTERNAL_API_KEY>
+```
+
+## Render Free deployment
+
+Recommended shape:
+
+1. Create a Render Web Service.
+2. Start command: `python bot.py`
+3. Configure the required env vars.
+4. Add Render Cron jobs:
+   - `GET https://<host>/keepalive` every 4-5 minutes
+   - `GET https://<host>/tick` with header `X-Internal-Key`
+   - `POST https://<host>/backup` with header `X-Internal-Key`
+
+Notes:
+
+- `keepalive` is a workaround, not a guarantee.
+- reminders are effectively-once at application level, not real-time guaranteed
+- delayed cron execution will produce overdue delivery instead of silent loss
+
+## LLM behavior
+
+- Gemini output is treated as a draft
+- the bot sends a preview with `Confirm` / `Cancel`
+- malformed or ambiguous output should fall back to clarification
+- destructive or state-changing actions should not execute without confirmation
+
+## Data model highlights
+
+- `reminders`
+  - queue state, claim token, retries, delivery timestamps
+- `pending_actions`
+  - persisted LLM drafts awaiting confirmation
+- `conversation_state`
+  - restart-safe follow-up and bulk flow state
+- `processed_updates`
+  - Telegram update dedupe
+- `action_journal`
+  - executed actions and undo metadata
+- `llm_recent_actions`
+  - short-lived duplicate suppression
+
+## Verification
+
+Run tests with:
+
+```bash
+pytest -q
+```
+
+Current target is functional safety and restart resilience for a single-user MVP, not strict production SLA.

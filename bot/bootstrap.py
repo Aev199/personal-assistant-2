@@ -19,6 +19,7 @@ from bot.adapters.google_tasks_adapter import GoogleTasksAdapter
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudCalDAVAuth
 from bot.adapters.gemini_adapter import GeminiAdapter
 from bot.deps import AppDeps
+from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
 
 from bot.handlers import (
     register_nav,
@@ -32,6 +33,7 @@ from bot.handlers import (
     register_reminders,
     register_system,
     register_errors,
+    register_pending_actions,
 )
 
 
@@ -58,6 +60,10 @@ def build_core(
     bot = Bot(token=bot_token)
 
     dp = Dispatcher()
+    dp.update.outer_middleware.register(ProcessedUpdateMiddleware())
+    guard = SingleUserGuardMiddleware(admin_id=admin_id)
+    dp.message.outer_middleware.register(guard)
+    dp.callback_query.outer_middleware.register(guard)
     register_nav(dp)
     register_projects(dp)
     register_tasks(dp)
@@ -68,6 +74,7 @@ def build_core(
     register_team(dp)
     register_reminders(dp)
     register_system(dp)
+    register_pending_actions(dp)
     register_errors(dp)
 
     cloud = WebDavAdapter()

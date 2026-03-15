@@ -51,7 +51,6 @@ class HttpContext:
     tick_timeout_sec: float
     tick_send_timeout_sec: float
     icloud_enabled: bool
-    mode: str = "polling-web"
 
     # backup env/config
     backup_storage_backend: str
@@ -63,6 +62,7 @@ class HttpContext:
     gcs_bucket: str
     gcs_project_id: str
     gcs_credentials_json: str
+    mode: str = "polling-web"
 
     # webhook self-heal (optional)
     refresh_webhook: Optional[Callable[[], Awaitable[None]]] = None

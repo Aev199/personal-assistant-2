@@ -56,6 +56,9 @@ def add_menu_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📅 Событие (iCloud)", callback_data="add:event"),
                 InlineKeyboardButton(text="⏰ Напоминание", callback_data="add:rem"),
             ],
+            [
+                InlineKeyboardButton(text="🔔 Меню напоминаний", callback_data="nav:reminders"),
+            ],
             [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
         ]
     )

@@ -268,6 +268,24 @@ async def do_tick(
                     pass
 
     async with pool.acquire() as conn:
+        # Cleanup expired pending action previews
+        expired_rows = await conn.fetch(
+            """
+            DELETE FROM pending_actions
+            WHERE status = 'pending' AND expires_at < NOW()
+            RETURNING chat_id, source_message_id
+            """
+        )
+        expired_cleaned = 0
+        if expired_rows:
+            for row in expired_rows:
+                if row["source_message_id"]:
+                    try:
+                        await bot.delete_message(chat_id=int(row["chat_id"]), message_id=int(row["source_message_id"]))
+                        expired_cleaned += 1
+                    except Exception:
+                        pass
+        
         due_backlog = int(
             await conn.fetchval(
                 """
@@ -290,5 +308,6 @@ async def do_tick(
         "batches": batches,
         "due_backlog": due_backlog,
         "icloud": icloud_result,
+        "expired_pending_cleaned": expired_cleaned,
         "duration_ms": int((time.monotonic() - started) * 1000),
     }

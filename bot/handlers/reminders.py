@@ -89,6 +89,35 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
     await try_delete_user_message(callback.message)
 
 
+async def cb_cancel_reminder(callback: CallbackQuery, db_pool: asyncpg.Pool) -> None:
+    rem_id = callback.data.split(":")[2]
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reminders
+                SET status='cancelled',
+                    cancelled_at_utc=NOW()
+                WHERE id=$1 AND chat_id=$2 AND cancelled_at_utc IS NULL
+                """,
+                int(rem_id),
+                int(callback.message.chat.id),
+            )
+        await callback.answer("✅ Напоминание удалено")
+        
+        # We need to refresh the reminders list screen
+        from bot.ui.screens import ui_render_reminders
+        await ui_render_reminders(
+            callback.message,
+            db_pool,
+            preferred_message_id=callback.message.message_id,
+        )
+    except Exception as e:
+        logger.exception("Failed to cancel reminder", extra={"rem_id": rem_id})
+        await callback.answer("Ошибка при удалении", show_alert=True)
+
+
 def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_rem_close, F.data == "rem:close")
     dp.callback_query.register(cb_rem_snooze, F.data.startswith("rem:snooze:"))
+    dp.callback_query.register(cb_cancel_reminder, F.data.startswith("rem:cancel:"))

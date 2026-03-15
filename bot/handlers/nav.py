@@ -332,6 +332,28 @@ async def cb_nav_team(callback: CallbackQuery, state: FSMContext, db_pool: async
     )
 
 
+async def cb_nav_reminders(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
+        return await callback.answer("Недоступно", show_alert=True)
+    await callback.answer()
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
+    await state.clear()
+    
+    from bot.ui.screens import ui_render_reminders
+    final_id = await ui_render_reminders(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
+
+
 def register(dp: Dispatcher) -> None:
     """Register navigation handlers on the provided Dispatcher."""
     dp.callback_query.register(cb_nav_projects, F.data == "nav:projects")
@@ -346,3 +368,4 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_nav_work, F.data.startswith("nav:work"))
     dp.callback_query.register(cb_nav_inbox, F.data.startswith("nav:inbox"))
     dp.callback_query.register(cb_nav_team, F.data == "nav:team")
+    dp.callback_query.register(cb_nav_reminders, F.data == "nav:reminders")

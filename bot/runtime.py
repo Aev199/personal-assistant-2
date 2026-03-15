@@ -24,6 +24,17 @@ async def _noop_async() -> None:
     return None
 
 
+def _runtime_mode() -> str:
+    raw = (os.getenv("BOT_RUNTIME_MODE") or "").strip().lower()
+    if raw in {"webhook", "polling-web", "auto"}:
+        return raw
+    if raw:
+        raise RuntimeError("BOT_RUNTIME_MODE must be one of: webhook, polling-web, auto")
+    if os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER_SERVICE_ID") or os.getenv("RENDER"):
+        return "webhook"
+    return "auto"
+
+
 def _admin_id(cfg_admin_id: int | None = None) -> int:
     """Resolve admin id from env with cfg fallback."""
     raw = os.getenv("ADMIN_ID")
@@ -372,7 +383,15 @@ async def run_polling() -> None:
 def main() -> None:
     load_dotenv()
     cfg = load_config()
-    app = create_app_webhook() if (cfg.bot.webhook_url or "").strip() else create_app_polling_web()
+    mode = _runtime_mode()
+    if mode == "webhook":
+        if not (cfg.bot.webhook_url or "").strip():
+            raise RuntimeError("Webhook mode requires WEBHOOK_URL or RENDER_EXTERNAL_URL")
+        app = create_app_webhook()
+    elif mode == "polling-web":
+        app = create_app_polling_web()
+    else:
+        app = create_app_webhook() if (cfg.bot.webhook_url or "").strip() else create_app_polling_web()
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "10000"))
     web.run_app(app, host=host, port=port)

@@ -4,7 +4,7 @@ Single-user Telegram assistant built with `aiogram`, `asyncpg`, Gemini, Google T
 
 This repo is now wired for a safer `Render Free` deployment model:
 
-- `polling-web` is the supported runtime mode
+- `webhook` is the supported runtime mode on Render Free
 - `ADMIN_ID` is mandatory
 - all internal HTTP jobs use `X-Internal-Key`
 - reminders are DB-backed and claimed via a state machine
@@ -27,6 +27,7 @@ This repo is now wired for a safer `Render Free` deployment model:
 
 ## Common optional environment variables
 
+- `BOT_RUNTIME_MODE`
 - `BOT_TIMEZONE` or `APP_TIMEZONE`
 - `LOG_LEVEL`
 - `LOG_FORMAT`
@@ -50,7 +51,14 @@ pip install -r requirements.txt
 python bot.py
 ```
 
-The app starts an HTTP server and runs Telegram polling in a background task.
+The app starts an HTTP server. Runtime mode is selected by `BOT_RUNTIME_MODE`.
+
+- `webhook`
+  - recommended on Render Free
+- `polling-web`
+  - fallback/debug only
+- `auto`
+  - webhook if `WEBHOOK_URL` is present, otherwise polling-web
 
 ## HTTP endpoints
 
@@ -79,7 +87,10 @@ Recommended shape:
 
 1. Create a Render Web Service.
 2. Start command: `python bot.py`
-3. Configure the required env vars.
+3. Configure:
+   - `BOT_RUNTIME_MODE=webhook`
+   - `WEBHOOK_URL=https://<your-service>.onrender.com`
+   - optional `TELEGRAM_WEBHOOK_SECRET=<random-secret>`
 4. Add Render Cron jobs:
    - `GET https://<host>/keepalive` every 4-5 minutes
    - `GET https://<host>/tick` with header `X-Internal-Key`

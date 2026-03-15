@@ -1,4 +1,4 @@
-﻿"""High-level SPA screens (renderers).
+"""High-level SPA screens (renderers).
 
 These functions render whole "screens" (Home/Projects/Today/Overdue/Help/Add),
 updating the single UI message for the chat via :func:`bot.ui.render.ui_render`.
@@ -619,6 +619,96 @@ async def ui_render_help(
         text=help_text,
         reply_markup=back_home_kb(),
         screen="help",
+        fallback_message=message,
+        preferred_message_id=preferred_message_id,
+        force_new=force_new,
+        parse_mode="HTML",
+    )
+
+
+async def ui_render_reminders(
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    tz_name: str | None = None,
+    preferred_message_id: int | None = None,
+    force_new: bool = False,
+) -> int:
+    """Render the active reminders management screen."""
+    chat_id = int(message.chat.id)
+    tz_name = tz_name or _tz_name()
+    tz = resolve_tzinfo(tz_name)
+
+    toast_line = await _pop_screen_toast(db_pool, chat_id)
+
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, text, remind_at, next_attempt_at_utc, repeat
+                FROM reminders
+                WHERE chat_id=$1
+                  AND cancelled_at_utc IS NULL
+                  AND status IN ('pending', 'retry', 'claimed')
+                ORDER BY COALESCE(next_attempt_at_utc, remind_at AT TIME ZONE 'UTC') ASC
+                LIMIT 20
+                """,
+                chat_id,
+            )
+    except Exception:
+        logger.exception("ui_render_reminders db failed", extra={"chat_id": chat_id})
+        rows = []
+
+    lines: list[str] = []
+    if toast_line:
+        lines.extend([toast_line, ""])
+
+    lines.append("🔔 <b>Активные напоминания</b>")
+
+    kb: list[list[InlineKeyboardButton]] = []
+
+    if not rows:
+        lines.append("")
+        lines.append("Нет активных напоминаний.")
+    else:
+        lines.append("")
+        _repeat_labels = {
+            "daily": "ежедн.",
+            "weekly": "еженед.",
+            "workdays": "будни",
+            "monthly": "ежемес.",
+        }
+        from datetime import timezone
+        for r in rows:
+            rid = int(r["id"])
+            raw_dt = r.get("next_attempt_at_utc") or r.get("remind_at")
+            if raw_dt is not None:
+                dt_utc = raw_dt if raw_dt.tzinfo else raw_dt.replace(tzinfo=timezone.utc)
+                dt_local = dt_utc.astimezone(tz)
+                when = dt_local.strftime("%d.%m %H:%M")
+            else:
+                when = "?"
+            rep = (r.get("repeat") or "none").lower()
+            rep_label = _repeat_labels.get(rep, "")
+            rep_str = f" [{rep_label}]" if rep_label else ""
+            text_raw = (r.get("text") or "").strip()
+            text_show = text_raw if len(text_raw) <= 60 else text_raw[:59] + "…"
+            label_short = text_raw[:22] + "…" if len(text_raw) > 22 else text_raw
+            lines.append(f"• <b>{when}</b>{rep_str} — {h(text_show)}")
+            kb.append([InlineKeyboardButton(
+                text=f"✖ {when} — {label_short}",
+                callback_data=f"rem:cancel:{rid}",
+            )])
+
+    kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+
+    return await ui_render(
+        bot=message.bot,
+        db_pool=db_pool,
+        chat_id=chat_id,
+        text="\n".join(lines).strip(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        screen="reminders",
         fallback_message=message,
         preferred_message_id=preferred_message_id,
         force_new=force_new,

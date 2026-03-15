@@ -127,7 +127,7 @@ async def _event_render_confirm(msg: Message, state: FSMContext, deps: AppDeps) 
             preview_title = f"{code}: {preview_title}"
 
     lines = [
-        "🧾 <b>Проверь событие</b>",
+        "📅 <b>Проверь событие</b>",
         f"Тип: <b>{h(kind_txt)}</b>",
         f"Дата/время: <b>{h(when_txt)}</b>",
         f"Длительность: <b>{h(dur_txt)}</b>",

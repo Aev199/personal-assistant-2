@@ -445,7 +445,7 @@ async def build_task_card(
     st = status_map.get(status, status)
 
     lines = [
-        f"🧩 <b>ЗАДАЧА</b> #{int(row['id'])}",
+        f"📝 <b>ЗАДАЧА</b> #{int(row['id'])}",
         f"Проект: <b>{h(str(row.get('project_code') or ''))}</b>",
         f"Исполнитель: <b>{h(str(row.get('assignee') or '—'))}</b>",
         f"Статус: <b>{h(str(st))}</b>",

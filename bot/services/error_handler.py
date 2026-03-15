@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Dict, Tuple
+import asyncpg
 from collections import defaultdict, deque
 
 from aiogram import Bot
@@ -303,7 +304,8 @@ class ErrorHandler:
         self,
         user_id: int,
         chat_id: int,
-        message: str
+        message: str,
+        db_pool: Optional[asyncpg.Pool] = None,
     ) -> bool:
         """Send notification to user.
         
@@ -311,6 +313,7 @@ class ErrorHandler:
             user_id: Telegram user ID
             chat_id: Telegram chat ID
             message: Message to send
+            db_pool: Asyncpg pool (to show SPA toast instead of plain message)
         
         Returns:
             True if notification sent successfully, False otherwise
@@ -326,6 +329,37 @@ class ErrorHandler:
             return False
         
         try:
+            if db_pool:
+                from bot.ui.screens import ui_render_home
+                from bot.ui.state import ui_get_state, ui_payload_with_toast, ui_set_state
+                
+                async with db_pool.acquire() as conn:
+                    state = await ui_get_state(conn, chat_id)
+                    payload = ui_payload_with_toast(state["ui_payload"], message, ttl_sec=30)
+                    await ui_set_state(conn, chat_id, ui_payload=payload)
+                
+                # Attempt to render home screen with the toast
+                try:
+                    import aiogram
+                    from aiogram.types import Message, Chat
+                    mock_chat = Chat(id=chat_id, type="private")
+                    mock_msg = Message(message_id=0, date=datetime.now(), chat=mock_chat, text="/start")
+                    # We inject the bot into the message object for aiogram compatibility without context
+                    # if needed, though ui_render_home now extracts bot from message.bot
+                except Exception:
+                    mock_msg = None
+                    pass
+                
+                if mock_msg:
+                    try:
+                        # Use a mock message just to pass the chat identification, the UI renderer extracts id
+                        await ui_render_home(mock_msg, db_pool)
+                        return True
+                    except Exception as render_err:
+                        self.logger.warning("Failed to render error toast to home screen", error=render_err)
+                        # Fall through to plain text below
+
+            # Plain text fallback
             await self.bot.send_message(
                 chat_id=chat_id,
                 text=message,
@@ -374,7 +408,8 @@ class ErrorHandler:
         context: ErrorContext,
         *,
         notify_user: bool = True,
-        notify_admin: bool = False
+        notify_admin: bool = False,
+        db_pool: Optional[asyncpg.Pool] = None,
     ) -> None:
         """Handle error with appropriate logging and notifications.
         
@@ -416,7 +451,8 @@ class ErrorHandler:
                 self._send_user_notification(
                     context.user_id,
                     context.chat_id,
-                    user_message
+                    user_message,
+                    db_pool=db_pool,
                 )
             )
         

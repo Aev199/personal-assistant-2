@@ -344,7 +344,7 @@ async def _task_render_confirm(msg: Message, state: FSMContext, db_pool: asyncpg
             dl_txt = "—"
 
     lines = [
-        "🧾 <b>Проверь задачу</b>",
+        "📝 <b>Проверь задачу</b>",
         f"Проект: <b>{h(project_code)}</b>",
         f"Исполнитель: <b>{h(assignee_name)}</b>",
         f"Срок: <b>{h(dl_txt)}</b>",

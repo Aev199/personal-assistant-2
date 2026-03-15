@@ -20,6 +20,7 @@ from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudCalDAV
 from bot.adapters.gemini_adapter import GeminiAdapter
 from bot.deps import AppDeps
 from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
+from bot.middlewares.fsm_persistence import FsmPersistenceMiddleware
 
 from bot.handlers import (
     register_nav,
@@ -64,6 +65,11 @@ def build_core(
     guard = SingleUserGuardMiddleware(admin_id=admin_id)
     dp.message.outer_middleware.register(guard)
     dp.callback_query.outer_middleware.register(guard)
+
+    # Persist FSM state to DB
+    fsm_persistence = FsmPersistenceMiddleware()
+    dp.message.middleware.register(fsm_persistence)
+    dp.callback_query.middleware.register(fsm_persistence)
     register_nav(dp)
     register_projects(dp)
     register_tasks(dp)

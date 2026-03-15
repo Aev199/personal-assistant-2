@@ -109,7 +109,7 @@ def register(dp: Dispatcher) -> None:
         )
 
         try:
-            await eh.handle_error(exc, ctx, notify_user=notify_user, notify_admin=notify_admin)
+            await eh.handle_error(exc, ctx, notify_user=notify_user, notify_admin=notify_admin, db_pool=deps.db_pool)
         except Exception as e2:
             # Never let the error handler crash the bot.
             log.error("error handler failed", error=e2)

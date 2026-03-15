@@ -239,9 +239,27 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
         state,
         fallback_chat_id=int(message.chat.id),
     )
-    await state.clear()
+    from bot.middlewares.fsm_persistence import recover_fsm_state
+    recovered = await recover_fsm_state(int(message.chat.id), db_pool, state)
+    
+    if not recovered:
+        await state.clear()
+        
     await try_delete_user_message(message)
     anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
+    
+    if recovered:
+        from bot.ui.render import ui_safe_wizard_render
+        await ui_safe_wizard_render(
+            bot=message.bot,
+            state=state,
+            chat_id=int(message.chat.id),
+            fallback_msg=None,
+            text="Вы вернулись к незавершенному черновику. Продолжите диалог или нажмите Отмена.",
+            reply_markup=None,
+        )
+        return
+
     final_id = await ui_render_home(
         message,
         db_pool,
@@ -271,9 +289,27 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
         state,
         fallback_chat_id=int(message.chat.id),
     )
-    await state.clear()
+    from bot.middlewares.fsm_persistence import recover_fsm_state
+    recovered = await recover_fsm_state(int(message.chat.id), db_pool, state)
+
+    if not recovered:
+        await state.clear()
+        
     await try_delete_user_message(message)
     anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
+    
+    if recovered:
+        from bot.ui.render import ui_safe_wizard_render
+        await ui_safe_wizard_render(
+            bot=message.bot,
+            state=state,
+            chat_id=int(message.chat.id),
+            fallback_msg=None,
+            text="Вы вернулись к незавершенному черновику. Продолжите диалог или нажмите Отмена.",
+            reply_markup=None,
+        )
+        return
+
     final_id = await ui_render_home(
         message,
         db_pool,

@@ -10,6 +10,7 @@ available, falling back to a module logger.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
@@ -107,13 +108,15 @@ def attach_routes(app: web.Application, ctx: HttpContext) -> None:
 def _authorized(request: web.Request, ctx: HttpContext) -> bool:
     if ctx.allow_public_tick:
         return True
-    if not ctx.internal_api_key:
+    legacy_tick_key = (os.getenv("TICK_SECRET") or "").strip()
+    accepted_keys = {key for key in (ctx.internal_api_key, legacy_tick_key) if key}
+    if not accepted_keys:
         return False
     header_value = request.headers.get("X-Internal-Key", "")
-    if header_value == ctx.internal_api_key:
+    if header_value in accepted_keys:
         return True
     # Temporary backward-compatibility for existing cron providers that only use query params.
-    return request.query.get("key", "") == ctx.internal_api_key
+    return request.query.get("key", "") in accepted_keys
 
 
 async def handle_cron_tick(request: web.Request, ctx: HttpContext) -> web.StreamResponse:

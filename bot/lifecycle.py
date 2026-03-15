@@ -62,6 +62,7 @@ def make_on_startup(
     database_url: str,
     webhook_url: str,
     webhook_path: str,
+    webhook_secret_token: str,
     webhook_keeper_every_sec: int,
     maybe_refresh_webhook,
 ):
@@ -304,7 +305,10 @@ def make_on_startup(
         # Webhook: set and keep-alive
         if webhook_url:
             desired = f"{webhook_url}{webhook_path}"
-            fire_and_forget(delayed_set_webhook(bot, desired), label="webhook:set")
+            fire_and_forget(
+                delayed_set_webhook(bot, desired, secret_token=webhook_secret_token),
+                label="webhook:set",
+            )
             try:
                 dp.workflow_data["webhook_keeper_task"] = asyncio.create_task(
                     webhook_keeper(maybe_refresh_webhook, keeper_every_sec=webhook_keeper_every_sec)

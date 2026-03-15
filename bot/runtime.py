@@ -110,6 +110,7 @@ def create_app_webhook() -> web.Application:
         webhook_url=webhook_url,
         webhook_path=webhook_path,
         refresh_every_sec=webhook_refresh_every_sec,
+        secret_token=cfg.bot.webhook_secret_token,
     )
 
     tick_lock = asyncio.Lock()
@@ -126,6 +127,7 @@ def create_app_webhook() -> web.Application:
             database_url=database_url,
             webhook_url=webhook_url,
             webhook_path=webhook_path,
+            webhook_secret_token=cfg.bot.webhook_secret_token,
             webhook_keeper_every_sec=webhook_keeper_every_sec,
             maybe_refresh_webhook=maybe_refresh_webhook,
         )
@@ -138,6 +140,7 @@ def create_app_webhook() -> web.Application:
         dispatcher=dp,
         bot=bot,
         handle_in_background=True,
+        secret_token=cfg.bot.webhook_secret_token or None,
     )
     webhook_handler.register(app, path=webhook_path)
     setup_application(app, dp, bot=bot)
@@ -238,6 +241,7 @@ def create_app_polling_web() -> web.Application:
             database_url=database_url,
             webhook_url="",
             webhook_path="",
+            webhook_secret_token="",
             webhook_keeper_every_sec=0,
             maybe_refresh_webhook=_noop_async,
         )
@@ -351,6 +355,7 @@ async def run_polling() -> None:
             database_url=database_url,
             webhook_url="",
             webhook_path="",
+            webhook_secret_token="",
             webhook_keeper_every_sec=0,
             maybe_refresh_webhook=_noop_async,
         )
@@ -366,7 +371,8 @@ async def run_polling() -> None:
 
 def main() -> None:
     load_dotenv()
-    app = create_app_polling_web()
+    cfg = load_config()
+    app = create_app_webhook() if (cfg.bot.webhook_url or "").strip() else create_app_polling_web()
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "10000"))
     web.run_app(app, host=host, port=port)

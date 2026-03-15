@@ -22,12 +22,12 @@ from bot.services.logger import get_logger
 log = get_logger("bot.webhook")
 
 
-async def delayed_set_webhook(bot: Bot, desired_url: str) -> None:
+async def delayed_set_webhook(bot: Bot, desired_url: str, *, secret_token: str = "") -> None:
     """Set webhook after a short delay so the web server is already listening."""
     await asyncio.sleep(2)
     for attempt in range(3):
         try:
-            await asyncio.wait_for(bot.set_webhook(desired_url), timeout=5)
+            await asyncio.wait_for(bot.set_webhook(desired_url, secret_token=(secret_token or None)), timeout=5)
             info = await asyncio.wait_for(bot.get_webhook_info(), timeout=5)
             log.info(
                 "Webhook set",
@@ -55,6 +55,7 @@ def make_maybe_refresh_webhook(
     webhook_url: str,
     webhook_path: str,
     refresh_every_sec: int,
+    secret_token: str = "",
 ) -> Callable[[], Awaitable[None]]:
     """Return a rate-limited coroutine that keeps webhook configured."""
 
@@ -74,7 +75,7 @@ def make_maybe_refresh_webhook(
             current = getattr(info, "url", "")
             if current != desired:
                 log.warning("Webhook URL mismatch. Resetting", current=current, desired=desired)
-                await asyncio.wait_for(bot.set_webhook(desired), timeout=5)
+                await asyncio.wait_for(bot.set_webhook(desired, secret_token=(secret_token or None)), timeout=5)
         except Exception as e:
             log.warning(
                 "Webhook refresh failed",

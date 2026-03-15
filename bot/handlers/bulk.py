@@ -359,7 +359,7 @@ async def cb_bulk(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.P
             return await ui_render_overdue(callback.message, db_pool, force_new=False)
 
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 def register(dp: Dispatcher) -> None:

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import html
 import re
+import logging
 
 from aiogram.types import Message
+
+logger = logging.getLogger(__name__)
 
 
 TG_TEXT_LIMIT_UNITS = 4096
@@ -58,6 +61,7 @@ def fit_telegram_text(text: str, *, parse_mode: str | None = None, max_units: in
             continue
         candidate = "\n".join(lines[:keep]) + suffix_tpl.format(n=hidden)
         if _tg_utf16_units(candidate) <= max_units:
+            logger.warning(f"fit_telegram_text truncated message by {hidden} lines (exceeded {max_units} units)")
             return candidate
 
     plain = re.sub(r"<[^>]+>", "", lines[0] if lines else text)
@@ -65,6 +69,7 @@ def fit_telegram_text(text: str, *, parse_mode: str | None = None, max_units: in
     if is_html:
         plain = html.escape(plain)
     cut = _trim_to_units(plain, max(1, max_units - 1))
+    logger.warning(f"fit_telegram_text performed hard truncation to plain text (exceeded {max_units} units)")
     return cut + "…"
 
 

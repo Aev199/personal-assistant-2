@@ -157,7 +157,7 @@ async def msg_team_add(message: Message, state: FSMContext, db_pool: asyncpg.Poo
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text=f"❌ Ошибка: {h(str(e))}",
+            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]
             ),
@@ -311,7 +311,7 @@ async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_
     except Exception as e:
         await safe_edit(
             callback.message,
-            f"❌ Ошибка: {h(str(e))}",
+            f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
             reply_markup=back_home_kb(),
             parse_mode="HTML",
         )

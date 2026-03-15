@@ -524,7 +524,7 @@ async def cb_sync_status(callback: CallbackQuery, state: FSMContext, db_pool: as
             parse_mode="HTML",
         )
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def cb_sync_retry(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -552,7 +552,7 @@ async def cb_sync_retry(callback: CallbackQuery, state: FSMContext, db_pool: asy
             fire_and_forget(background_project_sync(int(pid), db_pool, vault), label=f"sync:retry:{pid}")
         await ui_render_home(callback.message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -647,7 +647,7 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
             parse_mode="HTML",
         )
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -695,7 +695,7 @@ async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asy
             parse_mode=None,
         )
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def _render_global_tails_screen(msg: Message, db_pool: asyncpg.Pool, back_cb: str, deps: AppDeps):
@@ -741,7 +741,7 @@ async def cb_global_tails(callback: CallbackQuery, state: FSMContext, db_pool: a
     try:
         await _render_global_tails_screen(callback.message, db_pool, "nav:projects", deps)
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -828,7 +828,7 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
             parse_mode="HTML",
         )
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):

@@ -261,7 +261,7 @@ async def cb_add_super_create(callback: CallbackQuery, state: FSMContext, db_poo
             state=state,
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
-            text=f"❌ Ошибка: {h(str(e))}",
+            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
             reply_markup=main_menu_kb(),
             parse_mode="HTML",
         )
@@ -690,7 +690,7 @@ async def create_task_from_wizard(
             state=state,
             chat_id=int(msg.chat.id),
             fallback_msg=msg,
-            text=f"❌ Ошибка: {h(str(e))}",
+            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
             reply_markup=main_menu_kb(),
             parse_mode="HTML",
         )
@@ -1039,7 +1039,7 @@ async def cb_add_reminder_repeat(callback: CallbackQuery, state: FSMContext, db_
             state=state,
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
-            text=f"❌ Ошибка: {h(str(e))}",
+            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
             parse_mode="HTML",
         )

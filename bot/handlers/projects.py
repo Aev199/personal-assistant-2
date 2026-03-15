@@ -191,7 +191,7 @@ async def msg_proj_add_data(message: Message, state: FSMContext, db_pool: asyncp
             bot=message.bot,
             db_pool=db_pool,
             chat_id=int(message.chat.id),
-            text=f"❌ Ошибка: {h(str(e))}",
+            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
             screen="proj_add",
             payload={"mode": "link"},
@@ -580,7 +580,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
         )
 
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 def register(dp: Dispatcher) -> None:

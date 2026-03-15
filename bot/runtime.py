@@ -273,6 +273,11 @@ def create_app_polling_web() -> web.Application:
 
     async def _start(_app: web.Application) -> None:
         log.info("starting polling background task (web-service mode)")
+        try:
+            await bot.delete_webhook(drop_pending_updates=False)
+            log.info("deleted Telegram webhook before polling start")
+        except Exception as e:
+            log.warning("failed to delete webhook before polling start", error_type=type(e).__name__, error_message=str(e))
         _app["polling_task"] = asyncio.create_task(dp.start_polling(bot))
 
     async def _stop(_app: web.Application) -> None:
@@ -348,6 +353,10 @@ async def run_polling() -> None:
     )
     dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud, llm=llm))
 
+    try:
+        await bot.delete_webhook(drop_pending_updates=False)
+    except Exception:
+        pass
     await dp.start_polling(bot)
 
 

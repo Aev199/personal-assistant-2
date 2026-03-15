@@ -109,7 +109,11 @@ def _authorized(request: web.Request, ctx: HttpContext) -> bool:
         return True
     if not ctx.internal_api_key:
         return False
-    return request.headers.get("X-Internal-Key", "") == ctx.internal_api_key
+    header_value = request.headers.get("X-Internal-Key", "")
+    if header_value == ctx.internal_api_key:
+        return True
+    # Temporary backward-compatibility for existing cron providers that only use query params.
+    return request.query.get("key", "") == ctx.internal_api_key
 
 
 async def handle_cron_tick(request: web.Request, ctx: HttpContext) -> web.StreamResponse:

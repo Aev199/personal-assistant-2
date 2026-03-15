@@ -189,7 +189,9 @@ async def handle_cron_tick(request: web.Request, ctx: HttpContext) -> web.Stream
     # keep webhook alive (self-heal)
     if ctx.refresh_webhook is not None:
         try:
-            await ctx.refresh_webhook()
+            maybe_coro = ctx.refresh_webhook()
+            if maybe_coro is not None:
+                await maybe_coro
         except Exception as e:
             log.warning("refresh_webhook failed", error_type=type(e).__name__, error_message=str(e))
 

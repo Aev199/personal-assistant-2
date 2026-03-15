@@ -20,6 +20,10 @@ from bot.services.webhook import make_maybe_refresh_webhook
 from bot.tz import resolve_tz_name
 
 
+async def _noop_async() -> None:
+    return None
+
+
 def _admin_id(cfg_admin_id: int | None = None) -> int:
     """Resolve admin id from env with cfg fallback."""
     raw = os.getenv("ADMIN_ID")
@@ -235,7 +239,7 @@ def create_app_polling_web() -> web.Application:
             webhook_url="",
             webhook_path="",
             webhook_keeper_every_sec=0,
-            maybe_refresh_webhook=lambda: None,
+            maybe_refresh_webhook=_noop_async,
         )
     )
     dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud, llm=llm))
@@ -264,7 +268,7 @@ def create_app_polling_web() -> web.Application:
         gcs_bucket=os.getenv("GCS_BUCKET", ""),
         gcs_project_id=os.getenv("GCS_PROJECT_ID", ""),
         gcs_credentials_json=os.getenv("GCS_CREDENTIALS_JSON", ""),
-        refresh_webhook=lambda: None,
+        refresh_webhook=_noop_async,
         started_at_ts=time.time(),
         tick_lock=tick_lock,
         backup_lock=backup_lock,
@@ -348,7 +352,7 @@ async def run_polling() -> None:
             webhook_url="",
             webhook_path="",
             webhook_keeper_every_sec=0,
-            maybe_refresh_webhook=lambda: None,
+            maybe_refresh_webhook=_noop_async,
         )
     )
     dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud, llm=llm))

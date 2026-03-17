@@ -319,7 +319,7 @@ async def record_action_journal(
         """
         INSERT INTO action_journal(chat_id, source, action_key, action_type, summary, payload_json, undo_payload_json)
         VALUES($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
-        ON CONFLICT(action_key) DO NOTHING
+        ON CONFLICT(action_key) WHERE action_key IS NOT NULL DO NOTHING
         RETURNING id
         """,
         int(chat_id),

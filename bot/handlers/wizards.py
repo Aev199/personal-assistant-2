@@ -877,7 +877,7 @@ async def cb_add_reminder_time(callback: CallbackQuery, state: FSMContext, deps:
         )
 
     remind_utc = remind_local.astimezone(UTC)
-    await state.update_data(remind_at=remind_utc)
+    await state.update_data(remind_at=remind_utc.isoformat())
     await state.set_state(AddReminderWizard.entering_text)
     return await wizard_render(
         bot=callback.bot,
@@ -919,7 +919,7 @@ async def msg_add_reminder_time(message: Message, state: FSMContext, db_pool: as
             text="Время уже прошло. Укажите время в будущем.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
         )
-    await state.update_data(remind_at=remind_utc)
+    await state.update_data(remind_at=remind_utc.isoformat())
     await state.set_state(AddReminderWizard.entering_text)
     tz = _tz_from_deps(deps)
     return await wizard_render(

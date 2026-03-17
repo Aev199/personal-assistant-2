@@ -22,6 +22,7 @@ from bot.ui.screens import (
     ui_render_all_tasks,
     ui_render_help,
     ui_render_home,
+    ui_render_home_more,
     ui_render_inbox,
     ui_render_overdue,
     ui_render_projects_portfolio,
@@ -98,6 +99,25 @@ async def cb_nav_stats(callback: CallbackQuery, state: FSMContext, db_pool: asyn
         callback.message,
         db_pool,
         tz_name=deps.tz_name,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
+
+
+async def cb_nav_home_more(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
+        return await callback.answer("Недоступно", show_alert=True)
+    await callback.answer()
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
+    await state.clear()
+    final_id = await ui_render_home_more(
+        callback.message,
+        db_pool,
         preferred_message_id=preferred_message_id,
     )
     await cleanup_stale_wizard_message(
@@ -336,6 +356,13 @@ async def cb_nav_reminders(callback: CallbackQuery, state: FSMContext, db_pool: 
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
+    page = 0
+    try:
+        parts = (callback.data or "").split(":")
+        if len(parts) >= 3 and parts[2].isdigit():
+            page = max(0, int(parts[2]))
+    except Exception:
+        page = 0
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
     
@@ -344,6 +371,8 @@ async def cb_nav_reminders(callback: CallbackQuery, state: FSMContext, db_pool: 
         callback.message,
         db_pool,
         tz_name=deps.tz_name,
+        page=page,
+        selected_reminder_id=None,
         preferred_message_id=preferred_message_id,
     )
     await cleanup_stale_wizard_message(
@@ -360,6 +389,7 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_nav_all, F.data.startswith("nav:all"))
     dp.callback_query.register(cb_nav_close_inline, F.data == "nav:close_inline")
     dp.callback_query.register(cb_nav_home, F.data == "nav:home")
+    dp.callback_query.register(cb_nav_home_more, F.data == "nav:home_more")
     dp.callback_query.register(cb_nav_stats, F.data == "home:stats")
     dp.callback_query.register(cb_nav_add, F.data == "nav:add")
     dp.callback_query.register(cb_nav_help, F.data == "nav:help")
@@ -368,4 +398,4 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_nav_work, F.data.startswith("nav:work"))
     dp.callback_query.register(cb_nav_inbox, F.data.startswith("nav:inbox"))
     dp.callback_query.register(cb_nav_team, F.data == "nav:team")
-    dp.callback_query.register(cb_nav_reminders, F.data == "nav:reminders")
+    dp.callback_query.register(cb_nav_reminders, F.data.startswith("nav:reminders"))

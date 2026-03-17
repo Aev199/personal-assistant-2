@@ -38,9 +38,9 @@ class _Conn:
 
 
 class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_escape_hatch_restores_home_for_main_menu_token(self) -> None:
+    async def test_escape_hatch_restores_home_for_home_token(self) -> None:
         message = SimpleNamespace(
-            text="🏠 Главное меню",
+            text="🏠 Домой",
             chat=SimpleNamespace(id=101),
             bot=SimpleNamespace(),
         )
@@ -62,7 +62,7 @@ class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_home_button_renders_home_screen(self) -> None:
         message = SimpleNamespace(
-            text="🏠 Главное меню",
+            text="🏠 Домой",
             chat=SimpleNamespace(id=202),
             from_user=SimpleNamespace(id=7),
             bot=SimpleNamespace(),
@@ -80,6 +80,28 @@ class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await msg_home_button(message, state, db_pool=object(), deps=deps)
 
         render_home.assert_awaited_once()
+        ensure_menu.assert_awaited_once()
+        state.clear.assert_awaited_once()
+
+    async def test_escape_hatch_opens_reminders_from_reply_keyboard(self) -> None:
+        message = SimpleNamespace(
+            text="🔔 Напоминания",
+            chat=SimpleNamespace(id=303),
+            bot=SimpleNamespace(),
+        )
+        state = AsyncMock()
+
+        with (
+            patch("bot.handlers.common.get_wizard_message_data", AsyncMock(return_value=(None, None))),
+            patch("bot.handlers.common.try_delete_user_message", AsyncMock()),
+            patch("bot.handlers.common.ui_render_reminders", AsyncMock(return_value=88)) as render_reminders,
+            patch("bot.handlers.common.cleanup_stale_wizard_message", AsyncMock()),
+            patch("bot.handlers.common.ensure_main_menu", AsyncMock(return_value=False)) as ensure_menu,
+        ):
+            handled = await escape_hatch_menu_or_command(message, state, db_pool=object())
+
+        self.assertTrue(handled)
+        render_reminders.assert_awaited_once()
         ensure_menu.assert_awaited_once()
         state.clear.assert_awaited_once()
 

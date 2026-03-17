@@ -652,7 +652,12 @@ async def _event_finalize_and_create(
             chat_id=int(message.chat.id),
             fallback_msg=message,
             text="❌ Не хватает данных для создания события. Начните заново через ➕ Добавить.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="↻ Событие", callback_data="add:event")],
+                    [InlineKeyboardButton(text="⬅️ Добавить", callback_data="nav:add")],
+                ]
+            ),
             parse_mode="HTML",
         )
         await state.clear()

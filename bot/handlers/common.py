@@ -15,6 +15,7 @@ from bot.ui.screens import (
     ui_render_home,
     ui_render_overdue,
     ui_render_projects_portfolio,
+    ui_render_reminders,
     ui_render_team,
     ui_render_today,
     ensure_main_menu,
@@ -23,14 +24,15 @@ from bot.utils import canon, try_delete_user_message
 
 
 MAIN_MENU_TOKENS = {
-    "главное меню",
     "домой",
     "сегодня",
     "проекты",
     "просрочки",
+    "напоминания",
     "команда",
     "добавить",
     "help",
+    "помощь",
 }
 
 
@@ -169,10 +171,10 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
 
     await state.clear()
     await try_delete_user_message(message)
-    recreate_anchor = token in {"главное меню", "домой"}
+    recreate_anchor = token == "домой"
     anchor_sent = await ensure_main_menu(message, db_pool, recreate=recreate_anchor)
 
-    if token in {"главное меню", "домой"}:
+    if token == "домой":
         final_id = await ui_render_home(
             message,
             db_pool,
@@ -200,6 +202,15 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             preferred_message_id=preferred_message_id,
             force_new=bool(anchor_sent),
         )
+    elif token == "напоминания":
+        final_id = await ui_render_reminders(
+            message,
+            db_pool,
+            page=0,
+            selected_reminder_id=None,
+            preferred_message_id=preferred_message_id,
+            force_new=bool(anchor_sent),
+        )
     elif token == "добавить":
         final_id = await ui_render_add_menu(
             message,
@@ -207,7 +218,7 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             preferred_message_id=preferred_message_id,
             force_new=bool(anchor_sent),
         )
-    elif token == "help":
+    elif token in {"help", "помощь"}:
         final_id = await ui_render_help(
             message,
             db_pool,

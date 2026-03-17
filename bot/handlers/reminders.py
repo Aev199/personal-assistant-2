@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import asyncpg
@@ -11,7 +12,41 @@ from aiogram.types import CallbackQuery
 from bot.db.runtime_state import record_action_journal
 from bot.deps import AppDeps
 from bot.tz import to_db_utc
+from bot.ui.state import ui_get_state, _ui_payload_get, ui_payload_with_toast, ui_set_state
 from bot.utils import try_delete_user_message
+
+logger = logging.getLogger(__name__)
+
+
+def _reminders_page_from_data(data: str | None) -> int:
+    try:
+        parts = (data or "").split(":")
+        if len(parts) >= 5 and parts[4].isdigit():
+            return max(0, int(parts[4]))
+    except Exception:
+        return 0
+    return 0
+
+
+async def cb_rem_pick(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    try:
+        parts = (callback.data or "").split(":")
+        page = max(0, int(parts[2]))
+        rem_id = int(parts[3])
+    except Exception:
+        return await callback.answer("Ошибка", show_alert=True)
+
+    await callback.answer()
+    from bot.ui.screens import ui_render_reminders
+
+    await ui_render_reminders(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        page=page,
+        selected_reminder_id=rem_id,
+        preferred_message_id=callback.message.message_id,
+    )
 
 
 async def cb_rem_close(callback: CallbackQuery, deps: AppDeps) -> None:
@@ -24,7 +59,8 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
         parts = (callback.data or "").split(":")
         mins = int(parts[2])
         rem_id = int(parts[3])
-        action_token = parts[4] if len(parts) >= 5 else ""
+        page = max(0, int(parts[4])) if len(parts) >= 5 and parts[4].isdigit() else 0
+        action_token = parts[5] if len(parts) >= 6 else f"page-{page}"
     except Exception:
         return await callback.answer("Ошибка", show_alert=True)
 
@@ -85,13 +121,30 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
                 new_time,
             )
 
+        ui_state = await ui_get_state(conn, int(callback.message.chat.id))
+        payload = _ui_payload_get(ui_state)
+        payload = ui_payload_with_toast(payload, f"⏸ Отложено на {mins} мин.", ttl_sec=5)
+        payload.pop("selected_reminder_id", None)
+        await ui_set_state(conn, int(callback.message.chat.id), ui_payload=payload)
+
     await callback.answer(f"⏸ Отложено на {mins} мин.")
-    await try_delete_user_message(callback.message)
+    from bot.ui.screens import ui_render_reminders
+
+    await ui_render_reminders(
+        callback.message,
+        db_pool,
+        tz_name=deps.tz_name,
+        page=page,
+        selected_reminder_id=None,
+        preferred_message_id=callback.message.message_id,
+    )
 
 
-async def cb_cancel_reminder(callback: CallbackQuery, db_pool: asyncpg.Pool) -> None:
-    rem_id = callback.data.split(":")[2]
+async def cb_cancel_reminder(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    rem_id = 0
     try:
+        rem_id = int((callback.data or "").split(":")[2])
+        page = _reminders_page_from_data(callback.data)
         async with db_pool.acquire() as conn:
             await conn.execute(
                 """
@@ -100,24 +153,32 @@ async def cb_cancel_reminder(callback: CallbackQuery, db_pool: asyncpg.Pool) -> 
                     cancelled_at_utc=NOW()
                 WHERE id=$1 AND chat_id=$2 AND cancelled_at_utc IS NULL
                 """,
-                int(rem_id),
+                rem_id,
                 int(callback.message.chat.id),
             )
+            ui_state = await ui_get_state(conn, int(callback.message.chat.id))
+            payload = _ui_payload_get(ui_state)
+            payload = ui_payload_with_toast(payload, "✅ Напоминание удалено", ttl_sec=5)
+            payload.pop("selected_reminder_id", None)
+            await ui_set_state(conn, int(callback.message.chat.id), ui_payload=payload)
         await callback.answer("✅ Напоминание удалено")
-        
-        # We need to refresh the reminders list screen
+
         from bot.ui.screens import ui_render_reminders
         await ui_render_reminders(
             callback.message,
             db_pool,
+            tz_name=deps.tz_name,
+            page=page,
+            selected_reminder_id=None,
             preferred_message_id=callback.message.message_id,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to cancel reminder", extra={"rem_id": rem_id})
         await callback.answer("Ошибка при удалении", show_alert=True)
 
 
 def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_rem_close, F.data == "rem:close")
+    dp.callback_query.register(cb_rem_pick, F.data.startswith("rem:pick:"))
     dp.callback_query.register(cb_rem_snooze, F.data.startswith("rem:snooze:"))
     dp.callback_query.register(cb_cancel_reminder, F.data.startswith("rem:cancel:"))

@@ -43,6 +43,7 @@ from bot.ui import (
     ui_render_add_menu,
     ui_render_help,
     ui_render_home,
+    ui_render_reminders,
     ui_get_state,
     ui_set_state,
 )
@@ -424,8 +425,8 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
 
     help_text = (
         "🛠 Доступно (основной режим — кнопки внизу):\n\n"
-        "Откройте главное меню: /start\n"
-        "Или нажмите ❓ Help внизу."
+        "Откройте экран Домой: /start\n"
+        "Или нажмите ❓ Помощь внизу."
     )
     await message.answer(help_text, reply_markup=main_menu_kb())
 
@@ -944,6 +945,32 @@ async def msg_overdue_button(message: Message, state: FSMContext, db_pool: async
     )
 
 
+async def msg_reminders_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
+    await state.clear()
+    await try_delete_user_message(message)
+    anchor_sent = await ensure_main_menu(message, db_pool)
+    final_id = await ui_render_reminders(
+        message,
+        db_pool,
+        page=0,
+        selected_reminder_id=None,
+        preferred_message_id=preferred_message_id,
+        force_new=bool(anchor_sent),
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
+
+
 async def _freeform_followup_base_text(state: FSMContext, db_pool: asyncpg.Pool, chat_id: int) -> str:
     try:
         data = await state.get_data()
@@ -1067,11 +1094,11 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
 
     if db_pool is None:
         if not message.text:
-            return await message.answer("⚠️ Я понимаю только текст. Нажмите ❓ Help.", reply_markup=main_menu_kb())
+            return await message.answer("⚠️ Я понимаю только текст. Нажмите ❓ Помощь.", reply_markup=main_menu_kb())
         if (message.text or "").strip().startswith("/"):
-            return await message.answer("⚠️ Неизвестная команда. Нажмите ❓ Help.", reply_markup=main_menu_kb())
+            return await message.answer("⚠️ Неизвестная команда. Нажмите ❓ Помощь.", reply_markup=main_menu_kb())
         return await message.answer(
-            "🤔 Не понял. Нажмите ❓ Help или воспользуйтесь кнопками внизу.",
+            "🤔 Не понял. Нажмите ❓ Помощь или воспользуйтесь кнопками внизу.",
             reply_markup=main_menu_kb(),
         )
 
@@ -1091,9 +1118,9 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             await ensure_main_menu(message, db_pool)
             return
     if not raw:
-        toast = "⚠️ Я понимаю только текст. Нажмите ❓ Help."
+        toast = "⚠️ Я понимаю только текст. Нажмите ❓ Помощь."
     elif raw.startswith("/"):
-        toast = "⚠️ Неизвестная команда. Нажмите ❓ Help."
+        toast = "⚠️ Неизвестная команда. Нажмите ❓ Помощь."
     else:
         toast = "⚠️ Не понял. Используйте ➕ Добавить или ⚡️ Быстрая задача."
 
@@ -1161,11 +1188,12 @@ def register(dp: Dispatcher) -> None:
 
     dp.callback_query.register(cb_global_tails, F.data == "nav:global_tails")
     dp.callback_query.register(cb_global_tails_pick, F.data.startswith("nav:tails_pick:"))
-    dp.message.register(msg_home_button, lambda m: m.text and canon(m.text) in {"главное меню", "домой"})
+    dp.message.register(msg_home_button, lambda m: m.text and canon(m.text) == "домой")
 
     dp.message.register(msg_projects_button, lambda m: m.text and canon(m.text) == "проекты")
     dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "сегодня")
     dp.message.register(msg_overdue_button, lambda m: m.text and canon(m.text) == "просрочки")
+    dp.message.register(msg_reminders_button, lambda m: m.text and canon(m.text) == "напоминания")
 
     dp.message.register(msg_freeform_followup_voice, StateFilter(FreeformFollowup.awaiting_text), lambda m: bool(m.voice or m.audio))
     dp.message.register(msg_freeform_followup_text, StateFilter(FreeformFollowup.awaiting_text), F.text)

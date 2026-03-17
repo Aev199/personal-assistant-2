@@ -24,6 +24,7 @@ from bot.utils import h, fmt_task_line_html, kb_columns
 from bot.keyboards import home_kb, back_home_kb, add_menu_kb, today_screen_kb, main_menu_kb
 
 logger = logging.getLogger(__name__)
+_REMINDER_SELECTION_UNSET = object()
 
 
 async def _take_screen_payload(conn: asyncpg.Connection, chat_id: int) -> tuple[dict, str | None]:
@@ -382,25 +383,35 @@ async def ui_render_home(
             InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
         ])
 
-        # Row 2: inbox processing / inbox access
+        # Row 2: urgent shortcuts from the focus summary.
+        kb.append([
+            InlineKeyboardButton(text=f"🔥 Срочно ({int(overdue_count or 0)})", callback_data="nav:overdue:0"),
+            InlineKeyboardButton(text=f"📅 Сегодня ({int(today_count or 0)})", callback_data="nav:today"),
+        ])
+
+        if inbox_id:
+            kb.append([
+                InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0"),
+                InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+            ])
+        else:
+            kb.append([
+                InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0"),
+                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
+            ])
+
+        # Row 4: broad lists / secondary actions
         if inbox_id and int(inbox_count or 0) > 0:
             kb.append([
                 InlineKeyboardButton(text="🧹 Разобрать Inbox", callback_data="inbox:triage:start"),
-                InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
             ])
-        elif inbox_id:
+            kb.append([InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:home_more")])
+        else:
             kb.append([
-                InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
+                InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:home_more"),
             ])
-
-        kb.append([
-            InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-            InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)}) →", callback_data="nav:work:0"),
-        ])
-        kb.append([
-            InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
-            InlineKeyboardButton(text="🔄 Обновить", callback_data="nav:home"),
-        ])
 
         return await ui_render(
             bot=message.bot,
@@ -422,7 +433,7 @@ async def ui_render_home(
                     InlineKeyboardButton(text="🔄 Обновить", callback_data="nav:home"),
                     InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"),
                 ],
-                [InlineKeyboardButton(text="❓ Help", callback_data="nav:help")],
+                [InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help")],
             ]
         )
         return await ui_render(
@@ -588,6 +599,48 @@ async def ui_render_stats(
             force_new=force_new,
         )
 
+async def ui_render_home_more(
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    preferred_message_id: int | None = None,
+    force_new: bool = False,
+) -> int:
+    chat_id = int(message.chat.id)
+    toast_line = await _pop_screen_toast(db_pool, chat_id)
+
+    lines = ["⋯ <b>Ещё</b>", "", "Дополнительные действия и метрики."]
+    if toast_line:
+        lines = [toast_line, ""] + lines
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
+                InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Обновить Домой", callback_data="nav:home"),
+                InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+        ]
+    )
+
+    return await ui_render(
+        bot=message.bot,
+        db_pool=db_pool,
+        chat_id=chat_id,
+        text="\n".join(lines),
+        reply_markup=kb,
+        screen="home_more",
+        fallback_message=message,
+        preferred_message_id=preferred_message_id,
+        force_new=force_new,
+        parse_mode="HTML",
+    )
+
+
 async def ui_render_help(
     message: Message,
     db_pool: asyncpg.Pool,
@@ -633,6 +686,8 @@ async def ui_render_reminders(
     db_pool: asyncpg.Pool,
     *,
     tz_name: str | None = None,
+    page: int | None = None,
+    selected_reminder_id: int | None | object = _REMINDER_SELECTION_UNSET,
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
@@ -640,11 +695,29 @@ async def ui_render_reminders(
     chat_id = int(message.chat.id)
     tz_name = tz_name or _tz_name()
     tz = resolve_tzinfo(tz_name)
-
-    toast_line = await _pop_screen_toast(db_pool, chat_id)
+    page_size = 8
 
     try:
         async with db_pool.acquire() as conn:
+            payload, toast_line = await _take_screen_payload(conn, chat_id)
+            stored_page = max(0, int(payload.get("reminders_page") or 0))
+            if page is None:
+                page = stored_page
+
+            total = await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM reminders
+                WHERE chat_id=$1
+                  AND cancelled_at_utc IS NULL
+                  AND status IN ('pending', 'retry', 'claimed')
+                """,
+                chat_id,
+            )
+            total = int(total or 0)
+            max_page = max(0, ((total - 1) // page_size) if total else 0)
+            page = min(max(0, int(page or 0)), max_page)
+
             rows = await conn.fetch(
                 """
                 SELECT id, text, remind_at, next_attempt_at_utc, repeat
@@ -653,27 +726,52 @@ async def ui_render_reminders(
                   AND cancelled_at_utc IS NULL
                   AND status IN ('pending', 'retry', 'claimed')
                 ORDER BY COALESCE(next_attempt_at_utc, remind_at AT TIME ZONE 'UTC') ASC
-                LIMIT 20
+                LIMIT $2 OFFSET $3
                 """,
                 chat_id,
+                page_size,
+                int(page or 0) * page_size,
             )
     except Exception:
         logger.exception("ui_render_reminders db failed", extra={"chat_id": chat_id})
+        payload = {}
+        toast_line = None
+        total = 0
+        max_page = 0
+        page = 0
         rows = []
+
+    if selected_reminder_id is _REMINDER_SELECTION_UNSET:
+        selected = int(payload.get("selected_reminder_id") or 0) or None
+    else:
+        selected = int(selected_reminder_id or 0) or None
+    row_ids = {int(r["id"]) for r in rows}
+    if selected not in row_ids:
+        selected = None
 
     lines: list[str] = []
     if toast_line:
         lines.extend([toast_line, ""])
 
     lines.append("🔔 <b>Активные напоминания</b>")
+    if total > page_size:
+        lines.append("")
+        lines.append(f"<i>Страница {int(page or 0) + 1} из {max_page + 1}.</i>")
 
     kb: list[list[InlineKeyboardButton]] = []
+    kb.append([
+        InlineKeyboardButton(text="➕ Напоминание", callback_data="add:rem"),
+        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:reminders:{int(page or 0)}"),
+    ])
 
     if not rows:
         lines.append("")
         lines.append("Нет активных напоминаний.")
     else:
         lines.append("")
+        if selected is None:
+            lines.append("<i>Нажмите на напоминание ниже, чтобы открыть действия.</i>")
+            lines.append("")
         _repeat_labels = {
             "daily": "ежедн.",
             "weekly": "еженед.",
@@ -695,14 +793,38 @@ async def ui_render_reminders(
             rep_str = f" [{rep_label}]" if rep_label else ""
             text_raw = (r.get("text") or "").strip()
             text_show = text_raw if len(text_raw) <= 60 else text_raw[:59] + "…"
-            label_short = text_raw[:22] + "…" if len(text_raw) > 22 else text_raw
-            lines.append(f"• <b>{when}</b>{rep_str} — {h(text_show)}")
-            kb.append([InlineKeyboardButton(
-                text=f"✖ {when} — {label_short}",
-                callback_data=f"rem:cancel:{rid}",
-            )])
+            marker = "▶" if selected == rid else "•"
+            lines.append(f"{marker} <b>{when}</b>{rep_str} — {h(text_show)}")
+
+            btn_text = f"{when} · {text_raw}" if text_raw else when
+            btn_text = btn_text if len(btn_text) <= 36 else btn_text[:35] + "…"
+            if selected == rid:
+                btn_text = f"▶ {btn_text}"
+            kb.append([
+                InlineKeyboardButton(text=btn_text, callback_data=f"rem:pick:{int(page or 0)}:{rid}")
+            ])
+            if selected == rid:
+                kb.append([
+                    InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{rid}"),
+                    InlineKeyboardButton(text="⏸ 1ч", callback_data=f"rem:snooze:60:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="✖ Удалить", callback_data=f"rem:cancel:{rid}:{int(page or 0)}"),
+                ])
+
+    if max_page > 0:
+        nav_row: list[InlineKeyboardButton] = []
+        if int(page or 0) > 0:
+            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:reminders:{int(page or 0) - 1}"))
+        nav_row.append(InlineKeyboardButton(text=f"{int(page or 0) + 1}/{max_page + 1}", callback_data=f"nav:reminders:{int(page or 0)}"))
+        if int(page or 0) < max_page:
+            nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:reminders:{int(page or 0) + 1}"))
+        kb.append(nav_row)
 
     kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+    payload["reminders_page"] = int(page or 0)
+    if selected is None:
+        payload.pop("selected_reminder_id", None)
+    else:
+        payload["selected_reminder_id"] = int(selected)
 
     return await ui_render(
         bot=message.bot,
@@ -711,6 +833,7 @@ async def ui_render_reminders(
         text="\n".join(lines).strip(),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         screen="reminders",
+        payload=payload,
         fallback_message=message,
         preferred_message_id=preferred_message_id,
         force_new=force_new,
@@ -779,7 +902,7 @@ async def ui_render_projects_portfolio(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(text="➕ Новый проект", callback_data="proj:add:start"),
-                        InlineKeyboardButton(text="➕ Задача", callback_data="add:task"),
+                        InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
                     ],
                     [InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all")],
                     [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
@@ -856,7 +979,7 @@ async def ui_render_projects_portfolio(
         ])
         kb.append([
             InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-            InlineKeyboardButton(text="🧺 Глобальные хвосты", callback_data="nav:global_tails"),
+            InlineKeyboardButton(text="🧺 Хвосты", callback_data="nav:global_tails"),
         ])
         kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
 

@@ -31,7 +31,7 @@ from bot.ui import ui_render
 from bot.ui.render import ui_safe_edit as safe_edit, ui_safe_wizard_render as wizard_render
 from bot.ui.screens import ui_render_team
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_with_toast
-from bot.utils import canon, h, kb_columns, try_delete_user_message
+from bot.utils import canon, h, try_delete_user_message
 from bot.keyboards import back_home_kb
 
 

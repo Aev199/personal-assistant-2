@@ -1118,7 +1118,6 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_sync_status, F.data == "sync:status")
     dp.callback_query.register(cb_sync_retry, F.data == "sync:retry")
 
-    dp.callback_query.register(cb_today_pick, F.data.startswith("nav:today:pick:"))
     dp.callback_query.register(cb_today_done, F.data == "nav:today:done")
 
     dp.callback_query.register(cb_global_tails, F.data == "nav:global_tails")

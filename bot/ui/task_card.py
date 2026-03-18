@@ -92,19 +92,18 @@ def task_card_kb(
         rows: list[list[InlineKeyboardButton]] = []
         rows.append([
             InlineKeyboardButton(text="✅ Готово", callback_data=f"task:{task_id}:done"),
-            InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
-        ])
-        rows.append([
-            InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
             InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
         ])
-        rows.append([
-            InlineKeyboardButton(text="🧩 В суперзадачу…", callback_data=f"task:{task_id}:parent:0"),
-            InlineKeyboardButton(text="⚡ В работе", callback_data=f"task:{task_id}:in_progress"),
-        ])
-
         if is_inbox:
-            rows.append([InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")])
+            rows.append([
+                InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move"),
+                InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress"),
+            ])
+        else:
+            rows.append([
+                InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress"),
+                InlineKeyboardButton(text="👤 Исп.", callback_data=f"task:{task_id}:assignee"),
+            ])
 
         rows.append([InlineKeyboardButton(text="⋯ Ещё", callback_data=f"task:{task_id}:more")])
         rows.append([
@@ -131,8 +130,9 @@ def task_card_kb(
     else:
         rows.append([InlineKeyboardButton(text="🧩 В суперзадачу…", callback_data=f"task:{task_id}:parent:0")])
 
-    # Move (especially useful for inbox)
     rows.append([InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")])
+    rows.append([InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee")])
+    rows.append([InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone")])
 
     # Google Tasks export/update
     if in_gtasks and gtasks_dirty:

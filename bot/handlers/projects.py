@@ -338,6 +338,47 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     return
 
             # --- Project tails
+            if action == "structure":
+                records = await conn.fetch(
+                    """
+                    SELECT t.id, t.title, t.kind, COALESCE(tm.name,'—') as assignee, t.deadline, t.parent_task_id, t.status
+                    FROM tasks t
+                    LEFT JOIN team tm ON tm.id=t.assignee_id
+                    WHERE t.project_id=$1 AND t.status != 'done'
+                    ORDER BY COALESCE(t.parent_task_id, t.id), t.id
+                    """,
+                    project_id,
+                )
+                tasks = [
+                    {
+                        "id": r["id"],
+                        "title": r["title"],
+                        "kind": r.get("kind") or "task",
+                        "assignee": r["assignee"],
+                        "deadline": r["deadline"],
+                        "parent_task_id": r["parent_task_id"],
+                        "status": r["status"] or "todo",
+                    }
+                    for r in records
+                ]
+                tree_text = "✅ Задач нет." if not tasks else render_task_tree(tasks, tz)[0]
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅ Проект", callback_data=f"proj:{project_id}")],
+                    [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                ])
+                await ui_render(
+                    bot=callback.bot,
+                    db_pool=db_pool,
+                    chat_id=int(callback.message.chat.id),
+                    text="\n".join([f"<b>🗂 Структура — {h(proj['code'])}</b>", "", tree_text]),
+                    reply_markup=kb,
+                    screen="project_structure",
+                    payload={"project_id": project_id},
+                    fallback_message=callback.message,
+                    parse_mode="HTML",
+                )
+                return
+
             if action == "tails":
                 nodate = await conn.fetchval(
                     "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND status != 'done' AND kind != 'super' AND deadline IS NULL",
@@ -455,38 +496,6 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                 project_id,
             )
 
-            records = await conn.fetch(
-                """
-                SELECT t.id, t.title, t.kind, COALESCE(tm.name,'—') as assignee, t.deadline, t.parent_task_id, t.status
-                FROM tasks t
-                LEFT JOIN team tm ON t.assignee_id = tm.id
-                WHERE t.project_id=$1 AND t.status != 'done'
-                ORDER BY COALESCE(t.parent_task_id, t.id), t.id
-                """,
-                project_id,
-            )
-            tasks = [
-                {
-                    "id": r["id"],
-                    "title": r["title"],
-                    "kind": r.get("kind") or "task",
-                    "assignee": r["assignee"],
-                    "deadline": r["deadline"],
-                    "parent_task_id": r["parent_task_id"],
-                    "status": r["status"] or "todo",
-                }
-                for r in records
-            ]
-            tree_text = "✅ Задач нет." if not tasks else render_task_tree(tasks, tz)[0]
-            try:
-                max_lines = int(os.getenv("PROJECT_TREE_MAX_LINES", "35"))
-            except Exception:
-                max_lines = 35
-            tree_lines = tree_text.splitlines()
-            if max_lines > 0 and len(tree_lines) > max_lines:
-                hidden = len(tree_lines) - max_lines
-                tree_text = "\n".join(tree_lines[:max_lines] + [f"<i>… и ещё {hidden} строк</i>"])
-
             page_size = 8
             total_roots = await conn.fetchval(
                 "SELECT COUNT(*) FROM tasks WHERE project_id=$1 AND parent_task_id IS NULL AND status != 'done'",
@@ -540,7 +549,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
         if is_cur:
             meta_bits.append("⭐ <b>текущий</b>")
 
-        lines = [head, "<i>" + " • ".join(meta_bits) + "</i>", "", tree_text, "", "<i>Задачи (корневые):</i>"]
+        lines = [head, "<i>" + " • ".join(meta_bits) + "</i>", "", "<i>Нажмите на корневую задачу ниже или откройте полную структуру.</i>"]
 
         kb: list[list[InlineKeyboardButton]] = []
         kb.extend(root_btns)
@@ -550,6 +559,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
             InlineKeyboardButton(text="➕ Задача", callback_data=f"add:task:{project_id}"),
             InlineKeyboardButton(text="🧩 Суперзадача", callback_data=f"add:super:{project_id}"),
         ])
+        kb.append([InlineKeyboardButton(text="🗂 Структура", callback_data=f"proj:{project_id}:structure")])
         kb.append([InlineKeyboardButton(text="🧺 Хвосты", callback_data=f"proj:{project_id}:tails")])
         kb.append([
             InlineKeyboardButton(

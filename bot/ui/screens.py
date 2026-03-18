@@ -180,6 +180,73 @@ def fmt_local(dt: datetime | None, tz: ZoneInfo) -> str:
     return d.strftime("%d.%m %H:%M") if d else "—"
 
 
+def _task_button_caption(
+    *,
+    title: str,
+    project: str | None = None,
+    deadline_local: datetime | None = None,
+    status_hint: str | None = None,
+    icon: str = "📝",
+    max_title: int = 22,
+) -> str:
+    clean_title = (title or "").strip()
+    short_title = clean_title if len(clean_title) <= max_title else (clean_title[: max_title - 1] + "…")
+    parts = [icon]
+    if project:
+        parts.append(f"[{project}]")
+    parts.append(short_title)
+    meta = status_hint
+    if meta is None and deadline_local is not None:
+        meta = deadline_local.strftime("%d.%m %H:%M")
+    if meta:
+        parts.append(f"· {meta}")
+    return " ".join(part for part in parts if part).strip()
+
+
+def _single_column_task_buttons(
+    rows: list,
+    *,
+    icon: str,
+    title_key: str = "title",
+    project_key: str | None = "project",
+    deadline_key: str | None = "deadline",
+    status_key: str | None = None,
+    tz: ZoneInfo | None = None,
+) -> list[list[InlineKeyboardButton]]:
+    buttons: list[list[InlineKeyboardButton]] = []
+    for row in rows:
+        project = None
+        if project_key:
+            project = (row.get(project_key) or "").strip() or None
+        deadline_local = None
+        if deadline_key and tz is not None:
+            deadline_local = to_local(row.get(deadline_key), tz)
+        status_hint = None
+        if status_key:
+            raw_status = str(row.get(status_key) or "").strip().lower()
+            if raw_status == "postponed":
+                status_hint = "отложено"
+            elif raw_status == "in_progress":
+                status_hint = "в работе"
+            elif raw_status == "done":
+                status_hint = "готово"
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=_task_button_caption(
+                        title=str(row.get(title_key) or ""),
+                        project=project,
+                        deadline_local=deadline_local,
+                        status_hint=status_hint,
+                        icon=icon,
+                    ),
+                    callback_data=f"task:{int(row['id'])}",
+                )
+            ]
+        )
+    return buttons
+
+
 async def ui_render_home(
     message: Message | None,
     db_pool: asyncpg.Pool,
@@ -373,45 +440,26 @@ async def ui_render_home(
         else:
             lines.append("—")
 
-        # Keyboard (dynamic)
-        kb: list[list[InlineKeyboardButton]] = []
-
-        # Row 1: quick capture (GTD).
-        # Note: "Проекты" есть в нижней ReplyKeyboard, поэтому не дублируем на главной.
-        kb.append([
-            InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
-            InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
-        ])
-
-        # Row 2: urgent shortcuts from the focus summary.
-        kb.append([
-            InlineKeyboardButton(text=f"🔥 Срочно ({int(overdue_count or 0)})", callback_data="nav:overdue:0"),
-            InlineKeyboardButton(text=f"📅 Сегодня ({int(today_count or 0)})", callback_data="nav:today"),
-        ])
-
+        kb: list[list[InlineKeyboardButton]] = [
+            [
+                InlineKeyboardButton(text="⚡ Быстрая задача", callback_data="quick:task"),
+                InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
+            ]
+        ]
         if inbox_id:
-            kb.append([
-                InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0"),
-                InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
-            ])
+            if int(inbox_count or 0) > 0:
+                kb.append([
+                    InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+                    InlineKeyboardButton(text="🧹 Разобрать Inbox", callback_data="inbox:triage:start"),
+                ])
+            else:
+                kb.append([
+                    InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+                    InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0"),
+                ])
         else:
-            kb.append([
-                InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0"),
-                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-            ])
-
-        # Row 4: broad lists / secondary actions
-        if inbox_id and int(inbox_count or 0) > 0:
-            kb.append([
-                InlineKeyboardButton(text="🧹 Разобрать Inbox", callback_data="inbox:triage:start"),
-                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-            ])
-            kb.append([InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:home_more")])
-        else:
-            kb.append([
-                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-                InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:home_more"),
-            ])
+            kb.append([InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0")])
+        kb.append([InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary")])
 
         return await ui_render(
             bot=message.bot,
@@ -609,21 +657,24 @@ async def ui_render_home_more(
     chat_id = int(message.chat.id)
     toast_line = await _pop_screen_toast(db_pool, chat_id)
 
-    lines = ["⋯ <b>Ещё</b>", "", "Дополнительные действия и метрики."]
+    lines = ["⋯ <b>Ещё</b>", "", "Редкие действия и вспомогательные разделы."]
     if toast_line:
         lines = [toast_line, ""] + lines
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
+                InlineKeyboardButton(text="🔔 Напоминания", callback_data="nav:reminders:0"),
+            ],
+            [
                 InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
                 InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
             ],
             [
-                InlineKeyboardButton(text="🔄 Обновить Домой", callback_data="nav:home"),
                 InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help"),
+                InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
             ],
-            [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
         ]
     )
 
@@ -633,7 +684,7 @@ async def ui_render_home_more(
         chat_id=chat_id,
         text="\n".join(lines),
         reply_markup=kb,
-        screen="home_more",
+        screen="secondary",
         fallback_message=message,
         preferred_message_id=preferred_message_id,
         force_new=force_new,
@@ -754,6 +805,7 @@ async def ui_render_reminders(
         lines.extend([toast_line, ""])
 
     lines.append("🔔 <b>Активные напоминания</b>")
+    lines.append(f"<i>Всего: {total}</i>")
     if total > page_size:
         lines.append("")
         lines.append(f"<i>Страница {int(page or 0) + 1} из {max_page + 1}.</i>")
@@ -771,7 +823,8 @@ async def ui_render_reminders(
         lines.append("")
         if selected is None:
             lines.append("<i>Нажмите на напоминание ниже, чтобы открыть действия.</i>")
-            lines.append("")
+        else:
+            lines.append("<i>Действия для выбранного напоминания показаны под ним.</i>")
         _repeat_labels = {
             "daily": "ежедн.",
             "weekly": "еженед.",
@@ -792,12 +845,10 @@ async def ui_render_reminders(
             rep_label = _repeat_labels.get(rep, "")
             rep_str = f" [{rep_label}]" if rep_label else ""
             text_raw = (r.get("text") or "").strip()
-            text_show = text_raw if len(text_raw) <= 60 else text_raw[:59] + "…"
-            marker = "▶" if selected == rid else "•"
-            lines.append(f"{marker} <b>{when}</b>{rep_str} — {h(text_show)}")
-
             btn_text = f"{when} · {text_raw}" if text_raw else when
             btn_text = btn_text if len(btn_text) <= 36 else btn_text[:35] + "…"
+            if rep_str:
+                btn_text = f"{btn_text}{rep_str}"
             if selected == rid:
                 btn_text = f"▶ {btn_text}"
             kb.append([
@@ -807,8 +858,8 @@ async def ui_render_reminders(
                 kb.append([
                     InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{rid}"),
                     InlineKeyboardButton(text="⏸ 1ч", callback_data=f"rem:snooze:60:{rid}:{int(page or 0)}"),
-                    InlineKeyboardButton(text="✖ Удалить", callback_data=f"rem:cancel:{rid}:{int(page or 0)}"),
                 ])
+                kb.append([InlineKeyboardButton(text="🗑 Удалить…", callback_data=f"rem:cancel_ask:{rid}:{int(page or 0)}")])
 
     if max_page > 0:
         nav_row: list[InlineKeyboardButton] = []
@@ -1145,14 +1196,28 @@ async def ui_render_today(
     db_pool: asyncpg.Pool,
     *,
     tz_name: str | None = None,
+    page: int = 0,
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
     tz_name = tz_name or _tz_name()
     tz = resolve_tzinfo(tz_name)
     toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
+    page = max(0, int(page or 0))
+    page_size = 8
     try:
         async with db_pool.acquire() as conn:
+            total_tasks = await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM tasks t
+                WHERE t.status NOT IN ('done', 'postponed')
+                  AND t.kind != 'super'
+                  AND t.deadline IS NOT NULL
+                  AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+                """,
+                tz_name,
+            )
             tasks = await conn.fetch(
                 """
                 SELECT t.id, t.title, p.code as project, COALESCE(tm.name,'—') as assignee, t.deadline
@@ -1164,8 +1229,11 @@ async def ui_render_today(
                   AND t.deadline IS NOT NULL
                   AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
                 ORDER BY t.deadline ASC
+                LIMIT $2 OFFSET $3
                 """,
                 tz_name,
+                page_size,
+                page * page_size,
             )
             reminders = await conn.fetch(
                 """
@@ -1179,20 +1247,26 @@ async def ui_render_today(
             )
         tasks = list(tasks or [])
         reminders = list(reminders or [])
+        total_tasks = int(total_tasks or 0)
 
-        parts = ["<b>📅 ПЛАН НА СЕГОДНЯ</b>"]
+        parts = ["<b>📅 План на сегодня</b>", f"<i>Задач: {total_tasks} · Напоминаний: {len(reminders)}</i>"]
         if toast_line:
             parts = [toast_line, ""] + parts
         if not tasks and not reminders:
-            parts.append("На сегодня нет задач и напоминаний 🎉")
+            parts.extend(["", "На сегодня нет задач и напоминаний."])
             return await ui_render(
                 bot=message.bot,
                 db_pool=db_pool,
                 chat_id=int(message.chat.id),
                 text="\n".join(parts).strip(),
-                reply_markup=today_screen_kb(False),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="🗂 Выполнено", callback_data="nav:today:done")],
+                        [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                    ]
+                ),
                 screen="today",
-                payload={"mode": "today"},
+                payload={"page": page},
                 fallback_message=message,
                 parse_mode="HTML",
                 preferred_message_id=preferred_message_id,
@@ -1200,28 +1274,38 @@ async def ui_render_today(
             )
 
         if tasks:
-            parts.append("<b>📌 Задачи (дедлайн сегодня)</b>")
-            for t in tasks:
-                dt_local = to_local(t.get("deadline"), tz)
-                parts.append("🔺 " + fmt_task_line_html(t.get("title") or "", t.get("project") or "", t.get("assignee") or "—", dt_local))
+            parts.extend(["", "<i>Нажмите на задачу ниже, чтобы открыть карточку.</i>"])
+        elif reminders:
+            parts.extend(["", "<i>Задач на сегодня нет. Ниже только напоминания.</i>"])
 
         if reminders:
-            if tasks:
-                parts.append("")
-            parts.append("<b>⏰ Напоминания</b>")
-            for r in reminders:
-                dt_local = to_local(r.get("remind_at"), tz)
-                hhmm = dt_local.strftime("%H:%M") if dt_local else "—"
-                parts.append(f"🔔 <b>{h(hhmm)}</b> — {h(r.get('text') or '')}")
+            head = reminders[0]
+            dt_local = to_local(head.get("remind_at"), tz)
+            hhmm = dt_local.strftime("%H:%M") if dt_local else "—"
+            parts.extend(["", f"🔔 Ближайшее напоминание: <b>{h(hhmm)}</b> — {h(head.get('text') or '')}"])
+
+        kb: list[list[InlineKeyboardButton]] = []
+        kb.extend(_single_column_task_buttons(tasks, icon="📅", tz=tz))
+        nav_row: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:today:{page-1}"))
+        if (page + 1) * page_size < total_tasks:
+            nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:today:{page+1}"))
+        if nav_row:
+            kb.append(nav_row)
+        kb.append([InlineKeyboardButton(text="🗂 Выполнено", callback_data="nav:today:done")])
+        if reminders:
+            kb.append([InlineKeyboardButton(text="🔔 Напоминания", callback_data="nav:reminders:0")])
+        kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
 
         return await ui_render(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=int(message.chat.id),
             text="\n".join(parts).strip(),
-            reply_markup=today_screen_kb(bool(tasks)),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
             screen="today",
-            payload={"mode": "today"},
+            payload={"page": page},
             fallback_message=message,
             preferred_message_id=preferred_message_id,
             parse_mode="HTML",
@@ -1441,27 +1525,7 @@ async def ui_render_all_tasks(
     if not rows:
         lines.append("По выбранному фильтру задач нет.")
     else:
-        current_project: str | None = None
-        for r in rows:
-            project = (r.get("project") or "—").strip()
-            title = (r.get("title") or "").strip()
-            assignee = (r.get("assignee") or "—").strip()
-            deadline_local = to_local(r.get("deadline"), tz)
-
-            if project != current_project:
-                if current_project is not None:
-                    lines.append("")
-                lines.append(f"<b>[{h(project)}]</b>")
-                current_project = project
-
-            due = deadline_local.strftime("%d.%m %H:%M") if deadline_local else "без срока"
-            title_show = title if len(title) <= 90 else (title[:89] + "…")
-            if len(title) > 48:
-                lines.append(f"• {h(title_show)}")
-                lines.append(f"  {h(assignee)} → <i>{h('до ' + due) if deadline_local else h(due)}</i>")
-            else:
-                due_part = f"до {due}" if deadline_local else due
-                lines.append(f"• {h(title_show)} — {h(assignee)}, <i>{h(due_part)}</i>")
+        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
 
     kb: list[list[InlineKeyboardButton]] = []
 
@@ -1473,13 +1537,7 @@ async def ui_render_all_tasks(
         filter_buttons.append(InlineKeyboardButton(text=text, callback_data=f"nav:all:{key}"))
     kb.append(filter_buttons)
 
-    task_buttons: list[InlineKeyboardButton] = []
-    for r in rows:
-        project = (r.get("project") or "").strip()
-        title = (r.get("title") or "").strip()
-        label = f"[{project}] {_short(title, 20)}" if project else _short(title, 24)
-        task_buttons.append(InlineKeyboardButton(text=label, callback_data=f"task:{int(r['id'])}"))
-    kb.extend(kb_columns(task_buttons, 2))
+    kb.extend(_single_column_task_buttons(rows, icon="📋", tz=tz))
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
@@ -1625,20 +1683,11 @@ async def ui_render_work(
     if not rows:
         lines.append("Задач в работе нет.")
     else:
-        for r in rows:
-            dl_local = to_local(r.get("deadline"), tz)
-            for ln in _line("⚡", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dl_local):
-                lines.append(ln)
+        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
 
     # Keyboard
     kb: list[list[InlineKeyboardButton]] = []
-    task_buttons: list[InlineKeyboardButton] = []
-    for r in rows:
-        proj = (r.get("project") or "").strip()
-        title = (r.get("title") or "").strip()
-        label = f"⚡{proj} {_short(title, 22)}" if proj else f"⚡{_short(title, 24)}"
-        task_buttons.append(InlineKeyboardButton(text=label, callback_data=f"task:{r['id']}"))
-    kb.extend(kb_columns(task_buttons, 2))
+    kb.extend(_single_column_task_buttons(rows, icon="⚡", tz=tz))
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
@@ -1771,11 +1820,7 @@ async def ui_render_inbox(
     if not rows:
         lines.append("Inbox пуст. Добавляйте задачи через ➕ Добавить или ⚡ Быстрая задача.")
     else:
-        lines.append("Нажмите <b>🧹 Разобрать</b>, чтобы пройтись по задачам по одной.")
-        lines.append("")
-        for r in rows:
-            dl_local = to_local(r.get("deadline"), tz)
-            lines.extend(_line(r.get("title") or "", r.get("assignee") or "—", dl_local))
+        lines.append("Нажмите на задачу ниже или запустите разбор по одной.")
 
     kb: list[list[InlineKeyboardButton]] = []
     kb.append(
@@ -1785,13 +1830,7 @@ async def ui_render_inbox(
         ]
     )
 
-    # Task buttons (2 columns)
-    task_buttons: list[InlineKeyboardButton] = []
-    for r in rows:
-        title = (r.get("title") or "").strip()
-        label = f"📥 {_short(title, 26)}"
-        task_buttons.append(InlineKeyboardButton(text=label, callback_data=f"task:{int(r['id'])}"))
-    kb.extend(kb_columns(task_buttons, 2))
+    kb.extend(_single_column_task_buttons(rows, icon="📥", project_key=None, tz=tz))
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
@@ -1902,18 +1941,9 @@ async def ui_render_overdue(
     if not rows:
         lines = ([toast_line, ""] if toast_line else []) + ["🎉 <b>Просроченных задач нет.</b>"]
     else:
-        for r in rows:
-            dt_local = to_local(r.get("deadline"), tz)
-            lines.extend(_task_lines(r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local))
+        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
 
-        # Task buttons (2 columns)
-        task_buttons: list[InlineKeyboardButton] = []
-        for r in rows:
-            proj = (r.get("project") or "").strip()
-            title = (r.get("title") or "").strip()
-            label = f"🔥{proj} {_short(title, 22)}" if proj else f"🔥{_short(title, 24)}"
-            task_buttons.append(InlineKeyboardButton(text=label, callback_data=f"task:{r['id']}"))
-        kb.extend(kb_columns(task_buttons, 2))
+        kb.extend(_single_column_task_buttons(rows, icon="🔥", tz=tz))
 
         # Bulk actions
         kb.append([InlineKeyboardButton(text="🧹 Разгрести", callback_data="bulk:start:0")])

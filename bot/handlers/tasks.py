@@ -28,7 +28,7 @@ from bot.services.background import fire_and_forget
 from bot.services.gtasks_service import get_or_create_list_id, due_from_local_date
 from bot.services.vault_sync import background_project_sync
 from bot.ui.render import ui_render
-from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _undo_active, _now_ts
+from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, _undo_active, _now_ts, ui_payload_with_toast
 from bot.ui.task_card import task_card_kb, task_deadline_kb
 from bot.tz import to_db_utc
 from bot.utils import h, kb_columns, try_delete_user_message
@@ -112,11 +112,12 @@ def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str
         return f"nav:overdue:{page}", "⬅ Просрочки"
 
     if ui_screen == "today":
-        return "nav:today", "⬅ Сегодня"
+        page = max(0, _as_int(p.get("page"), 0))
+        return (f"nav:today:{page}" if page > 0 else "nav:today"), "⬅ Сегодня"
 
     if ui_screen == "today_pick":
         page = max(0, _as_int(p.get("page"), 0))
-        return f"nav:today:pick:{page}", "⬅ Сегодня"
+        return (f"nav:today:{page}" if page > 0 else "nav:today"), "⬅ Сегодня"
 
     if ui_screen in {"inbox", "inbox_triage"}:
         page = max(0, _as_int(p.get("inbox_page", p.get("page")), 0))
@@ -142,6 +143,11 @@ def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str
         if project_id > 0:
             page = max(0, _as_int(p.get("page"), 0))
             return f"proj:{project_id}:open:{page}", "⬅ Проект"
+
+    if ui_screen == "project_structure":
+        project_id = _as_int(p.get("project_id"), 0)
+        if project_id > 0:
+            return f"proj:{project_id}", "⬅ Проект"
 
     if ui_screen == "project_tails":
         project_id = _as_int(p.get("project_id"), 0)
@@ -524,6 +530,70 @@ async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps
     )
 
 
+async def _advance_inbox_triage_after_action(msg: Message, db_pool: asyncpg.Pool, deps: AppDeps, *, task_id: int) -> bool:
+    chat_id = int(msg.chat.id)
+    async with db_pool.acquire() as conn:
+        ui_state = await ui_get_state(conn, chat_id)
+        payload = _ui_payload_get(ui_state)
+        triage = payload.get("triage") if isinstance(payload, dict) else None
+        if not isinstance(triage, dict) or not triage.get("active") or triage.get("mode") != "inbox":
+            return False
+        if int(triage.get("anchor_id") or 0) != int(task_id):
+            return False
+
+        inbox_id = int(triage.get("inbox_id") or 0)
+        if inbox_id <= 0:
+            payload.pop("triage", None)
+            payload = ui_payload_with_toast(payload, "❌ Не найден INBOX", ttl_sec=20)
+            await ui_set_state(conn, chat_id, ui_payload=payload)
+            from bot.ui.screens import ui_render_home
+
+            await ui_render_home(msg, db_pool, tz_name=deps.tz_name)
+            return True
+
+        anchor_created_at_raw = triage.get("anchor_created_at")
+        try:
+            anchor_created_at = datetime.fromisoformat(str(anchor_created_at_raw))
+        except Exception:
+            anchor_created_at = datetime.now(timezone.utc)
+
+        nxt = await conn.fetchrow(
+            """
+            SELECT id, created_at
+            FROM tasks
+            WHERE status != 'done' AND kind != 'super' AND project_id=$1
+              AND (created_at > $2 OR (created_at = $2 AND id > $3))
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            inbox_id,
+            anchor_created_at,
+            int(task_id),
+        )
+
+        if not nxt:
+            payload.pop("triage", None)
+            payload = ui_payload_with_toast(payload, "🎉 Inbox разобран", ttl_sec=25)
+            await ui_set_state(conn, chat_id, ui_payload=payload)
+            return_to = str(triage.get("return") or "inbox")
+            from bot.ui.screens import ui_render_home, ui_render_inbox
+
+            if return_to == "home":
+                await ui_render_home(msg, db_pool, tz_name=deps.tz_name)
+            else:
+                await ui_render_inbox(msg, db_pool, tz_name=deps.tz_name, page=0)
+            return True
+
+        triage["anchor_created_at"] = nxt["created_at"].isoformat()
+        triage["anchor_id"] = int(nxt["id"])
+        payload["triage"] = triage
+        await ui_set_state(conn, chat_id, ui_screen="inbox_triage", ui_payload=payload)
+        next_task_id = int(nxt["id"])
+
+    await show_task_card(msg, db_pool, next_task_id, deps=deps)
+    return True
+
+
 async def cb_undo_task(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if not await _guard(callback, deps):
         return
@@ -775,6 +845,8 @@ async def cb_task(
             background_project_sync(new_pid, db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
+        if await _advance_inbox_triage_after_action(callback.message, db_pool, deps, task_id=task_id):
+            return
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
     # -----------------
@@ -993,6 +1065,8 @@ async def cb_task(
                     pass
 
             fire_and_forget(_mark_done(gtask_to_complete[0], gtask_to_complete[1]), label="gtasks_done")
+        if await _advance_inbox_triage_after_action(callback.message, db_pool, deps, task_id=task_id):
+            return
         return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     # -----------------
@@ -1215,7 +1289,12 @@ async def cb_task(
                 callback.message,
                 db_pool,
                 "Введите дату/время (например 26.02 14:00 или 26.02).",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{task_id}:dlcancel")]]),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[[
+                        InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:dl"),
+                        InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{task_id}:dlcancel"),
+                    ]]
+                ),
             )
 
         deadline_db = None
@@ -1293,7 +1372,10 @@ async def msg_edit_task_deadline(message: Message, state: FSMContext, db_pool: a
             chat_id=wiz_chat_id,
             text="Не понял дату. Пример: 26.02 14:00 или 26.02.\n\nВведите дату/время (например 26.02 14:00 или 26.02).",
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{int(task_id)}:dlcancel")]]
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{int(task_id)}:dl"),
+                    InlineKeyboardButton(text="✖️ Отмена", callback_data=f"task:{int(task_id)}:dlcancel"),
+                ]]
             ),
             screen=None,
             payload=None,

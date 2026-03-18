@@ -284,7 +284,7 @@ async def cb_add_super_create(callback: CallbackQuery, state: FSMContext, db_poo
     )
 
 
-def deadline_kb() -> InlineKeyboardMarkup:
+def deadline_kb(*, with_back: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -299,7 +299,11 @@ def deadline_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Без срока", callback_data="add:dl:none"),
                 InlineKeyboardButton(text="Ввести дату", callback_data="add:dl:manual"),
             ],
-            [InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")],
+            (
+                [InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm"), InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]
+                if with_back
+                else [InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]
+            ),
         ]
     )
 
@@ -308,7 +312,11 @@ def _task_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Создать", callback_data="add:create")],
-            [InlineKeyboardButton(text="✏️ Срок", callback_data="add:edit_deadline")],
+            [
+                InlineKeyboardButton(text="📁 Проект", callback_data="add:edit_project"),
+                InlineKeyboardButton(text="👤 Исполнитель", callback_data="add:edit_assignee"),
+            ],
+            [InlineKeyboardButton(text="🗓 Срок", callback_data="add:edit_deadline")],
             [InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")],
         ]
     )
@@ -364,85 +372,66 @@ async def _task_render_confirm(msg: Message, state: FSMContext, db_pool: asyncpg
     )
 
 
+async def _start_task_capture(
+    callback: CallbackQuery,
+    state: FSMContext,
+    db_pool: asyncpg.Pool,
+    *,
+    deps: AppDeps,
+    forced_project_id: int | None = None,
+    parent_task_id: int | None = None,
+    default_inbox: bool = False,
+) -> None:
+    await state.clear()
+    async with db_pool.acquire() as conn:
+        project_id = forced_project_id
+        if project_id is None:
+            if default_inbox:
+                project_id = int(await ensure_inbox_project_id(conn))
+            else:
+                current_id = await get_current_project_id(conn, int(callback.message.chat.id)) or None
+                if current_id:
+                    project_id = int(current_id)
+                else:
+                    project_id = int(await ensure_inbox_project_id(conn))
+
+    await state.update_data(
+        wizard_mode="subtask" if parent_task_id else "task",
+        parent_task_id=parent_task_id,
+        project_id=project_id,
+        assignee_id=None,
+        deadline_msk=None,
+        wizard_chat_id=int(callback.message.chat.id),
+        wizard_msg_id=int(callback.message.message_id),
+    )
+    await state.set_state(AddTaskWizard.entering_title)
+    await wizard_render(
+        bot=callback.bot,
+        state=state,
+        chat_id=int(callback.message.chat.id),
+        fallback_msg=callback.message,
+        text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        parse_mode="HTML",
+    )
+
+
 async def cb_add_task_start(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if not await _guard(callback, deps):
         return
     await callback.answer()
-    await state.clear()
-    await state.update_data(
-        wizard_mode="task",
-        parent_task_id=None,
-        wizard_chat_id=int(callback.message.chat.id),
-        wizard_msg_id=int(callback.message.message_id),
-    )
 
     parts = (callback.data or "").split(":")
     forced_project_id = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
-
-    async with db_pool.acquire() as conn:
-        current_id = await get_current_project_id(conn, int(callback.message.chat.id)) or None
-        projects = await conn.fetch("SELECT id, code FROM projects WHERE status='active' ORDER BY created_at DESC")
-
-    if not projects:
-        await safe_edit(
-            callback.message,
-            "📭 Активных проектов нет.\n\nСоздайте проект или используйте ⚡️ Быструю задачу, чтобы положить задачу в Inbox.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task")],
-                    [InlineKeyboardButton(text="➕ Новый проект", callback_data="proj:add:start")],
-                    [InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")],
-                ]
-            ),
-        )
-        return
-
-    if forced_project_id:
-        await state.update_data(project_id=int(forced_project_id))
-        await state.set_state(AddTaskWizard.choosing_assignee)
-        return await show_assignee_picker(callback.message, state, db_pool, deps)
-
-    if len(projects) == 1:
-        await state.update_data(project_id=int(projects[0]["id"]))
-        await state.set_state(AddTaskWizard.choosing_assignee)
-        return await show_assignee_picker(callback.message, state, db_pool, deps)
-
-    await state.set_state(AddTaskWizard.choosing_project)
-    if current_id:
-        kb_rows: list[list[InlineKeyboardButton]] = []
-        cur = next((p for p in projects if int(p["id"]) == int(current_id)), None)
-        if cur:
-            kb_rows.append([InlineKeyboardButton(text=f"Текущий ({cur['code']})", callback_data=f"add:proj:{cur['id']}")])
-        kb_rows.append([InlineKeyboardButton(text="Другой проект", callback_data="add:proj:choose")])
-        kb_rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
-
-        await safe_edit(
-            callback.message,
-            "➕ Добавить задачу: выберите проект",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
-        )
-        return
-
-    async with db_pool.acquire() as conn:
-        rows = await fetch_portfolio_rows(conn)
-
-    rows_sorted = sorted(list(rows), key=lambda r: (1 if (r.get("code") == "INBOX") else 2, -int(r.get("overdue_tasks") or 0), -int(r.get("active_tasks") or 0), r["code"]))
-    kb: list[list[InlineKeyboardButton]] = []
-    row_btns: list[InlineKeyboardButton] = []
-    for r in rows_sorted:
-        label = r["code"]
-        if int(r.get("overdue_tasks") or 0) > 0:
-            label = f"🚨{r['overdue_tasks']} {label}"
-        row_btns.append(InlineKeyboardButton(text=label, callback_data=f"add:proj:{r['id']}"))
-        if len(row_btns) == 2:
-            kb.append(row_btns)
-            row_btns = []
-    if row_btns:
-        kb.append(row_btns)
-    kb.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
-
-    await safe_edit(callback.message, "Выберите проект:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    return
+    return await _start_task_capture(
+        callback,
+        state,
+        db_pool,
+        deps=deps,
+        forced_project_id=forced_project_id,
+        parent_task_id=None,
+        default_inbox=False,
+    )
 
 
 async def cb_add_choose_project(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -465,7 +454,9 @@ async def cb_add_choose_project(callback: CallbackQuery, state: FSMContext, db_p
         return (priority, -int(r.get("overdue_tasks") or 0), -int(r.get("active_tasks") or 0), r["code"])
 
     rows_sorted = sorted(list(rows), key=sort_key)
-    kb: list[list[InlineKeyboardButton]] = []
+    data = await state.get_data()
+    has_title = bool((data.get("title") or "").strip())
+    kb: list[list[list[InlineKeyboardButton]] | list[InlineKeyboardButton]] = []
     row_btns: list[InlineKeyboardButton] = []
     for r in rows_sorted:
         label = r["code"]
@@ -479,6 +470,8 @@ async def cb_add_choose_project(callback: CallbackQuery, state: FSMContext, db_p
             row_btns = []
     if row_btns:
         kb.append(row_btns)
+    if has_title:
+        kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm")])
     kb.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
     await safe_edit(callback.message, "Выберите проект:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -492,9 +485,20 @@ async def cb_add_set_project(callback: CallbackQuery, state: FSMContext, db_pool
         return
     project_id = int(parts[2])
     await state.update_data(project_id=project_id)
-
-    await state.set_state(AddTaskWizard.choosing_assignee)
-    return await show_assignee_picker(callback.message, state, db_pool, deps)
+    data = await state.get_data()
+    if (data.get("title") or "").strip():
+        await state.set_state(AddTaskWizard.confirming)
+        return await _task_render_confirm(callback.message, state, db_pool, deps)
+    await state.set_state(AddTaskWizard.entering_title)
+    return await wizard_render(
+        bot=callback.bot,
+        state=state,
+        chat_id=int(callback.message.chat.id),
+        fallback_msg=callback.message,
+        text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        parse_mode="HTML",
+    )
 
 
 async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -505,30 +509,28 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
 
     if not team:
         await state.update_data(assignee_id=None)
-        await state.set_state(AddTaskWizard.choosing_deadline if has_title else AddTaskWizard.entering_title)
+        await state.set_state(AddTaskWizard.confirming if has_title else AddTaskWizard.entering_title)
         await wizard_render(
             bot=msg.bot,
             state=state,
             chat_id=int(msg.chat.id),
             fallback_msg=msg,
             text=(
-                "Исполнителей пока нет, поэтому задачу создам без исполнителя.\n\n"
-                "Выберите срок задачи или отправьте дату/время сообщением."
+                "Исполнителей пока нет, поэтому задача останется без исполнителя.\n\nПроверьте данные и создайте задачу."
                 if has_title
                 else "Исполнителей пока нет, поэтому задачу создам без исполнителя.\n\nВведите текст задачи одной строкой."
             ),
-            reply_markup=deadline_kb() if has_title else InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=_task_confirm_kb() if has_title else InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
         )
         return
 
     if len(team) == 1:
         only = team[0]
         await state.update_data(assignee_id=int(only["id"]))
-        await state.set_state(AddTaskWizard.choosing_deadline if has_title else AddTaskWizard.entering_title)
+        await state.set_state(AddTaskWizard.confirming if has_title else AddTaskWizard.entering_title)
         reply_markup = InlineKeyboardMarkup(
             inline_keyboard=(
-                [[InlineKeyboardButton(text="Без исполнителя", callback_data="add:as:none")]]
-                + deadline_kb().inline_keyboard
+                _task_confirm_kb().inline_keyboard
                 if has_title
                 else [
                     [InlineKeyboardButton(text="Без исполнителя", callback_data="add:as:none")],
@@ -542,7 +544,7 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
             chat_id=int(msg.chat.id),
             fallback_msg=msg,
             text=(
-                f"Исполнитель по умолчанию: <b>{h(str(only['name']))}</b>.\n\nВыберите срок задачи или отправьте дату/время сообщением."
+                f"Исполнитель по умолчанию: <b>{h(str(only['name']))}</b>.\n\nПроверьте данные и создайте задачу."
                 if has_title
                 else f"Исполнитель по умолчанию: <b>{h(str(only['name']))}</b>.\n\nВведите текст задачи одной строкой."
             ),
@@ -554,6 +556,8 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
     kb: list[list[InlineKeyboardButton]] = [[InlineKeyboardButton(text="Без исполнителя", callback_data="add:as:none")]]
     buttons = [InlineKeyboardButton(text=str(r["name"]), callback_data=f"add:as:{r['id']}") for r in team]
     kb.extend(kb_columns(buttons, 2))
+    if has_title:
+        kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm")])
     kb.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
     await safe_edit(msg, "Выберите исполнителя:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -568,15 +572,8 @@ async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_poo
 
     data = await state.get_data()
     if data.get("title"):
-        await state.set_state(AddTaskWizard.choosing_deadline)
-        return await wizard_render(
-            bot=callback.bot,
-            state=state,
-            chat_id=int(callback.message.chat.id),
-            fallback_msg=callback.message,
-            text="Выберите срок задачи или отправьте дату/время сообщением:",
-            reply_markup=deadline_kb(),
-        )
+        await state.set_state(AddTaskWizard.confirming)
+        return await _task_render_confirm(callback.message, state, db_pool, deps)
 
     await state.set_state(AddTaskWizard.entering_title)
     await wizard_render(
@@ -617,18 +614,8 @@ async def msg_add_task_title(message: Message, state: FSMContext, db_pool: async
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=_tz_from_deps(deps))
         await state.update_data(deadline_msk=dt.astimezone(_tz_from_deps(deps)).isoformat())
-        await state.set_state(AddTaskWizard.confirming)
-        return await _task_render_confirm(message, state, db_pool, deps)
-
-    await state.set_state(AddTaskWizard.choosing_deadline)
-    await wizard_render(
-        bot=message.bot,
-        state=state,
-        chat_id=int(message.chat.id),
-        fallback_msg=None,
-        text="Выберите срок задачи или отправьте дату/время сообщением:",
-        reply_markup=deadline_kb(),
-    )
+    await state.set_state(AddTaskWizard.confirming)
+    return await _task_render_confirm(message, state, db_pool, deps)
 
 
 async def cb_add_deadline(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -661,7 +648,12 @@ async def cb_add_deadline(callback: CallbackQuery, state: FSMContext, db_pool: a
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
             text="Введите дату/время (например 26.02 14:00 или 26.02).",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm"),
+                    InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+                ]]
+            ),
         )
 
     await state.update_data(deadline_msk=(deadline_local.isoformat() if deadline_local else None))
@@ -686,6 +678,12 @@ async def msg_add_task_deadline(message: Message, state: FSMContext, db_pool: as
             chat_id=int(message.chat.id),
             fallback_msg=None,
             text="Не понял дату. Пример: 26.02 14:00",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm"),
+                    InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+                ]]
+            ),
         )
     tz = _tz_from_deps(deps)
     if parsed.tzinfo is None:
@@ -710,6 +708,29 @@ async def cb_add_edit_deadline(callback: CallbackQuery, state: FSMContext, deps:
         reply_markup=deadline_kb(),
         parse_mode="HTML",
     )
+
+
+async def cb_add_edit_project(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await state.set_state(AddTaskWizard.choosing_project)
+    return await cb_add_choose_project(callback, state, db_pool, deps)
+
+
+async def cb_add_edit_assignee(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await callback.answer()
+    await state.set_state(AddTaskWizard.choosing_assignee)
+    return await show_assignee_picker(callback.message, state, db_pool, deps)
+
+
+async def cb_add_back_confirm(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await callback.answer()
+    await state.set_state(AddTaskWizard.confirming)
+    return await _task_render_confirm(callback.message, state, db_pool, deps)
 
 
 async def create_task_from_wizard(
@@ -853,16 +874,15 @@ async def cb_add_subtask(callback: CallbackQuery, state: FSMContext, db_pool: as
             parse_mode="HTML",
         )
 
-    await state.clear()
-    await state.update_data(
-        wizard_mode="subtask",
-        project_id=int(row["project_id"]),
+    return await _start_task_capture(
+        callback,
+        state,
+        db_pool,
+        deps=deps,
+        forced_project_id=int(row["project_id"]),
         parent_task_id=parent_id,
-        wizard_chat_id=int(callback.message.chat.id),
-        wizard_msg_id=int(callback.message.message_id),
+        default_inbox=False,
     )
-    await state.set_state(AddTaskWizard.choosing_assignee)
-    return await show_assignee_picker(callback.message, state, db_pool, deps)
 
 
 # ---------------------------------------------------------------------------
@@ -1497,27 +1517,15 @@ async def cb_quick_task(callback: CallbackQuery, state: FSMContext, db_pool: asy
     if not await _guard(callback, deps):
         return
     await callback.answer()
-    await state.clear()
-    await state.set_state(QuickTaskWizard.entering_text)
-    await wizard_render(
-        bot=callback.bot,
-        state=state,
-        chat_id=int(callback.message.chat.id),
-        fallback_msg=callback.message,
-        text="⚡️ <b>Быстрая задача</b>\nОтправьте текст задачи. Умный парсер поймёт дату из текста.",
-        reply_markup=_quick_cancel_kb(),
-        parse_mode="HTML",
+    await _start_task_capture(
+        callback,
+        state,
+        db_pool,
+        deps=deps,
+        forced_project_id=None,
+        parent_task_id=None,
+        default_inbox=True,
     )
-
-    # Bind wizard message as current SPA UI anchor (important for reply-keyboard navigation)
-    try:
-        data = await state.get_data()
-        wiz_msg_id = data.get("wizard_msg_id")
-        if wiz_msg_id:
-            async with db_pool.acquire() as conn:
-                await ui_set_state(conn, int(callback.message.chat.id), ui_message_id=int(wiz_msg_id))
-    except Exception:
-        pass
 
 
 async def cb_quick_idea(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -1660,9 +1668,12 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_add_set_project, F.data.regexp(r"^add:proj:\d+$"))
     dp.callback_query.register(cb_add_set_assignee, F.data.startswith("add:as:"))
     dp.message.register(msg_add_task_title, StateFilter(AddTaskWizard.entering_title), F.text)
+    dp.callback_query.register(cb_add_edit_project, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_project")
+    dp.callback_query.register(cb_add_edit_assignee, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_assignee")
     dp.callback_query.register(cb_add_deadline, StateFilter(AddTaskWizard.choosing_deadline), F.data.startswith("add:dl:"))
     dp.message.register(msg_add_task_deadline, StateFilter(AddTaskWizard.choosing_deadline), F.text)
     dp.message.register(msg_add_task_deadline, StateFilter(AddTaskWizard.entering_deadline), F.text)
+    dp.callback_query.register(cb_add_back_confirm, StateFilter(AddTaskWizard.choosing_project, AddTaskWizard.choosing_assignee, AddTaskWizard.choosing_deadline, AddTaskWizard.entering_deadline), F.data == "add:back_confirm")
     dp.callback_query.register(cb_add_edit_deadline, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_deadline")
     dp.callback_query.register(cb_add_create_task, StateFilter(AddTaskWizard.confirming), F.data == "add:create")
     dp.callback_query.register(cb_add_subtask, F.data.startswith("add:sub:"))

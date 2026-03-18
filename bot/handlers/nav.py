@@ -128,6 +128,10 @@ async def cb_nav_home_more(callback: CallbackQuery, state: FSMContext, db_pool: 
     )
 
 
+async def cb_nav_secondary(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    return await cb_nav_home_more(callback, state, db_pool, deps)
+
+
 async def cb_nav_close_inline(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
@@ -197,10 +201,18 @@ async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyn
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
+    page = 0
+    try:
+        parts = (callback.data or "").split(":")
+        if len(parts) >= 3 and parts[2].isdigit():
+            page = max(0, int(parts[2]))
+    except Exception:
+        page = 0
     final_id = await ui_render_today(
         callback.message,
         db_pool,
         tz_name=deps.tz_name,
+        page=page,
         preferred_message_id=preferred_message_id,
     )
     await cleanup_stale_wizard_message(
@@ -390,10 +402,11 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_nav_close_inline, F.data == "nav:close_inline")
     dp.callback_query.register(cb_nav_home, F.data == "nav:home")
     dp.callback_query.register(cb_nav_home_more, F.data == "nav:home_more")
+    dp.callback_query.register(cb_nav_secondary, F.data == "nav:secondary")
     dp.callback_query.register(cb_nav_stats, F.data == "home:stats")
     dp.callback_query.register(cb_nav_add, F.data == "nav:add")
     dp.callback_query.register(cb_nav_help, F.data == "nav:help")
-    dp.callback_query.register(cb_nav_today, F.data == "nav:today")
+    dp.callback_query.register(cb_nav_today, F.data.regexp(r"^nav:today(?::\d+)?$"))
     dp.callback_query.register(cb_nav_overdue, F.data.startswith("nav:overdue"))
     dp.callback_query.register(cb_nav_work, F.data.startswith("nav:work"))
     dp.callback_query.register(cb_nav_inbox, F.data.startswith("nav:inbox"))

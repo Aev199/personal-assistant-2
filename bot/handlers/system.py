@@ -566,86 +566,13 @@ async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asy
         page = 0
         if len(parts) >= 4 and parts[3].isdigit():
             page = max(0, int(parts[3]))
-        page_size = 8
-        tz_name = resolve_tz_name(deps.tz_name)
+        from bot.ui import ui_render_today
 
-        async with db_pool.acquire() as conn:
-            total = await conn.fetchval(
-                """
-                SELECT COUNT(*)
-                FROM tasks t
-                WHERE t.status NOT IN ('done', 'postponed')
-                  AND t.kind != 'super'
-                  AND t.deadline IS NOT NULL
-                  AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-                """,
-                tz_name,
-            )
-            rows = await conn.fetch(
-                """
-                SELECT t.id, t.title, p.code as project, COALESCE(tm.name,'—') as assignee, t.deadline
-                FROM tasks t
-                JOIN projects p ON t.project_id = p.id
-                LEFT JOIN team tm ON t.assignee_id = tm.id
-                WHERE t.status NOT IN ('done', 'postponed')
-                  AND t.kind != 'super'
-                  AND t.deadline IS NOT NULL
-                  AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-                ORDER BY t.deadline ASC
-                LIMIT $2 OFFSET $3
-                """,
-                tz_name,
-                page_size,
-                page * page_size,
-            )
-
-        def _short(s: str, n: int = 34) -> str:
-            s = (s or "").strip()
-            return s if len(s) <= n else (s[: n - 1] + "…")
-
-        lines = ["<b>📌 ЗАДАЧИ НА СЕГОДНЯ</b>"]
-        if not rows:
-            lines.append("Задач нет.")
-        else:
-            for r in rows:
-                lines.append(
-                    "• "
-                    + fmt_task_line_html(
-                        r.get("title") or "",
-                        r.get("project") or "",
-                        r.get("assignee") or "—",
-                        (_to_local(r.get("deadline"), tz_name)),
-                    )
-                )
-
-        kb: list[list[InlineKeyboardButton]] = []
-        for r in rows:
-            kb.append([InlineKeyboardButton(text=_short(r["title"], 30), callback_data=f"task:{r['id']}")])
-
-        nav_row: list[InlineKeyboardButton] = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:today:pick:{page-1}"))
-        if (page + 1) * page_size < int(total or 0):
-            nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:today:pick:{page+1}"))
-        if nav_row:
-            kb.append(nav_row)
-
-        kb.append(
-            [
-                InlineKeyboardButton(text="⬅ Сегодня", callback_data="nav:today"),
-                InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-            ]
-        )
-        await ui_render(
-            bot=callback.bot,
-            db_pool=db_pool,
-            chat_id=int(callback.message.chat.id),
-            text="\n".join(lines).strip(),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-            screen="today_pick",
-            payload={"page": page},
-            fallback_message=callback.message,
-            parse_mode="HTML",
+        await ui_render_today(
+            callback.message,
+            db_pool,
+            tz_name=resolve_tz_name(deps.tz_name),
+            page=page,
         )
     except Exception as e:
         await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")

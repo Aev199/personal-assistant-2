@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 from aiogram import Dispatcher, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.db.runtime_state import record_action_journal
 from bot.deps import AppDeps
@@ -177,8 +177,38 @@ async def cb_cancel_reminder(callback: CallbackQuery, db_pool: asyncpg.Pool, dep
         await callback.answer("Ошибка при удалении", show_alert=True)
 
 
+async def cb_cancel_reminder_ask(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    try:
+        parts = (callback.data or "").split(":")
+        rem_id = int(parts[2])
+        page = max(0, int(parts[3])) if len(parts) >= 4 and parts[3].isdigit() else 0
+    except Exception:
+        return await callback.answer("Ошибка", show_alert=True)
+
+    await callback.answer()
+    from bot.ui.render import ui_render
+
+    kb = [
+        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"rem:cancel:{rem_id}:{page}")],
+        [InlineKeyboardButton(text="⬅ К списку", callback_data=f"nav:reminders:{page}")],
+    ]
+    await ui_render(
+        bot=callback.bot,
+        db_pool=db_pool,
+        chat_id=int(callback.message.chat.id),
+        text="🗑 <b>Удалить напоминание?</b>\n\nДействие нельзя отменить.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        screen="reminder_delete_confirm",
+        payload={"reminders_page": page, "selected_reminder_id": rem_id},
+        fallback_message=callback.message,
+        preferred_message_id=callback.message.message_id,
+        parse_mode="HTML",
+    )
+
+
 def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_rem_close, F.data == "rem:close")
     dp.callback_query.register(cb_rem_pick, F.data.startswith("rem:pick:"))
     dp.callback_query.register(cb_rem_snooze, F.data.startswith("rem:snooze:"))
+    dp.callback_query.register(cb_cancel_reminder_ask, F.data.startswith("rem:cancel_ask:"))
     dp.callback_query.register(cb_cancel_reminder, F.data.startswith("rem:cancel:"))

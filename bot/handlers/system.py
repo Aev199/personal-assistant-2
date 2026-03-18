@@ -41,6 +41,7 @@ from bot.ui import (
     ensure_main_menu,
     ui_render,
     ui_render_add_menu,
+    ui_render_all_tasks,
     ui_render_help,
     ui_render_home,
     ui_render_reminders,
@@ -425,8 +426,8 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
 
     help_text = (
         "🛠 Доступно (основной режим — кнопки внизу):\n\n"
-        "Откройте экран Домой: /start\n"
-        "Или нажмите ❓ Помощь внизу."
+        "Откройте справку: /help\n"
+        "Для основной навигации используйте кнопки внизу."
     )
     await message.answer(help_text, reply_markup=main_menu_kb())
 
@@ -853,6 +854,30 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
     )
 
 
+async def msg_all_tasks_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
+    await state.clear()
+    await try_delete_user_message(message)
+    anchor_sent = await ensure_main_menu(message, db_pool)
+    final_id = await ui_render_all_tasks(
+        message,
+        db_pool,
+        preferred_message_id=preferred_message_id,
+        force_new=bool(anchor_sent),
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
+
+
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
@@ -1029,11 +1054,11 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
 
     if db_pool is None:
         if not message.text:
-            return await message.answer("⚠️ Я понимаю только текст. Нажмите ❓ Помощь.", reply_markup=main_menu_kb())
+            return await message.answer("⚠️ Я понимаю только текст. Откройте /help.", reply_markup=main_menu_kb())
         if (message.text or "").strip().startswith("/"):
-            return await message.answer("⚠️ Неизвестная команда. Нажмите ❓ Помощь.", reply_markup=main_menu_kb())
+            return await message.answer("⚠️ Неизвестная команда. Откройте /help.", reply_markup=main_menu_kb())
         return await message.answer(
-            "🤔 Не понял. Нажмите ❓ Помощь или воспользуйтесь кнопками внизу.",
+            "🤔 Не понял. Откройте /help или воспользуйтесь кнопками внизу.",
             reply_markup=main_menu_kb(),
         )
 
@@ -1053,9 +1078,9 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             await ensure_main_menu(message, db_pool)
             return
     if not raw:
-        toast = "⚠️ Я понимаю только текст. Нажмите ❓ Помощь."
+        toast = "⚠️ Я понимаю только текст. Откройте /help."
     elif raw.startswith("/"):
-        toast = "⚠️ Неизвестная команда. Нажмите ❓ Помощь."
+        toast = "⚠️ Неизвестная команда. Откройте /help."
     else:
         toast = "⚠️ Не понял. Используйте ➕ Добавить или ⚡️ Быстрая задача."
 
@@ -1126,6 +1151,7 @@ def register(dp: Dispatcher) -> None:
 
     dp.message.register(msg_projects_button, lambda m: m.text and canon(m.text) == "проекты")
     dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "сегодня")
+    dp.message.register(msg_all_tasks_button, lambda m: m.text and canon(m.text) == "все задачи")
     dp.message.register(msg_overdue_button, lambda m: m.text and canon(m.text) == "просрочки")
     dp.message.register(msg_reminders_button, lambda m: m.text and canon(m.text) == "напоминания")
 

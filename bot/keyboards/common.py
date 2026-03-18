@@ -9,10 +9,9 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
     """Persistent bottom keyboard: replaces typing commands."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🏠 Домой"), KeyboardButton(text="📅 Сегодня")],
-            [KeyboardButton(text="🚨 Просрочки"), KeyboardButton(text="📁 Проекты")],
-            [KeyboardButton(text="🔔 Напоминания"), KeyboardButton(text="➕ Добавить")],
-            [KeyboardButton(text="👥 Команда"), KeyboardButton(text="❓ Помощь")],
+            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📋 Все задачи")],
+            [KeyboardButton(text="📁 Проекты"), KeyboardButton(text="🔔 Напоминания")],
+            [KeyboardButton(text="➕ Добавить"), KeyboardButton(text="👥 Команда")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,

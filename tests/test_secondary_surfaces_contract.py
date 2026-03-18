@@ -95,6 +95,10 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
         ):
             await ui_render_help(message, db_pool=object())
 
+        text = render.await_args.kwargs["text"]
+        self.assertIn("/help", text)
+        self.assertIn("Все задачи", text)
+        self.assertNotIn("Просрочки", text)
         rows = [[btn.text for btn in row] for row in render.await_args.kwargs["reply_markup"].inline_keyboard]
         self.assertEqual(rows[0], ["📅 Сегодня", "➕ Добавить"])
         self.assertEqual(rows[1], ["⋯ Ещё", "⬅️ Домой"])

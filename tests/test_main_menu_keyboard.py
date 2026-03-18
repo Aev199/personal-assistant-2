@@ -9,9 +9,12 @@ class MainMenuKeyboardTests(unittest.TestCase):
         self.assertTrue(kb.is_persistent)
         self.assertTrue(kb.resize_keyboard)
         self.assertFalse(kb.one_time_keyboard)
-        self.assertEqual(kb.keyboard[0][0].text, "🏠 Домой")
-        self.assertEqual(kb.keyboard[2][0].text, "🔔 Напоминания")
-        self.assertEqual(kb.keyboard[3][1].text, "❓ Помощь")
+        self.assertEqual(kb.keyboard[0][0].text, "📅 Сегодня")
+        self.assertEqual(kb.keyboard[0][1].text, "📋 Все задачи")
+        self.assertEqual(kb.keyboard[1][0].text, "📁 Проекты")
+        self.assertEqual(kb.keyboard[1][1].text, "🔔 Напоминания")
+        self.assertEqual(kb.keyboard[2][0].text, "➕ Добавить")
+        self.assertEqual(kb.keyboard[2][1].text, "👥 Команда")
 
 
 if __name__ == "__main__":

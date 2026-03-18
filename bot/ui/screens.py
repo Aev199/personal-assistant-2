@@ -697,16 +697,18 @@ async def ui_render_help(
     toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
     help_text = (
         "❓ <b>Короткая справка</b>\n\n"
-        "• Нижнее меню всегда возвращает в нужный раздел.\n"
+        "• Нижнее меню дает быстрый вход в ежедневные разделы.\n"
         "• Большинство действий обновляет один экран, без лишней ленты.\n"
         "• Для задачи чаще всего достаточно открыть карточку и выбрать `✅` или `📅`.\n"
         "• Быстрое создание работает через `⚡ Быстрая задача` или `➕ Добавить`.\n\n"
         "<b>Основные разделы</b>\n"
-        "• 🏠 Домой: сводка и быстрые действия.\n"
-        "• 📅 Сегодня: план дня сразу с кнопками задач.\n"
-        "• 🚨 Просрочки: срочные хвосты.\n"
+        "• 📅 Сегодня: план дня, напоминания и календарные события.\n"
+        "• 📋 Все задачи: общий список с фильтрами, включая просрочку.\n"
         "• 📁 Проекты: структура и рабочие списки.\n"
         "• 🔔 Напоминания: активные напоминания и snooze.\n\n"
+        "• ➕ Добавить: создать задачу, событие или напоминание.\n"
+        "• 👥 Команда: сотрудники и их загрузка.\n"
+        "• /help: открыть эту справку в любой момент.\n\n"
         "<b>Пример свободного ввода</b>\n"
         "<i>напомни купить хлеб завтра в 18:00</i>"
     )
@@ -1212,6 +1214,23 @@ async def ui_render_team(
         )
 
 
+def _event_calendar_icon(calendar_url: str, *, work_calendar_url: str, personal_calendar_url: str) -> str:
+    calendar_url = (calendar_url or "").strip()
+    if work_calendar_url and calendar_url == work_calendar_url:
+        return "💼"
+    if personal_calendar_url and calendar_url == personal_calendar_url:
+        return "🏡"
+    return "📅"
+
+
+def _event_local(dt_value: datetime | None, tz) -> datetime | None:
+    if dt_value is None:
+        return None
+    if dt_value.tzinfo is None:
+        dt_value = dt_value.replace(tzinfo=timezone.utc)
+    return dt_value.astimezone(tz)
+
+
 async def ui_render_today(
     message: Message,
     db_pool: asyncpg.Pool,
@@ -1226,6 +1245,8 @@ async def ui_render_today(
     toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
     page = max(0, int(page or 0))
     page_size = 8
+    work_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_WORK") or "").strip()
+    personal_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_PERSONAL") or "").strip()
     try:
         async with db_pool.acquire() as conn:
             total_tasks = await conn.fetchval(
@@ -1266,15 +1287,41 @@ async def ui_render_today(
                 """,
                 tz_name,
             )
+            if work_calendar_url or personal_calendar_url:
+                total_events = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM icloud_events
+                    WHERE sync_status IN ('synced', 'pending')
+                      AND (dtstart_utc AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+                    """,
+                    tz_name,
+                )
+                events = await conn.fetch(
+                    """
+                    SELECT calendar_url, summary, dtstart_utc, dtend_utc
+                    FROM icloud_events
+                    WHERE sync_status IN ('synced', 'pending')
+                      AND (dtstart_utc AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+                    ORDER BY dtstart_utc ASC
+                    LIMIT 4
+                    """,
+                    tz_name,
+                )
+            else:
+                total_events = 0
+                events = []
         tasks = list(tasks or [])
         reminders = list(reminders or [])
         total_tasks = int(total_tasks or 0)
+        events = list(events or [])
+        total_events = int(total_events or 0)
 
-        parts = ["<b>📅 План на сегодня</b>", f"<i>Задач: {total_tasks} · Напоминаний: {len(reminders)}</i>"]
+        parts = ["<b>📅 План на сегодня</b>", f"<i>Задач: {total_tasks} · Напоминаний: {len(reminders)} · Событий: {total_events}</i>"]
         if toast_line:
             parts = [toast_line, ""] + parts
-        if not tasks and not reminders:
-            parts.extend(["", "На сегодня нет задач и напоминаний."])
+        if not tasks and not reminders and not events:
+            parts.extend(["", "На сегодня нет задач, напоминаний и событий."])
             return await ui_render(
                 bot=message.bot,
                 db_pool=db_pool,
@@ -1294,10 +1341,32 @@ async def ui_render_today(
                 force_new=force_new,
             )
 
+        if events:
+            parts.extend(["", "<b>📅 События</b>"])
+            for event_row in events[:3]:
+                icon = _event_calendar_icon(
+                    str(event_row.get("calendar_url") or ""),
+                    work_calendar_url=work_calendar_url,
+                    personal_calendar_url=personal_calendar_url,
+                )
+                start_local = _event_local(event_row.get("dtstart_utc"), tz)
+                end_local = _event_local(event_row.get("dtend_utc"), tz)
+                if start_local and end_local:
+                    time_range = f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
+                elif start_local:
+                    time_range = start_local.strftime("%H:%M")
+                else:
+                    time_range = "—"
+                parts.append(f"{icon} <b>{h(time_range)}</b> • {h(str(event_row.get('summary') or 'Без названия'))}")
+            if total_events > 3:
+                parts.append(f"… ещё {total_events - 3}")
+
         if tasks:
             parts.extend(["", "<i>Нажмите на задачу ниже, чтобы открыть карточку.</i>"])
         elif reminders:
             parts.extend(["", "<i>Задач на сегодня нет. Ниже только напоминания.</i>"])
+        elif events:
+            parts.extend(["", "<i>Задач и напоминаний на сегодня нет. Ниже только календарные события.</i>"])
 
         if reminders:
             head = reminders[0]

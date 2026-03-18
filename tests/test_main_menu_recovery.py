@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from bot.handlers.common import escape_hatch_menu_or_command
-from bot.handlers.system import msg_home_button
+from bot.handlers.system import msg_all_tasks_button, msg_home_button
 from bot.ui.screens import ensure_main_menu
 
 
@@ -102,6 +102,51 @@ class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         render_reminders.assert_awaited_once()
+        ensure_menu.assert_awaited_once()
+        state.clear.assert_awaited_once()
+
+    async def test_escape_hatch_opens_all_tasks_from_reply_keyboard(self) -> None:
+        message = SimpleNamespace(
+            text="📋 Все задачи",
+            chat=SimpleNamespace(id=404),
+            bot=SimpleNamespace(),
+        )
+        state = AsyncMock()
+
+        with (
+            patch("bot.handlers.common.get_wizard_message_data", AsyncMock(return_value=(None, None))),
+            patch("bot.handlers.common.try_delete_user_message", AsyncMock()),
+            patch("bot.handlers.common.ui_render_all_tasks", AsyncMock(return_value=89)) as render_all_tasks,
+            patch("bot.handlers.common.cleanup_stale_wizard_message", AsyncMock()),
+            patch("bot.handlers.common.ensure_main_menu", AsyncMock(return_value=False)) as ensure_menu,
+        ):
+            handled = await escape_hatch_menu_or_command(message, state, db_pool=object())
+
+        self.assertTrue(handled)
+        render_all_tasks.assert_awaited_once()
+        ensure_menu.assert_awaited_once()
+        state.clear.assert_awaited_once()
+
+    async def test_all_tasks_button_renders_all_tasks_screen(self) -> None:
+        message = SimpleNamespace(
+            text="📋 Все задачи",
+            chat=SimpleNamespace(id=505),
+            from_user=SimpleNamespace(id=7),
+            bot=SimpleNamespace(),
+        )
+        state = AsyncMock()
+        deps = SimpleNamespace(admin_id=None, tz_name="Europe/Moscow")
+
+        with (
+            patch("bot.handlers.system._reply_wizard_context", AsyncMock(return_value=(None, None, None))),
+            patch("bot.handlers.system.try_delete_user_message", AsyncMock()),
+            patch("bot.handlers.system.ui_render_all_tasks", AsyncMock(return_value=91)) as render_all_tasks,
+            patch("bot.handlers.system.cleanup_stale_wizard_message", AsyncMock()),
+            patch("bot.handlers.system.ensure_main_menu", AsyncMock(return_value=True)) as ensure_menu,
+        ):
+            await msg_all_tasks_button(message, state, db_pool=object(), deps=deps)
+
+        render_all_tasks.assert_awaited_once()
         ensure_menu.assert_awaited_once()
         state.clear.assert_awaited_once()
 

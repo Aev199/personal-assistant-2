@@ -11,6 +11,7 @@ from aiogram.types import Message
 
 from bot.ui.screens import (
     ui_render_add_menu,
+    ui_render_all_tasks,
     ui_render_help,
     ui_render_home,
     ui_render_overdue,
@@ -26,6 +27,7 @@ from bot.utils import canon, try_delete_user_message
 MAIN_MENU_TOKENS = {
     "домой",
     "сегодня",
+    "все задачи",
     "проекты",
     "просрочки",
     "напоминания",
@@ -190,6 +192,13 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
         )
     elif token == "сегодня":
         final_id = await ui_render_today(
+            message,
+            db_pool,
+            preferred_message_id=preferred_message_id,
+            force_new=bool(anchor_sent),
+        )
+    elif token == "все задачи":
+        final_id = await ui_render_all_tasks(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,

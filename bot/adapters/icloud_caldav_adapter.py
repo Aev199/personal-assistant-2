@@ -3,6 +3,8 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
+from xml.etree import ElementTree as ET
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -26,9 +28,20 @@ class ICloudEvent:
     last_error: str = ""
 
 
+@dataclass(frozen=True)
+class ICloudVisibleEvent:
+    """Represents an event fetched from a calendar collection."""
+
+    calendar_url: str
+    summary: str
+    dtstart_utc: datetime
+    dtend_utc: datetime
+    uid: str = ""
+
+
 class ICloudCalDAVAdapter:
     """
-    Minimal iCloud CalDAV client for CREATE-ONLY events.
+    Minimal iCloud CalDAV client for basic event create/delete/list operations.
 
     Stable mode:
       - calendar collection URL must be provided (e.g. .../calendars/<id>/)
@@ -164,7 +177,226 @@ class ICloudCalDAVAdapter:
                 return False
         return False
 
+    async def list_events(
+        self,
+        calendar_url: str,
+        *,
+        start_utc: datetime,
+        end_utc: datetime,
+    ) -> list[ICloudVisibleEvent]:
+        """Fetch visible events for a UTC range from a calendar collection."""
+        if not calendar_url:
+            return []
+        if self._session is None:
+            raise RuntimeError("CalDAV session not started")
+
+        if not calendar_url.endswith("/"):
+            calendar_url += "/"
+
+        start_utc = _to_utc(start_utc)
+        end_utc = _to_utc(end_utc)
+
+        body = _calendar_query_body(start_utc, end_utc)
+        headers = {
+            "Depth": "1",
+            "Content-Type": "application/xml; charset=utf-8",
+        }
+        auth = aiohttp.BasicAuth(self._auth.apple_id, self._auth.app_password)
+
+        for attempt in range(4):
+            try:
+                async with self._session.request(
+                    "REPORT",
+                    calendar_url,
+                    data=body.encode("utf-8"),
+                    headers=headers,
+                    auth=auth,
+                ) as resp:
+                    txt = await resp.text()
+                    if resp.status in (200, 207):
+                        return _parse_caldav_multistatus(calendar_url, txt)
+                    if resp.status in (409, 423) and attempt < 3:
+                        await asyncio.sleep(0.2 * (attempt + 1))
+                        continue
+                    logging.error("CalDAV REPORT failed: HTTP %s: %s", resp.status, txt[:300])
+                    raise RuntimeError(f"CalDAV REPORT failed with HTTP {resp.status}")
+            except aiohttp.ClientError as e:
+                if attempt < 3:
+                    await asyncio.sleep(0.3 * (attempt + 1))
+                    continue
+                logging.error("CalDAV list network error: %s", e)
+                raise
+        return []
+
 
 def _escape(s: str) -> str:
     # Minimal iCalendar escaping
     return (s or "").replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
+
+
+def _to_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _fmt_ical_utc(dt: datetime) -> str:
+    return _to_utc(dt).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _calendar_query_body(start_utc: datetime, end_utc: datetime) -> str:
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
+        "<d:prop>"
+        "<d:getetag/>"
+        f'<c:calendar-data><c:expand start="{_fmt_ical_utc(start_utc)}" end="{_fmt_ical_utc(end_utc)}"/></c:calendar-data>'
+        "</d:prop>"
+        "<c:filter>"
+        '<c:comp-filter name="VCALENDAR">'
+        '<c:comp-filter name="VEVENT">'
+        f'<c:time-range start="{_fmt_ical_utc(start_utc)}" end="{_fmt_ical_utc(end_utc)}"/>'
+        "</c:comp-filter>"
+        "</c:comp-filter>"
+        "</c:filter>"
+        "</c:calendar-query>"
+    )
+
+
+def _parse_caldav_multistatus(calendar_url: str, xml_text: str) -> list[ICloudVisibleEvent]:
+    ns = {
+        "d": "DAV:",
+        "c": "urn:ietf:params:xml:ns:caldav",
+    }
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+
+    events: list[ICloudVisibleEvent] = []
+    for calendar_data in root.findall(".//c:calendar-data", ns):
+        data = calendar_data.text or ""
+        if not data.strip():
+            continue
+        events.extend(_parse_ics_events(calendar_url, data))
+    deduped: dict[tuple[str, str, datetime, datetime], ICloudVisibleEvent] = {}
+    for event in events:
+        key = (event.uid or event.summary, event.calendar_url, event.dtstart_utc, event.dtend_utc)
+        deduped[key] = event
+    return sorted(deduped.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower()))
+
+
+def _parse_ics_events(calendar_url: str, ics_text: str) -> list[ICloudVisibleEvent]:
+    lines = _unfold_ical_lines(ics_text)
+    events: list[ICloudVisibleEvent] = []
+    in_event = False
+    fields: dict[str, tuple[str, dict[str, str]]] = {}
+
+    for line in lines:
+        token = line.strip()
+        if token == "BEGIN:VEVENT":
+            in_event = True
+            fields = {}
+            continue
+        if token == "END:VEVENT":
+            in_event = False
+            event = _build_visible_event(calendar_url, fields)
+            if event is not None:
+                events.append(event)
+            fields = {}
+            continue
+        if not in_event or ":" not in line:
+            continue
+        key_part, value = line.split(":", 1)
+        name, params = _parse_ical_property(key_part)
+        fields[name] = (value, params)
+    return events
+
+
+def _unfold_ical_lines(ics_text: str) -> list[str]:
+    raw_lines = (ics_text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines: list[str] = []
+    for raw in raw_lines:
+        if not raw:
+            continue
+        if lines and raw[:1] in {" ", "\t"}:
+            lines[-1] += raw[1:]
+            continue
+        lines.append(raw)
+    return lines
+
+
+def _parse_ical_property(key_part: str) -> tuple[str, dict[str, str]]:
+    chunks = [chunk.strip() for chunk in key_part.split(";") if chunk.strip()]
+    name = (chunks[0] if chunks else "").upper()
+    params: dict[str, str] = {}
+    for chunk in chunks[1:]:
+        if "=" not in chunk:
+            continue
+        param_key, param_value = chunk.split("=", 1)
+        params[param_key.upper()] = param_value
+    return name, params
+
+
+def _build_visible_event(
+    calendar_url: str,
+    fields: dict[str, tuple[str, dict[str, str]]],
+) -> ICloudVisibleEvent | None:
+    dtstart_raw, dtstart_params = fields.get("DTSTART", ("", {}))
+    dtend_raw, dtend_params = fields.get("DTEND", ("", {}))
+    summary = str(fields.get("SUMMARY", ("", {}))[0] or "").strip() or "Без названия"
+    uid = str(fields.get("UID", ("", {}))[0] or "").strip()
+    dtstart_utc = _parse_ical_datetime(dtstart_raw, dtstart_params)
+    dtend_utc = _parse_ical_datetime(dtend_raw, dtend_params)
+    if dtstart_utc is None:
+        return None
+    if dtend_utc is None or dtend_utc <= dtstart_utc:
+        dtend_utc = dtstart_utc
+    return ICloudVisibleEvent(
+        calendar_url=calendar_url,
+        summary=summary,
+        dtstart_utc=dtstart_utc,
+        dtend_utc=dtend_utc,
+        uid=uid,
+    )
+
+
+def _parse_ical_datetime(value: str, params: dict[str, str]) -> datetime | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    value_kind = str(params.get("VALUE") or "").upper()
+    tzid = str(params.get("TZID") or "").strip()
+
+    if value_kind == "DATE" or (len(raw) == 8 and raw.isdigit()):
+        try:
+            local_dt = datetime.strptime(raw, "%Y%m%d")
+        except ValueError:
+            return None
+        if tzid:
+            try:
+                return local_dt.replace(tzinfo=ZoneInfo(tzid)).astimezone(timezone.utc)
+            except Exception:
+                return local_dt.replace(tzinfo=timezone.utc)
+        return local_dt.replace(tzinfo=timezone.utc)
+
+    if raw.endswith("Z"):
+        try:
+            return datetime.strptime(raw, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    if len(raw) == 15 and "T" in raw:
+        try:
+            local_dt = datetime.strptime(raw, "%Y%m%dT%H%M%S")
+        except ValueError:
+            return None
+        if tzid:
+            try:
+                return local_dt.replace(tzinfo=ZoneInfo(tzid)).astimezone(timezone.utc)
+            except Exception:
+                return local_dt.replace(tzinfo=timezone.utc)
+        return local_dt.replace(tzinfo=timezone.utc)
+
+    return None

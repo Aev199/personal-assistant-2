@@ -1,8 +1,8 @@
-import unittest
+﻿import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from bot.handlers.team import cb_team_member_details, cb_team_note_edit, msg_team_note_save
+from bot.handlers.team import cb_team_member_details, cb_team_note_edit, msg_team_note_save, ui_render_team_member_card
 
 
 class _Acquire:
@@ -27,7 +27,7 @@ class _Pool:
 class _CardConn:
     async def fetchrow(self, query, *_args):
         if "SELECT name, role, note FROM team" in query:
-            return {"name": "Ира", "role": "pm", "note": "Любит короткие синки"}
+            return {"name": "РСЂР°", "role": "pm", "note": "Р›СЋР±РёС‚ РєРѕСЂРѕС‚РєРёРµ СЃРёРЅРєРё"}
         raise AssertionError(f"Unexpected fetchrow query: {query}")
 
     async def fetchval(self, query, *_args):
@@ -46,7 +46,7 @@ class _CardConn:
 class _EditConn:
     async def fetchrow(self, query, *_args):
         if "SELECT name, note FROM team WHERE id=$1" in query:
-            return {"name": "Ира", "note": "Любит короткие синки"}
+            return {"name": "РСЂР°", "note": "Р›СЋР±РёС‚ РєРѕСЂРѕС‚РєРёРµ СЃРёРЅРєРё"}
         raise AssertionError(f"Unexpected fetchrow query: {query}")
 
 
@@ -62,7 +62,7 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
             answer=AsyncMock(),
             from_user=SimpleNamespace(id=1),
             bot=SimpleNamespace(),
-            message=SimpleNamespace(chat=SimpleNamespace(id=55)),
+            message=SimpleNamespace(chat=SimpleNamespace(id=55), bot=SimpleNamespace()),
         )
         state = AsyncMock()
         deps = SimpleNamespace(admin_id=1)
@@ -72,9 +72,9 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
             await cb_team_member_details(callback, state, pool, deps)
 
         kwargs = render.await_args.kwargs
-        self.assertIn("Любит короткие синки", kwargs["text"])
+        self.assertIn("Р›СЋР±РёС‚ РєРѕСЂРѕС‚РєРёРµ СЃРёРЅРєРё", kwargs["text"])
         rows = [[btn.text for btn in row] for row in kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(rows[0], ["📝 Редактировать заметку"])
+        self.assertEqual(rows[0], ["рџ“ќ Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ Р·Р°РјРµС‚РєСѓ"])
 
     async def test_note_edit_prompt_shows_clear_when_note_exists(self) -> None:
         callback = SimpleNamespace(
@@ -93,12 +93,12 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
 
         state.set_state.assert_awaited_once()
         rows = [[btn.text for btn in row] for row in render.await_args.kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(rows[0], ["🗑 Очистить заметку"])
-        self.assertEqual(rows[1], ["⬅ Назад", "✖️ Отмена"])
+        self.assertEqual(rows[0], ["рџ—‘ РћС‡РёСЃС‚РёС‚СЊ Р·Р°РјРµС‚РєСѓ"])
+        self.assertEqual(rows[1], ["в¬… РќР°Р·Р°Рґ", "вњ–пёЏ РћС‚РјРµРЅР°"])
 
     async def test_note_save_updates_team_and_rerenders_card(self) -> None:
         message = SimpleNamespace(
-            text="Созваниваться вечером",
+            text="РЎРѕР·РІР°РЅРёРІР°С‚СЊСЃСЏ РІРµС‡РµСЂРѕРј",
             chat=SimpleNamespace(id=77),
             from_user=SimpleNamespace(id=1),
             bot=SimpleNamespace(),
@@ -114,13 +114,30 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.handlers.team.try_delete_user_message", AsyncMock()),
             patch("bot.handlers.team.ui_get_state", AsyncMock(return_value={"ui_payload": {}})),
             patch("bot.handlers.team.ui_set_state", AsyncMock()),
-            patch("bot.handlers.team.ui_render_team_member_from_message", AsyncMock()) as render_card,
+            patch("bot.handlers.team.ui_render_team_member_card", AsyncMock()) as render_card,
         ):
             await msg_team_note_save(message, state, pool, deps)
 
-        conn.execute.assert_awaited_once_with("UPDATE team SET note=$2 WHERE id=$1", 7, "Созваниваться вечером")
-        render_card.assert_awaited_once_with(message, pool, deps, emp_id=7, page=1)
+        conn.execute.assert_awaited_once_with("UPDATE team SET note=$2 WHERE id=$1", 7, "РЎРѕР·РІР°РЅРёРІР°С‚СЊСЃСЏ РІРµС‡РµСЂРѕРј")
+        render_card.assert_awaited_once_with(message, pool, emp_id=7, page=1)
+
+    async def test_team_member_rerender_uses_direct_renderer(self) -> None:
+        message = SimpleNamespace(
+            chat=SimpleNamespace(id=88),
+            from_user=SimpleNamespace(id=1),
+            bot=SimpleNamespace(),
+        )
+        pool = _Pool(_CardConn())
+
+        with patch("bot.handlers.team.ui_render", AsyncMock(return_value=91)) as render_card:
+            result = await ui_render_team_member_card(message, db_pool=pool, emp_id=9, page=2)
+
+        self.assertEqual(result, 91)
+        kwargs = render_card.await_args.kwargs
+        self.assertIs(kwargs["bot"], message.bot)
+        self.assertEqual(kwargs["payload"], {"emp_id": 9, "page": 0})
 
 
 if __name__ == "__main__":
     unittest.main()
+

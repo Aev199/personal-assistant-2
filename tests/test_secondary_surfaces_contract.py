@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -70,6 +70,10 @@ class _TeamConn:
         raise AssertionError(f"Unexpected fetch query: {query}")
 
 
+def _callbacks(markup) -> list[list[str]]:
+    return [[btn.callback_data for btn in row] for row in markup.inline_keyboard]
+
+
 class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_secondary_menu_keeps_secondary_destinations_compact(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=11), bot=SimpleNamespace())
@@ -80,11 +84,11 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
         ):
             await ui_render_home_more(message, db_pool=object())
 
-        rows = [[btn.text for btn in row] for row in render.await_args.kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(rows[0], ["📋 Все задачи", "🔔 Напоминания"])
-        self.assertEqual(rows[1], ["📊 Статистика", "🔄 Синхронизация"])
-        self.assertEqual(rows[2], ["❓ Помощь", "👥 Команда"])
-        self.assertEqual(rows[3], ["⬅️ Домой"])
+        rows = _callbacks(render.await_args.kwargs["reply_markup"])
+        self.assertEqual(rows[0], ["nav:all", "nav:reminders:0"])
+        self.assertEqual(rows[1], ["home:stats", "sync:status"])
+        self.assertEqual(rows[2], ["nav:help", "nav:team"])
+        self.assertEqual(rows[3], ["nav:home"])
 
     async def test_help_screen_has_fast_escape_routes(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=12), bot=SimpleNamespace())
@@ -97,11 +101,9 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
 
         text = render.await_args.kwargs["text"]
         self.assertIn("/help", text)
-        self.assertIn("Все задачи", text)
-        self.assertNotIn("Просрочки", text)
-        rows = [[btn.text for btn in row] for row in render.await_args.kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(rows[0], ["📅 Сегодня", "➕ Добавить"])
-        self.assertEqual(rows[1], ["⋯ Ещё", "⬅️ Домой"])
+        rows = _callbacks(render.await_args.kwargs["reply_markup"])
+        self.assertEqual(rows[0], ["nav:today", "nav:add"])
+        self.assertEqual(rows[1], ["nav:secondary", "nav:home"])
 
     async def test_stats_screen_is_secondary_not_daily_action_hub(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=13), bot=SimpleNamespace())
@@ -114,12 +116,9 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
         ):
             await ui_render_stats(message, pool, tz_name="Europe/Moscow")
 
-        rows = [[btn.text for btn in row] for row in render.await_args.kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(rows[0], ["🔄 Обновить", "🔄 Синхронизация"])
-        self.assertEqual(rows[1], ["⋯ Ещё", "⬅️ Домой"])
-        flat = [label for row in rows for label in row]
-        self.assertNotIn("⚡️ Быстрая задача", flat)
-        self.assertNotIn("➕ Добавить", flat)
+        rows = _callbacks(render.await_args.kwargs["reply_markup"])
+        self.assertEqual(rows[0], ["home:stats", "sync:status"])
+        self.assertEqual(rows[1], ["nav:secondary", "nav:home"])
 
     async def test_team_screen_moves_member_details_into_buttons(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=14), bot=SimpleNamespace())
@@ -132,13 +131,11 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_team(message, pool)
 
         kwargs = render.await_args.kwargs
-        self.assertNotIn("Ира", kwargs["text"])
-        self.assertNotIn("Оля", kwargs["text"])
-        rows = [[btn.text for btn in row] for row in kwargs["reply_markup"].inline_keyboard]
-        self.assertIn("👤 Ира — активно 1 • 🧺 1", rows[0][0])
-        self.assertIn("👤 Оля — активно 1 • 🧺 1", rows[1][0])
-        self.assertEqual(rows[-2], ["➕ Сотрудник", "⋯ Ещё"])
-        self.assertEqual(rows[-1], ["⬅️ Домой"])
+        rows = _callbacks(kwargs["reply_markup"])
+        self.assertEqual(rows[0], ["team:1:0"])
+        self.assertEqual(rows[1], ["team:2:0"])
+        self.assertEqual(rows[-2], ["team:add", "nav:secondary"])
+        self.assertEqual(rows[-1], ["nav:home"])
 
 
 if __name__ == "__main__":

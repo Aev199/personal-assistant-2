@@ -213,6 +213,7 @@ async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyn
         db_pool,
         tz_name=deps.tz_name,
         page=page,
+        icloud=deps.icloud,
         preferred_message_id=preferred_message_id,
     )
     await cleanup_stale_wizard_message(

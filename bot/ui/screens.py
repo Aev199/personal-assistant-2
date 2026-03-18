@@ -1,4 +1,4 @@
-"""High-level SPA screens (renderers).
+﻿"""High-level SPA screens (renderers).
 
 These functions render whole "screens" (Home/Projects/Today/Overdue/Help/Add),
 updating the single UI message for the chat via :func:`bot.ui.render.ui_render`.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -18,6 +19,7 @@ import asyncpg
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
+from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudVisibleEvent
 from bot.ui.render import ui_render
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_take_toast
 from bot.utils import h, fmt_task_line_html, kb_columns
@@ -70,8 +72,8 @@ async def ensure_main_menu(
         menu_mid = row["menu_message_id"] if row else None
 
     # Keep anchor compact but explicit so recovery does not look like a blank phantom message.
-    _ANCHOR_TEXT_A = "⌨️ Главное меню"
-    _ANCHOR_TEXT_B = "⌨️ Меню активно"
+    _ANCHOR_TEXT_A = "вЊЁпёЏ Р“Р»Р°РІРЅРѕРµ РјРµРЅСЋ"
+    _ANCHOR_TEXT_B = "вЊЁпёЏ РњРµРЅСЋ Р°РєС‚РёРІРЅРѕ"
 
     stale_menu_mid = int(menu_mid) if menu_mid else None
     if stale_menu_mid and not refresh and not recreate:
@@ -177,7 +179,7 @@ def to_local(dt: datetime | None, tz: ZoneInfo) -> datetime | None:
 
 def fmt_local(dt: datetime | None, tz: ZoneInfo) -> str:
     d = to_local(dt, tz)
-    return d.strftime("%d.%m %H:%M") if d else "—"
+    return d.strftime("%d.%m %H:%M") if d else "вЂ”"
 
 
 def _task_button_caption(
@@ -186,11 +188,11 @@ def _task_button_caption(
     project: str | None = None,
     deadline_local: datetime | None = None,
     status_hint: str | None = None,
-    icon: str = "📝",
+    icon: str = "рџ“ќ",
     max_title: int = 22,
 ) -> str:
     clean_title = (title or "").strip()
-    short_title = clean_title if len(clean_title) <= max_title else (clean_title[: max_title - 1] + "…")
+    short_title = clean_title if len(clean_title) <= max_title else (clean_title[: max_title - 1] + "вЂ¦")
     parts = [icon]
     if project:
         parts.append(f"[{project}]")
@@ -199,7 +201,7 @@ def _task_button_caption(
     if meta is None and deadline_local is not None:
         meta = deadline_local.strftime("%d.%m %H:%M")
     if meta:
-        parts.append(f"· {meta}")
+        parts.append(f"В· {meta}")
     return " ".join(part for part in parts if part).strip()
 
 
@@ -225,11 +227,11 @@ def _single_column_task_buttons(
         if status_key:
             raw_status = str(row.get(status_key) or "").strip().lower()
             if raw_status == "postponed":
-                status_hint = "отложено"
+                status_hint = "РѕС‚Р»РѕР¶РµРЅРѕ"
             elif raw_status == "in_progress":
-                status_hint = "в работе"
+                status_hint = "РІ СЂР°Р±РѕС‚Рµ"
             elif raw_status == "done":
-                status_hint = "готово"
+                status_hint = "РіРѕС‚РѕРІРѕ"
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -275,27 +277,27 @@ async def ui_render_home(
 
     def _due_str(dt_local: datetime | None, mode: str) -> str:
         if not dt_local:
-            return "без срока"
+            return "Р±РµР· СЃСЂРѕРєР°"
         if mode == "overdue":
-            return f"был {dt_local.strftime('%d.%m %H:%M')}"
+            return f"Р±С‹Р» {dt_local.strftime('%d.%m %H:%M')}"
         if mode == "today":
-            return f"до {dt_local.strftime('%H:%M')}"
+            return f"РґРѕ {dt_local.strftime('%H:%M')}"
         # work
-        return f"до {dt_local.strftime('%d.%m %H:%M')}"
+        return f"РґРѕ {dt_local.strftime('%d.%m %H:%M')}"
 
     def _preview_lines(marker: str, project: str, title: str, assignee: str, dt_local: datetime | None, mode: str) -> list[str]:
-        proj = (project or "—").strip()
+        proj = (project or "вЂ”").strip()
         t = (title or "").strip()
-        a = (assignee or "—").strip()
+        a = (assignee or "вЂ”").strip()
         # keep lines readable
-        t_show = t if len(t) <= 90 else (t[:89] + "…")
+        t_show = t if len(t) <= 90 else (t[:89] + "вЂ¦")
         due = _due_str(dt_local, mode)
         if len(t) > 40:
             return [
                 f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   {h(a)} → <i>{h(due)}</i>",
+                f"   {h(a)} в†’ <i>{h(due)}</i>",
             ]
-        return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h(due)}</i>"]
+        return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} вЂ” {h(a)}, <i>{h(due)}</i>"]
 
     try:
         async with db_pool.acquire() as conn:
@@ -306,7 +308,7 @@ async def ui_render_home(
                 "SELECT current_project_id FROM user_settings WHERE chat_id=$1",
                 chat_id,
             )
-            current_project_code = "—"
+            current_project_code = "вЂ”"
             current_project_is_inbox = False
             if current_project_id:
                 row = await conn.fetchrow("SELECT code FROM projects WHERE id=$1", int(current_project_id))
@@ -345,7 +347,7 @@ async def ui_render_home(
             # Previews
             overdue_rows = await conn.fetch(
                 """
-                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                 FROM tasks t
                 JOIN projects p ON p.id=t.project_id
                 LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -358,7 +360,7 @@ async def ui_render_home(
 
             today_rows = await conn.fetch(
                 """
-                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                 FROM tasks t
                 JOIN projects p ON p.id=t.project_id
                 LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -373,7 +375,7 @@ async def ui_render_home(
             if args:
                 work_rows = await conn.fetch(
                     f"""
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -386,7 +388,7 @@ async def ui_render_home(
             else:
                 work_rows = await conn.fetch(
                     f"""
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -404,62 +406,62 @@ async def ui_render_home(
         if toast_line:
             lines.extend([toast_line, ""])
 
-        lines.append("🧠 <b>Фокус</b>")
-        lines.append(f"⭐ Проект: <b>{h(str(current_project_code))}</b>")
+        lines.append("рџ§  <b>Р¤РѕРєСѓСЃ</b>")
+        lines.append(f"в­ђ РџСЂРѕРµРєС‚: <b>{h(str(current_project_code))}</b>")
         lines.append("")
-        lines.append(f"🔥 Срочно: <b>{int(overdue_count or 0)}</b>")
-        lines.append(f"⏰ Сегодня: <b>{int(today_count or 0)}</b>")
-        lines.append(f"⚡ В работе: <b>{int(work_count or 0)}</b>")
-        lines.append(f"📥 Inbox: <b>{int(inbox_count or 0)}</b>")
+        lines.append(f"рџ”Ґ РЎСЂРѕС‡РЅРѕ: <b>{int(overdue_count or 0)}</b>")
+        lines.append(f"вЏ° РЎРµРіРѕРґРЅСЏ: <b>{int(today_count or 0)}</b>")
+        lines.append(f"вљЎ Р’ СЂР°Р±РѕС‚Рµ: <b>{int(work_count or 0)}</b>")
+        lines.append(f"рџ“Ґ Inbox: <b>{int(inbox_count or 0)}</b>")
 
         # Sections
         lines.append("")
-        lines.append("<b>🔥 СРОЧНО</b>")
+        lines.append("<b>рџ”Ґ РЎР РћР§РќРћ</b>")
         if overdue_rows:
             for r in overdue_rows:
                 dt_local = to_local(r.get("deadline"), tz)
-                lines.extend(_preview_lines("🔥", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "overdue"))
+                lines.extend(_preview_lines("рџ”Ґ", r.get("project") or "", r.get("title") or "", r.get("assignee") or "вЂ”", dt_local, "overdue"))
         else:
-            lines.append("—")
+            lines.append("вЂ”")
 
         lines.append("")
-        lines.append("<b>⏰ СЕГОДНЯ</b>")
+        lines.append("<b>вЏ° РЎР•Р“РћР”РќРЇ</b>")
         if today_rows:
             for r in today_rows:
                 dt_local = to_local(r.get("deadline"), tz)
-                lines.extend(_preview_lines("⏰", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "today"))
+                lines.extend(_preview_lines("вЏ°", r.get("project") or "", r.get("title") or "", r.get("assignee") or "вЂ”", dt_local, "today"))
         else:
-            lines.append("—")
+            lines.append("вЂ”")
 
         lines.append("")
-        lines.append("<b>⚡ В РАБОТЕ</b>")
+        lines.append("<b>вљЎ Р’ Р РђР‘РћРўР•</b>")
         if work_rows:
             for r in work_rows:
                 dt_local = to_local(r.get("deadline"), tz)
-                lines.extend(_preview_lines("⚡", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "work"))
+                lines.extend(_preview_lines("вљЎ", r.get("project") or "", r.get("title") or "", r.get("assignee") or "вЂ”", dt_local, "work"))
         else:
-            lines.append("—")
+            lines.append("вЂ”")
 
         kb: list[list[InlineKeyboardButton]] = [
             [
-                InlineKeyboardButton(text="⚡ Быстрая задача", callback_data="quick:task"),
-                InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
+                InlineKeyboardButton(text="вљЎ Р‘С‹СЃС‚СЂР°СЏ Р·Р°РґР°С‡Р°", callback_data="quick:task"),
+                InlineKeyboardButton(text="рџ’Ў РРґРµСЏ", callback_data="quick:idea"),
             ]
         ]
         if inbox_id:
             if int(inbox_count or 0) > 0:
                 kb.append([
-                    InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
-                    InlineKeyboardButton(text="🧹 Разобрать Inbox", callback_data="inbox:triage:start"),
+                    InlineKeyboardButton(text=f"рџ“Ґ Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+                    InlineKeyboardButton(text="рџ§№ Р Р°Р·РѕР±СЂР°С‚СЊ Inbox", callback_data="inbox:triage:start"),
                 ])
             else:
                 kb.append([
-                    InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
-                    InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0"),
+                    InlineKeyboardButton(text=f"рџ“Ґ Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
+                    InlineKeyboardButton(text=f"вљЎ Р’ СЂР°Р±РѕС‚Рµ ({int(work_count or 0)})", callback_data="nav:work:0"),
                 ])
         else:
-            kb.append([InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0")])
-        kb.append([InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary")])
+            kb.append([InlineKeyboardButton(text=f"вљЎ Р’ СЂР°Р±РѕС‚Рµ ({int(work_count or 0)})", callback_data="nav:work:0")])
+        kb.append([InlineKeyboardButton(text="в‹Ї Р•С‰С‘", callback_data="nav:secondary")])
 
         return await ui_render(
             bot=message.bot,
@@ -478,17 +480,17 @@ async def ui_render_home(
         fallback_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="🔄 Обновить", callback_data="nav:home"),
-                    InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"),
+                    InlineKeyboardButton(text="рџ”„ РћР±РЅРѕРІРёС‚СЊ", callback_data="nav:home"),
+                    InlineKeyboardButton(text="рџ“Ѓ РџСЂРѕРµРєС‚С‹", callback_data="nav:projects"),
                 ],
-                [InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help")],
+                [InlineKeyboardButton(text="вќ“ РџРѕРјРѕС‰СЊ", callback_data="nav:help")],
             ]
         )
         return await ui_render(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=chat_id,
-            text="⚠️ <b>Не удалось обновить главный экран.</b>\n\nПопробуйте ещё раз.",
+            text="вљ пёЏ <b>РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РіР»Р°РІРЅС‹Р№ СЌРєСЂР°РЅ.</b>\n\nРџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.",
             reply_markup=fallback_kb,
             screen="home",
             fallback_message=message,
@@ -522,7 +524,7 @@ async def ui_render_stats(
                 "SELECT p.code FROM projects p WHERE p.id = (SELECT current_project_id FROM user_settings WHERE chat_id=$1)",
                 chat_id,
             )
-            current_project_code = current_project_code or "—"
+            current_project_code = current_project_code or "вЂ”"
 
             inbox_id = await conn.fetchval("SELECT id FROM projects WHERE code='INBOX' LIMIT 1")
             overdue = await conn.fetchval(
@@ -562,31 +564,31 @@ async def ui_render_stats(
             )
             await ui_set_state(conn, chat_id, ui_payload=payload)
 
-        next_rem_txt = h(str(next_rem)) if next_rem else "—"
-        sync_status_txt = "—"
+        next_rem_txt = h(str(next_rem)) if next_rem else "вЂ”"
+        sync_status_txt = "вЂ”"
         try:
             if sync_row:
                 ok_at = sync_row["last_ok_at"]
                 err_at = sync_row["last_error_at"]
                 if ok_at and (not err_at or ok_at >= err_at):
-                    sync_status_txt = f"✅ {fmt_local(ok_at, tz)}"
+                    sync_status_txt = f"вњ… {fmt_local(ok_at, tz)}"
                 elif err_at:
-                    sync_status_txt = f"❌ {fmt_local(err_at, tz)}"
+                    sync_status_txt = f"вќЊ {fmt_local(err_at, tz)}"
         except Exception:
-            sync_status_txt = "—"
+            sync_status_txt = "вЂ”"
 
         lines = [
-            "🧠 <b>Статистика</b>",
-            f"<i>Текущий проект: {h(str(current_project_code))}</i>",
+            "рџ§  <b>РЎС‚Р°С‚РёСЃС‚РёРєР°</b>",
+            f"<i>РўРµРєСѓС‰РёР№ РїСЂРѕРµРєС‚: {h(str(current_project_code))}</i>",
             "",
-            f"🚨 Просрочено: <b>{int(overdue or 0)}</b>",
-            f"📅 Сегодня: <b>{int(today or 0)}</b>",
-            f"📥 Inbox: <b>{int(inbox_count or 0)}</b>",
-            f"🧺 Без срока: <b>{int(nodate or 0)}</b>",
+            f"рџљЁ РџСЂРѕСЃСЂРѕС‡РµРЅРѕ: <b>{int(overdue or 0)}</b>",
+            f"рџ“… РЎРµРіРѕРґРЅСЏ: <b>{int(today or 0)}</b>",
+            f"рџ“Ґ Inbox: <b>{int(inbox_count or 0)}</b>",
+            f"рџ§є Р‘РµР· СЃСЂРѕРєР°: <b>{int(nodate or 0)}</b>",
             "",
-            f"📁 Проектов: <b>{int(projects or 0)}</b> • ✅ Активных задач: <b>{int(active_tasks or 0)}</b>",
-            f"🔔 Ближайшее напоминание: <i>{next_rem_txt}</i>",
-            f"🔄 Obsidian: <i>{sync_status_txt}</i>",
+            f"рџ“Ѓ РџСЂРѕРµРєС‚РѕРІ: <b>{int(projects or 0)}</b> вЂў вњ… РђРєС‚РёРІРЅС‹С… Р·Р°РґР°С‡: <b>{int(active_tasks or 0)}</b>",
+            f"рџ”” Р‘Р»РёР¶Р°Р№С€РµРµ РЅР°РїРѕРјРёРЅР°РЅРёРµ: <i>{next_rem_txt}</i>",
+            f"рџ”„ Obsidian: <i>{sync_status_txt}</i>",
         ]
         if toast_line:
             lines.insert(0, toast_line)
@@ -595,12 +597,12 @@ async def ui_render_stats(
         stats_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="🔄 Обновить", callback_data="home:stats"),
-                    InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
+                    InlineKeyboardButton(text="рџ”„ РћР±РЅРѕРІРёС‚СЊ", callback_data="home:stats"),
+                    InlineKeyboardButton(text="рџ”„ РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ", callback_data="sync:status"),
                 ],
                 [
-                    InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
-                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                    InlineKeyboardButton(text="в‹Ї Р•С‰С‘", callback_data="nav:secondary"),
+                    InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
                 ],
             ]
         )
@@ -622,17 +624,17 @@ async def ui_render_stats(
         fallback_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="🔄 Обновить", callback_data="home:stats"),
-                    InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
+                    InlineKeyboardButton(text="рџ”„ РћР±РЅРѕРІРёС‚СЊ", callback_data="home:stats"),
+                    InlineKeyboardButton(text="в‹Ї Р•С‰С‘", callback_data="nav:secondary"),
                 ],
-                [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
             ]
         )
         return await ui_render(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=chat_id,
-            text="⚠️ <b>Не удалось обновить статистику.</b>\n\nПопробуйте ещё раз.",
+            text="вљ пёЏ <b>РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ.</b>\n\nРџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.",
             reply_markup=fallback_kb,
             screen="stats",
             fallback_message=message,
@@ -651,25 +653,25 @@ async def ui_render_home_more(
     chat_id = int(message.chat.id)
     toast_line = await _pop_screen_toast(db_pool, chat_id)
 
-    lines = ["⋯ <b>Ещё</b>", "", "Вспомогательные разделы и редкие действия."]
+    lines = ["в‹Ї <b>Р•С‰С‘</b>", "", "Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Рµ СЂР°Р·РґРµР»С‹ Рё СЂРµРґРєРёРµ РґРµР№СЃС‚РІРёСЏ."]
     if toast_line:
         lines = [toast_line, ""] + lines
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-                InlineKeyboardButton(text="🔔 Напоминания", callback_data="nav:reminders:0"),
+                InlineKeyboardButton(text="рџ“‹ Р’СЃРµ Р·Р°РґР°С‡Рё", callback_data="nav:all"),
+                InlineKeyboardButton(text="рџ”” РќР°РїРѕРјРёРЅР°РЅРёСЏ", callback_data="nav:reminders:0"),
             ],
             [
-                InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
-                InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
+                InlineKeyboardButton(text="рџ“Љ РЎС‚Р°С‚РёСЃС‚РёРєР°", callback_data="home:stats"),
+                InlineKeyboardButton(text="рџ”„ РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ", callback_data="sync:status"),
             ],
             [
-                InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help"),
-                InlineKeyboardButton(text="👥 Команда", callback_data="nav:team"),
+                InlineKeyboardButton(text="вќ“ РџРѕРјРѕС‰СЊ", callback_data="nav:help"),
+                InlineKeyboardButton(text="рџ‘Ґ РљРѕРјР°РЅРґР°", callback_data="nav:team"),
             ],
-            [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+            [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
         ]
     )
 
@@ -696,21 +698,21 @@ async def ui_render_help(
 ) -> int:
     toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
     help_text = (
-        "❓ <b>Короткая справка</b>\n\n"
-        "• Нижнее меню дает быстрый вход в ежедневные разделы.\n"
-        "• Большинство действий обновляет один экран, без лишней ленты.\n"
-        "• Для задачи чаще всего достаточно открыть карточку и выбрать `✅` или `📅`.\n"
-        "• Быстрое создание работает через `⚡ Быстрая задача` или `➕ Добавить`.\n\n"
-        "<b>Основные разделы</b>\n"
-        "• 📅 Сегодня: план дня, напоминания и календарные события.\n"
-        "• 📋 Все задачи: общий список с фильтрами, включая просрочку.\n"
-        "• 📁 Проекты: структура и рабочие списки.\n"
-        "• 🔔 Напоминания: активные напоминания и snooze.\n\n"
-        "• ➕ Добавить: создать задачу, событие или напоминание.\n"
-        "• 👥 Команда: сотрудники и их загрузка.\n"
-        "• /help: открыть эту справку в любой момент.\n\n"
-        "<b>Пример свободного ввода</b>\n"
-        "<i>напомни купить хлеб завтра в 18:00</i>"
+        "вќ“ <b>РљРѕСЂРѕС‚РєР°СЏ СЃРїСЂР°РІРєР°</b>\n\n"
+        "вЂў РќРёР¶РЅРµРµ РјРµРЅСЋ РґР°РµС‚ Р±С‹СЃС‚СЂС‹Р№ РІС…РѕРґ РІ РµР¶РµРґРЅРµРІРЅС‹Рµ СЂР°Р·РґРµР»С‹.\n"
+        "вЂў Р‘РѕР»СЊС€РёРЅСЃС‚РІРѕ РґРµР№СЃС‚РІРёР№ РѕР±РЅРѕРІР»СЏРµС‚ РѕРґРёРЅ СЌРєСЂР°РЅ, Р±РµР· Р»РёС€РЅРµР№ Р»РµРЅС‚С‹.\n"
+        "вЂў Р”Р»СЏ Р·Р°РґР°С‡Рё С‡Р°С‰Рµ РІСЃРµРіРѕ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РѕС‚РєСЂС‹С‚СЊ РєР°СЂС‚РѕС‡РєСѓ Рё РІС‹Р±СЂР°С‚СЊ `вњ…` РёР»Рё `рџ“…`.\n"
+        "вЂў Р‘С‹СЃС‚СЂРѕРµ СЃРѕР·РґР°РЅРёРµ СЂР°Р±РѕС‚Р°РµС‚ С‡РµСЂРµР· `вљЎ Р‘С‹СЃС‚СЂР°СЏ Р·Р°РґР°С‡Р°` РёР»Рё `вћ• Р”РѕР±Р°РІРёС‚СЊ`.\n\n"
+        "<b>РћСЃРЅРѕРІРЅС‹Рµ СЂР°Р·РґРµР»С‹</b>\n"
+        "вЂў рџ“… РЎРµРіРѕРґРЅСЏ: РїР»Р°РЅ РґРЅСЏ, РЅР°РїРѕРјРёРЅР°РЅРёСЏ Рё РєР°Р»РµРЅРґР°СЂРЅС‹Рµ СЃРѕР±С‹С‚РёСЏ.\n"
+        "вЂў рџ“‹ Р’СЃРµ Р·Р°РґР°С‡Рё: РѕР±С‰РёР№ СЃРїРёСЃРѕРє СЃ С„РёР»СЊС‚СЂР°РјРё, РІРєР»СЋС‡Р°СЏ РїСЂРѕСЃСЂРѕС‡РєСѓ.\n"
+        "вЂў рџ“Ѓ РџСЂРѕРµРєС‚С‹: СЃС‚СЂСѓРєС‚СѓСЂР° Рё СЂР°Р±РѕС‡РёРµ СЃРїРёСЃРєРё.\n"
+        "вЂў рџ”” РќР°РїРѕРјРёРЅР°РЅРёСЏ: Р°РєС‚РёРІРЅС‹Рµ РЅР°РїРѕРјРёРЅР°РЅРёСЏ Рё snooze.\n\n"
+        "вЂў вћ• Р”РѕР±Р°РІРёС‚СЊ: СЃРѕР·РґР°С‚СЊ Р·Р°РґР°С‡Сѓ, СЃРѕР±С‹С‚РёРµ РёР»Рё РЅР°РїРѕРјРёРЅР°РЅРёРµ.\n"
+        "вЂў рџ‘Ґ РљРѕРјР°РЅРґР°: СЃРѕС‚СЂСѓРґРЅРёРєРё Рё РёС… Р·Р°РіСЂСѓР·РєР°.\n"
+        "вЂў /help: РѕС‚РєСЂС‹С‚СЊ СЌС‚Сѓ СЃРїСЂР°РІРєСѓ РІ Р»СЋР±РѕР№ РјРѕРјРµРЅС‚.\n\n"
+        "<b>РџСЂРёРјРµСЂ СЃРІРѕР±РѕРґРЅРѕРіРѕ РІРІРѕРґР°</b>\n"
+        "<i>РЅР°РїРѕРјРЅРё РєСѓРїРёС‚СЊ С…Р»РµР± Р·Р°РІС‚СЂР° РІ 18:00</i>"
     )
     if toast_line:
         help_text = f"{toast_line}\n\n{help_text}"
@@ -722,12 +724,12 @@ async def ui_render_help(
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="📅 Сегодня", callback_data="nav:today"),
-                    InlineKeyboardButton(text="➕ Добавить", callback_data="nav:add"),
+                    InlineKeyboardButton(text="рџ“… РЎРµРіРѕРґРЅСЏ", callback_data="nav:today"),
+                    InlineKeyboardButton(text="вћ• Р”РѕР±Р°РІРёС‚СЊ", callback_data="nav:add"),
                 ],
                 [
-                    InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
-                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                    InlineKeyboardButton(text="в‹Ї Р•С‰С‘", callback_data="nav:secondary"),
+                    InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
                 ],
             ]
         ),
@@ -811,32 +813,32 @@ async def ui_render_reminders(
     if toast_line:
         lines.extend([toast_line, ""])
 
-    lines.append("🔔 <b>Активные напоминания</b>")
-    lines.append(f"<i>Всего: {total}</i>")
+    lines.append("рџ”” <b>РђРєС‚РёРІРЅС‹Рµ РЅР°РїРѕРјРёРЅР°РЅРёСЏ</b>")
+    lines.append(f"<i>Р’СЃРµРіРѕ: {total}</i>")
     if total > page_size:
         lines.append("")
-        lines.append(f"<i>Страница {int(page or 0) + 1} из {max_page + 1}.</i>")
+        lines.append(f"<i>РЎС‚СЂР°РЅРёС†Р° {int(page or 0) + 1} РёР· {max_page + 1}.</i>")
 
     kb: list[list[InlineKeyboardButton]] = []
     kb.append([
-        InlineKeyboardButton(text="➕ Напоминание", callback_data="add:rem"),
-        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:reminders:{int(page or 0)}"),
+        InlineKeyboardButton(text="вћ• РќР°РїРѕРјРёРЅР°РЅРёРµ", callback_data="add:rem"),
+        InlineKeyboardButton(text="рџ”„ РћР±РЅРѕРІРёС‚СЊ", callback_data=f"nav:reminders:{int(page or 0)}"),
     ])
 
     if not rows:
         lines.append("")
-        lines.append("Нет активных напоминаний.")
+        lines.append("РќРµС‚ Р°РєС‚РёРІРЅС‹С… РЅР°РїРѕРјРёРЅР°РЅРёР№.")
     else:
         lines.append("")
         if selected is None:
-            lines.append("<i>Нажмите на напоминание ниже, чтобы открыть действия.</i>")
+            lines.append("<i>РќР°Р¶РјРёС‚Рµ РЅР° РЅР°РїРѕРјРёРЅР°РЅРёРµ РЅРёР¶Рµ, С‡С‚РѕР±С‹ РѕС‚РєСЂС‹С‚СЊ РґРµР№СЃС‚РІРёСЏ.</i>")
         else:
-            lines.append("<i>Действия для выбранного напоминания показаны под ним.</i>")
+            lines.append("<i>Р”РµР№СЃС‚РІРёСЏ РґР»СЏ РІС‹Р±СЂР°РЅРЅРѕРіРѕ РЅР°РїРѕРјРёРЅР°РЅРёСЏ РїРѕРєР°Р·Р°РЅС‹ РїРѕРґ РЅРёРј.</i>")
         _repeat_labels = {
-            "daily": "ежедн.",
-            "weekly": "еженед.",
-            "workdays": "будни",
-            "monthly": "ежемес.",
+            "daily": "РµР¶РµРґРЅ.",
+            "weekly": "РµР¶РµРЅРµРґ.",
+            "workdays": "Р±СѓРґРЅРё",
+            "monthly": "РµР¶РµРјРµСЃ.",
         }
         from datetime import timezone
         for r in rows:
@@ -852,32 +854,32 @@ async def ui_render_reminders(
             rep_label = _repeat_labels.get(rep, "")
             rep_str = f" [{rep_label}]" if rep_label else ""
             text_raw = (r.get("text") or "").strip()
-            btn_text = f"{when} · {text_raw}" if text_raw else when
-            btn_text = btn_text if len(btn_text) <= 36 else btn_text[:35] + "…"
+            btn_text = f"{when} В· {text_raw}" if text_raw else when
+            btn_text = btn_text if len(btn_text) <= 36 else btn_text[:35] + "вЂ¦"
             if rep_str:
                 btn_text = f"{btn_text}{rep_str}"
             if selected == rid:
-                btn_text = f"▶ {btn_text}"
+                btn_text = f"в–¶ {btn_text}"
             kb.append([
                 InlineKeyboardButton(text=btn_text, callback_data=f"rem:pick:{int(page or 0)}:{rid}")
             ])
             if selected == rid:
                 kb.append([
-                    InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{rid}"),
-                    InlineKeyboardButton(text="⏸ 1ч", callback_data=f"rem:snooze:60:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="рџ“ќ Р’ Р·Р°РґР°С‡Сѓ", callback_data=f"rem:task:{rid}"),
+                    InlineKeyboardButton(text="вЏё 1С‡", callback_data=f"rem:snooze:60:{rid}:{int(page or 0)}"),
                 ])
-                kb.append([InlineKeyboardButton(text="🗑 Удалить…", callback_data=f"rem:cancel_ask:{rid}:{int(page or 0)}")])
+                kb.append([InlineKeyboardButton(text="рџ—‘ РЈРґР°Р»РёС‚СЊвЂ¦", callback_data=f"rem:cancel_ask:{rid}:{int(page or 0)}")])
 
     if max_page > 0:
         nav_row: list[InlineKeyboardButton] = []
         if int(page or 0) > 0:
-            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:reminders:{int(page or 0) - 1}"))
+            nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:reminders:{int(page or 0) - 1}"))
         nav_row.append(InlineKeyboardButton(text=f"{int(page or 0) + 1}/{max_page + 1}", callback_data=f"nav:reminders:{int(page or 0)}"))
         if int(page or 0) < max_page:
-            nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:reminders:{int(page or 0) + 1}"))
+            nav_row.append(InlineKeyboardButton(text="вћЎпёЏ", callback_data=f"nav:reminders:{int(page or 0) + 1}"))
         kb.append(nav_row)
 
-    kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+    kb.append([InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")])
     payload["reminders_page"] = int(page or 0)
     if selected is None:
         payload.pop("selected_reminder_id", None)
@@ -907,7 +909,7 @@ async def ui_render_add_menu(
     force_new: bool = False,
 ) -> int:
     toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
-    text = "➕ <b>Что добавить?</b>"
+    text = "вћ• <b>Р§С‚Рѕ РґРѕР±Р°РІРёС‚СЊ?</b>"
     if toast_line:
         text = f"{toast_line}\n\n{text}"
     return await ui_render(
@@ -959,14 +961,14 @@ async def ui_render_projects_portfolio(
             empty_kb = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text="➕ Новый проект", callback_data="proj:add:start"),
-                        InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
+                        InlineKeyboardButton(text="вћ• РќРѕРІС‹Р№ РїСЂРѕРµРєС‚", callback_data="proj:add:start"),
+                        InlineKeyboardButton(text="вљЎпёЏ Р‘С‹СЃС‚СЂР°СЏ Р·Р°РґР°С‡Р°", callback_data="quick:task"),
                     ],
-                    [InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all")],
-                    [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                    [InlineKeyboardButton(text="рџ“‹ Р’СЃРµ Р·Р°РґР°С‡Рё", callback_data="nav:all")],
+                    [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
                 ]
             )
-            text = "📭 <b>Активных проектов пока нет.</b>\n\nСоздайте первый проект 👇"
+            text = "рџ“­ <b>РђРєС‚РёРІРЅС‹С… РїСЂРѕРµРєС‚РѕРІ РїРѕРєР° РЅРµС‚.</b>\n\nРЎРѕР·РґР°Р№С‚Рµ РїРµСЂРІС‹Р№ РїСЂРѕРµРєС‚ рџ‘‡"
             if toast_line:
                 text = f"{toast_line}\n\n{text}"
             return await ui_render(
@@ -991,7 +993,7 @@ async def ui_render_projects_portfolio(
 
         rows_sorted = sorted(rows, key=sort_key)
 
-        lines = ["<b>📁 ПРОЕКТЫ</b>", "<i>Портфель активных проектов</i>", ""]
+        lines = ["<b>рџ“Ѓ РџР РћР•РљРўР«</b>", "<i>РџРѕСЂС‚С„РµР»СЊ Р°РєС‚РёРІРЅС‹С… РїСЂРѕРµРєС‚РѕРІ</i>", ""]
         if toast_line:
             lines = [toast_line, ""] + lines
         kb: list[list[InlineKeyboardButton]] = []
@@ -1004,21 +1006,21 @@ async def ui_render_projects_portfolio(
             overdue = int(r.get("overdue_tasks") or 0)
             is_cur = (current_id is not None and int(r["id"]) == int(current_id))
 
-            title = f"<b>{h(code)}</b>" + (f" — {h(name)}" if name else "")
-            meta_bits = [f"активных: {active}"]
+            title = f"<b>{h(code)}</b>" + (f" вЂ” {h(name)}" if name else "")
+            meta_bits = [f"Р°РєС‚РёРІРЅС‹С…: {active}"]
             if overdue:
-                meta_bits.append(f"🚨 {overdue}")
+                meta_bits.append(f"рџљЁ {overdue}")
             if is_cur:
-                meta_bits.append("⭐ текущий")
-            meta = "<i>" + " • ".join(meta_bits) + "</i>"
+                meta_bits.append("в­ђ С‚РµРєСѓС‰РёР№")
+            meta = "<i>" + " вЂў ".join(meta_bits) + "</i>"
             lines.append(title)
             lines.append(meta)
 
             btn_label = code
             if is_cur:
-                btn_label = f"⭐ {btn_label}"
+                btn_label = f"в­ђ {btn_label}"
             elif overdue:
-                btn_label = f"🚨{overdue} {btn_label}"
+                btn_label = f"рџљЁ{overdue} {btn_label}"
 
             proj_buttons_row.append(InlineKeyboardButton(text=btn_label, callback_data=f"proj:{r['id']}"))
             if len(proj_buttons_row) == 2:
@@ -1029,17 +1031,17 @@ async def ui_render_projects_portfolio(
             kb.append(proj_buttons_row)
 
         lines.append("")
-        lines.append("Выберите проект ниже 👇")
+        lines.append("Р’С‹Р±РµСЂРёС‚Рµ РїСЂРѕРµРєС‚ РЅРёР¶Рµ рџ‘‡")
 
         kb.append([
-            InlineKeyboardButton(text="➕ Новый проект", callback_data="proj:add:start"),
-            InlineKeyboardButton(text="➕ Задача", callback_data="add:task"),
+            InlineKeyboardButton(text="вћ• РќРѕРІС‹Р№ РїСЂРѕРµРєС‚", callback_data="proj:add:start"),
+            InlineKeyboardButton(text="вћ• Р—Р°РґР°С‡Р°", callback_data="add:task"),
         ])
         kb.append([
-            InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-            InlineKeyboardButton(text="🧺 Хвосты", callback_data="nav:global_tails"),
+            InlineKeyboardButton(text="рџ“‹ Р’СЃРµ Р·Р°РґР°С‡Рё", callback_data="nav:all"),
+            InlineKeyboardButton(text="рџ§є РҐРІРѕСЃС‚С‹", callback_data="nav:global_tails"),
         ])
-        kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+        kb.append([InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")])
 
         return await ui_render(
             bot=message.bot,
@@ -1059,7 +1061,7 @@ async def ui_render_projects_portfolio(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=int(message.chat.id),
-            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
+            text=f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}",
             reply_markup=back_home_kb(),
             screen="home",
             fallback_message=message,
@@ -1092,7 +1094,7 @@ async def ui_render_team(
             )
 
         if not team_rows:
-            text = "📭 <b>В команде пока никого нет.</b>"
+            text = "рџ“­ <b>Р’ РєРѕРјР°РЅРґРµ РїРѕРєР° РЅРёРєРѕРіРѕ РЅРµС‚.</b>"
             if toast_line:
                 text = f"{toast_line}\n\n{text}"
             return await ui_render(
@@ -1102,8 +1104,8 @@ async def ui_render_team(
                 text=text,
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add")],
-                        [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                        [InlineKeyboardButton(text="вћ• РЎРѕС‚СЂСѓРґРЅРёРє", callback_data="team:add")],
+                        [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
                     ]
                 ),
                 screen="team",
@@ -1153,8 +1155,8 @@ async def ui_render_team(
         total_active = sum(int(s["active"]) for s in stats.values())
         total_overdue = sum(int(s["overdue"]) for s in stats.values())
         lines = [
-            "<b>👥 Команда</b>",
-            f"<i>Участников: {total_members} • Активных задач: {total_active} • Просрочено: {total_overdue}</i>",
+            "<b>рџ‘Ґ РљРѕРјР°РЅРґР°</b>",
+            f"<i>РЈС‡Р°СЃС‚РЅРёРєРѕРІ: {total_members} вЂў РђРєС‚РёРІРЅС‹С… Р·Р°РґР°С‡: {total_active} вЂў РџСЂРѕСЃСЂРѕС‡РµРЅРѕ: {total_overdue}</i>",
             "",
         ]
         if toast_line:
@@ -1165,27 +1167,27 @@ async def ui_render_team(
             tid = int(r["id"])
             s = stats.get(tid, {"active": 0, "overdue": 0, "today": 0, "next7": 0, "nodate": 0})
             name = str(r["name"] or "")
-            meta = [f"активно {s['active']}"]
+            meta = [f"Р°РєС‚РёРІРЅРѕ {s['active']}"]
             if int(s["overdue"]):
-                meta.append(f"🚨 {s['overdue']}")
+                meta.append(f"рџљЁ {s['overdue']}")
             if int(s["today"]):
-                meta.append(f"📅 {s['today']}")
+                meta.append(f"рџ“… {s['today']}")
             if int(s["next7"]):
-                meta.append(f"⏳ {s['next7']}")
+                meta.append(f"вЏі {s['next7']}")
             if int(s["nodate"]):
-                meta.append(f"🧺 {s['nodate']}")
+                meta.append(f"рџ§є {s['nodate']}")
             kb.append([
                 InlineKeyboardButton(
-                    text=f"👤 {name} — {' • '.join(meta)}",
+                    text=f"рџ‘¤ {name} вЂ” {' вЂў '.join(meta)}",
                     callback_data=f"team:{tid}:0",
                 )
             ])
 
         kb.append([
-            InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add"),
-            InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
+            InlineKeyboardButton(text="вћ• РЎРѕС‚СЂСѓРґРЅРёРє", callback_data="team:add"),
+            InlineKeyboardButton(text="в‹Ї Р•С‰С‘", callback_data="nav:secondary"),
         ])
-        kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+        kb.append([InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")])
 
         return await ui_render(
             bot=message.bot,
@@ -1204,7 +1206,7 @@ async def ui_render_team(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=chat_id,
-            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
+            text=f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}",
             reply_markup=back_home_kb(),
             screen="team",
             fallback_message=message,
@@ -1217,10 +1219,10 @@ async def ui_render_team(
 def _event_calendar_icon(calendar_url: str, *, work_calendar_url: str, personal_calendar_url: str) -> str:
     calendar_url = (calendar_url or "").strip()
     if work_calendar_url and calendar_url == work_calendar_url:
-        return "💼"
+        return "рџ’ј"
     if personal_calendar_url and calendar_url == personal_calendar_url:
-        return "🏡"
-    return "📅"
+        return "рџЏЎ"
+    return "рџ“…"
 
 
 def _event_local(dt_value: datetime | None, tz) -> datetime | None:
@@ -1231,12 +1233,63 @@ def _event_local(dt_value: datetime | None, tz) -> datetime | None:
     return dt_value.astimezone(tz)
 
 
+@dataclass(frozen=True)
+class _TodayCalendarBlock:
+    events: tuple[ICloudVisibleEvent, ...]
+    unavailable: bool = False
+
+
+async def _fetch_today_calendar_block(
+    *,
+    tz: ZoneInfo,
+    work_calendar_url: str,
+    personal_calendar_url: str,
+    icloud: ICloudCalDAVAdapter | None,
+) -> _TodayCalendarBlock:
+    calendar_urls = [url for url in (work_calendar_url, personal_calendar_url) if url]
+    if not calendar_urls:
+        return _TodayCalendarBlock(events=())
+    if icloud is None:
+        return _TodayCalendarBlock(events=(), unavailable=True)
+
+    now_local = datetime.now(tz)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    start_utc = start_local.astimezone(UTC)
+    end_utc = end_local.astimezone(UTC)
+
+    results = await asyncio.gather(
+        *[
+            icloud.list_events(calendar_url, start_utc=start_utc, end_utc=end_utc)
+            for calendar_url in calendar_urls
+        ],
+        return_exceptions=True,
+    )
+
+    unavailable = False
+    merged: dict[tuple[str, str, datetime, datetime], ICloudVisibleEvent] = {}
+    for result in results:
+        if isinstance(result, Exception):
+            unavailable = True
+            logger.warning(
+                "today calendar fetch failed: %s",
+                result,
+                exc_info=(type(result), result, result.__traceback__),
+            )
+            continue
+        for event in result:
+            merged[(event.calendar_url, event.uid or event.summary, event.dtstart_utc, event.dtend_utc)] = event
+    events = tuple(sorted(merged.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower())))
+    return _TodayCalendarBlock(events=events, unavailable=unavailable)
+
+
 async def ui_render_today(
     message: Message,
     db_pool: asyncpg.Pool,
     *,
     tz_name: str | None = None,
     page: int = 0,
+    icloud: ICloudCalDAVAdapter | None = None,
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
@@ -1248,6 +1301,12 @@ async def ui_render_today(
     work_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_WORK") or "").strip()
     personal_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_PERSONAL") or "").strip()
     try:
+        calendar_block = await _fetch_today_calendar_block(
+            tz=tz,
+            work_calendar_url=work_calendar_url,
+            personal_calendar_url=personal_calendar_url,
+            icloud=icloud,
+        )
         async with db_pool.acquire() as conn:
             total_tasks = await conn.fetchval(
                 """
@@ -1262,7 +1321,7 @@ async def ui_render_today(
             )
             tasks = await conn.fetch(
                 """
-                SELECT t.id, t.title, p.code as project, COALESCE(tm.name,'—') as assignee, t.deadline
+                SELECT t.id, t.title, p.code as project, COALESCE(tm.name,'вЂ”') as assignee, t.deadline
                 FROM tasks t
                 JOIN projects p ON t.project_id = p.id
                 LEFT JOIN team tm ON t.assignee_id = tm.id
@@ -1287,41 +1346,27 @@ async def ui_render_today(
                 """,
                 tz_name,
             )
-            if work_calendar_url or personal_calendar_url:
-                total_events = await conn.fetchval(
-                    """
-                    SELECT COUNT(*)
-                    FROM icloud_events
-                    WHERE sync_status IN ('synced', 'pending')
-                      AND (dtstart_utc AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-                    """,
-                    tz_name,
-                )
-                events = await conn.fetch(
-                    """
-                    SELECT calendar_url, summary, dtstart_utc, dtend_utc
-                    FROM icloud_events
-                    WHERE sync_status IN ('synced', 'pending')
-                      AND (dtstart_utc AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-                    ORDER BY dtstart_utc ASC
-                    LIMIT 4
-                    """,
-                    tz_name,
-                )
-            else:
-                total_events = 0
-                events = []
         tasks = list(tasks or [])
         reminders = list(reminders or [])
         total_tasks = int(total_tasks or 0)
-        events = list(events or [])
-        total_events = int(total_events or 0)
+        events = [
+            {
+                "calendar_url": event.calendar_url,
+                "summary": event.summary,
+                "dtstart_utc": event.dtstart_utc,
+                "dtend_utc": event.dtend_utc,
+            }
+            for event in calendar_block.events
+        ]
+        total_events = len(events)
 
-        parts = ["<b>📅 План на сегодня</b>", f"<i>Задач: {total_tasks} · Напоминаний: {len(reminders)} · Событий: {total_events}</i>"]
+        parts = ["<b>рџ“… РџР»Р°РЅ РЅР° СЃРµРіРѕРґРЅСЏ</b>", f"<i>Р—Р°РґР°С‡: {total_tasks} В· РќР°РїРѕРјРёРЅР°РЅРёР№: {len(reminders)} В· РЎРѕР±С‹С‚РёР№: {total_events}</i>"]
         if toast_line:
             parts = [toast_line, ""] + parts
         if not tasks and not reminders and not events:
-            parts.extend(["", "На сегодня нет задач, напоминаний и событий."])
+            parts.extend(["", "РќР° СЃРµРіРѕРґРЅСЏ РЅРµС‚ Р·Р°РґР°С‡, РЅР°РїРѕРјРёРЅР°РЅРёР№ Рё СЃРѕР±С‹С‚РёР№."])
+            if calendar_block.unavailable:
+                parts.extend(["", "<i>РЎРѕР±С‹С‚РёСЏ РІСЂРµРјРµРЅРЅРѕ РЅРµРґРѕСЃС‚СѓРїРЅС‹.</i>"])
             return await ui_render(
                 bot=message.bot,
                 db_pool=db_pool,
@@ -1329,8 +1374,8 @@ async def ui_render_today(
                 text="\n".join(parts).strip(),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text="🗂 Выполнено", callback_data="nav:today:done")],
-                        [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                        [InlineKeyboardButton(text="рџ—‚ Р’С‹РїРѕР»РЅРµРЅРѕ", callback_data="nav:today:done")],
+                        [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
                     ]
                 ),
                 screen="today",
@@ -1342,7 +1387,7 @@ async def ui_render_today(
             )
 
         if events:
-            parts.extend(["", "<b>📅 События</b>"])
+            parts.extend(["", "<b>рџ“… РЎРѕР±С‹С‚РёСЏ</b>"])
             for event_row in events[:3]:
                 icon = _event_calendar_icon(
                     str(event_row.get("calendar_url") or ""),
@@ -1352,41 +1397,43 @@ async def ui_render_today(
                 start_local = _event_local(event_row.get("dtstart_utc"), tz)
                 end_local = _event_local(event_row.get("dtend_utc"), tz)
                 if start_local and end_local:
-                    time_range = f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
+                    time_range = f"{start_local.strftime('%H:%M')}вЂ“{end_local.strftime('%H:%M')}"
                 elif start_local:
                     time_range = start_local.strftime("%H:%M")
                 else:
-                    time_range = "—"
-                parts.append(f"{icon} <b>{h(time_range)}</b> • {h(str(event_row.get('summary') or 'Без названия'))}")
+                    time_range = "вЂ”"
+                parts.append(f"{icon} <b>{h(time_range)}</b> вЂў {h(str(event_row.get('summary') or 'Р‘РµР· РЅР°Р·РІР°РЅРёСЏ'))}")
             if total_events > 3:
-                parts.append(f"… ещё {total_events - 3}")
+                parts.append(f"вЂ¦ РµС‰С‘ {total_events - 3}")
+        elif calendar_block.unavailable:
+            parts.extend(["", "<b>рџ“… РЎРѕР±С‹С‚РёСЏ</b>", "<i>РЎРѕР±С‹С‚РёСЏ РІСЂРµРјРµРЅРЅРѕ РЅРµРґРѕСЃС‚СѓРїРЅС‹.</i>"])
 
         if tasks:
-            parts.extend(["", "<i>Нажмите на задачу ниже, чтобы открыть карточку.</i>"])
+            parts.extend(["", "<i>РќР°Р¶РјРёС‚Рµ РЅР° Р·Р°РґР°С‡Сѓ РЅРёР¶Рµ, С‡С‚РѕР±С‹ РѕС‚РєСЂС‹С‚СЊ РєР°СЂС‚РѕС‡РєСѓ.</i>"])
         elif reminders:
-            parts.extend(["", "<i>Задач на сегодня нет. Ниже только напоминания.</i>"])
+            parts.extend(["", "<i>Р—Р°РґР°С‡ РЅР° СЃРµРіРѕРґРЅСЏ РЅРµС‚. РќРёР¶Рµ С‚РѕР»СЊРєРѕ РЅР°РїРѕРјРёРЅР°РЅРёСЏ.</i>"])
         elif events:
-            parts.extend(["", "<i>Задач и напоминаний на сегодня нет. Ниже только календарные события.</i>"])
+            parts.extend(["", "<i>Р—Р°РґР°С‡ Рё РЅР°РїРѕРјРёРЅР°РЅРёР№ РЅР° СЃРµРіРѕРґРЅСЏ РЅРµС‚. РќРёР¶Рµ С‚РѕР»СЊРєРѕ РєР°Р»РµРЅРґР°СЂРЅС‹Рµ СЃРѕР±С‹С‚РёСЏ.</i>"])
 
         if reminders:
             head = reminders[0]
             dt_local = to_local(head.get("remind_at"), tz)
-            hhmm = dt_local.strftime("%H:%M") if dt_local else "—"
-            parts.extend(["", f"🔔 Ближайшее напоминание: <b>{h(hhmm)}</b> — {h(head.get('text') or '')}"])
+            hhmm = dt_local.strftime("%H:%M") if dt_local else "вЂ”"
+            parts.extend(["", f"рџ”” Р‘Р»РёР¶Р°Р№С€РµРµ РЅР°РїРѕРјРёРЅР°РЅРёРµ: <b>{h(hhmm)}</b> вЂ” {h(head.get('text') or '')}"])
 
         kb: list[list[InlineKeyboardButton]] = []
-        kb.extend(_single_column_task_buttons(tasks, icon="📅", tz=tz))
+        kb.extend(_single_column_task_buttons(tasks, icon="рџ“…", tz=tz))
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:
-            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:today:{page-1}"))
+            nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:today:{page-1}"))
         if (page + 1) * page_size < total_tasks:
-            nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:today:{page+1}"))
+            nav_row.append(InlineKeyboardButton(text="вћЎпёЏ", callback_data=f"nav:today:{page+1}"))
         if nav_row:
             kb.append(nav_row)
-        kb.append([InlineKeyboardButton(text="🗂 Выполнено", callback_data="nav:today:done")])
+        kb.append([InlineKeyboardButton(text="рџ—‚ Р’С‹РїРѕР»РЅРµРЅРѕ", callback_data="nav:today:done")])
         if reminders:
-            kb.append([InlineKeyboardButton(text="🔔 Напоминания", callback_data="nav:reminders:0")])
-        kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+            kb.append([InlineKeyboardButton(text="рџ”” РќР°РїРѕРјРёРЅР°РЅРёСЏ", callback_data="nav:reminders:0")])
+        kb.append([InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")])
 
         return await ui_render(
             bot=message.bot,
@@ -1406,7 +1453,7 @@ async def ui_render_today(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=int(message.chat.id),
-            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
+            text=f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}",
             reply_markup=back_home_kb(),
             screen="home",
             fallback_message=message,
@@ -1454,7 +1501,7 @@ async def ui_render_all_tasks(
 
     def _short(s: str, n: int = 30) -> str:
         s = (s or "").strip()
-        return s if len(s) <= n else (s[: n - 1] + "…")
+        return s if len(s) <= n else (s[: n - 1] + "вЂ¦")
 
     try:
         async with db_pool.acquire() as conn:
@@ -1474,7 +1521,7 @@ async def ui_render_all_tasks(
                 )
                 rows = await conn.fetch(
                     """
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -1508,7 +1555,7 @@ async def ui_render_all_tasks(
                 )
                 rows = await conn.fetch(
                     """
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -1540,7 +1587,7 @@ async def ui_render_all_tasks(
                 )
                 rows = await conn.fetch(
                     """
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -1567,7 +1614,7 @@ async def ui_render_all_tasks(
                 )
                 rows = await conn.fetch(
                     """
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -1585,7 +1632,7 @@ async def ui_render_all_tasks(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=chat_id,
-            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
+            text=f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}",
             reply_markup=back_home_kb(),
             screen="all_tasks",
             fallback_message=message,
@@ -1598,24 +1645,24 @@ async def ui_render_all_tasks(
     rows = list(rows or [])
 
     filter_titles = {
-        "all": "Все",
-        "overdue": "Просрочено",
-        "today": "Сегодня",
-        "nodate": "Без срока",
+        "all": "Р’СЃРµ",
+        "overdue": "РџСЂРѕСЃСЂРѕС‡РµРЅРѕ",
+        "today": "РЎРµРіРѕРґРЅСЏ",
+        "nodate": "Р‘РµР· СЃСЂРѕРєР°",
     }
-    filter_title = filter_titles.get(filter_key, "Все")
+    filter_title = filter_titles.get(filter_key, "Р’СЃРµ")
 
     lines: list[str] = [
-        "📋 <b>Все задачи</b>",
-        f"<i>Фильтр: {h(filter_title)} · Всего: {total}</i>",
+        "рџ“‹ <b>Р’СЃРµ Р·Р°РґР°С‡Рё</b>",
+        f"<i>Р¤РёР»СЊС‚СЂ: {h(filter_title)} В· Р’СЃРµРіРѕ: {total}</i>",
         "",
     ]
     if toast_line:
         lines = [toast_line, ""] + lines
     if not rows:
-        lines.append("По выбранному фильтру задач нет.")
+        lines.append("РџРѕ РІС‹Р±СЂР°РЅРЅРѕРјСѓ С„РёР»СЊС‚СЂСѓ Р·Р°РґР°С‡ РЅРµС‚.")
     else:
-        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
+        lines.append("РќР°Р¶РјРёС‚Рµ РЅР° Р·Р°РґР°С‡Сѓ РЅРёР¶Рµ, С‡С‚РѕР±С‹ РѕС‚РєСЂС‹С‚СЊ РєР°СЂС‚РѕС‡РєСѓ.")
 
     kb: list[list[InlineKeyboardButton]] = []
 
@@ -1623,23 +1670,23 @@ async def ui_render_all_tasks(
     filter_order = ("all", "overdue", "today", "nodate")
     for key in filter_order:
         title = filter_titles[key]
-        text = f"• {title}" if key == filter_key else title
+        text = f"вЂў {title}" if key == filter_key else title
         filter_buttons.append(InlineKeyboardButton(text=text, callback_data=f"nav:all:{key}"))
     kb.append(filter_buttons)
 
-    kb.extend(_single_column_task_buttons(rows, icon="📋", tz=tz))
+    kb.extend(_single_column_task_buttons(rows, icon="рџ“‹", tz=tz))
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:all:{filter_key}:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:all:{filter_key}:{page-1}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:all:{filter_key}:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="вћЎпёЏ", callback_data=f"nav:all:{filter_key}:{page+1}"))
     if nav_row:
         kb.append(nav_row)
 
     kb.append([
-        InlineKeyboardButton(text="⬅️ Проекты", callback_data="nav:projects"),
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+        InlineKeyboardButton(text="в¬…пёЏ РџСЂРѕРµРєС‚С‹", callback_data="nav:projects"),
+        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
     ])
 
     return await ui_render(
@@ -1679,22 +1726,22 @@ async def ui_render_work(
 
     def _short(s: str, n: int = 30) -> str:
         s = (s or "").strip()
-        return s if len(s) <= n else (s[: n - 1] + "…")
+        return s if len(s) <= n else (s[: n - 1] + "вЂ¦")
 
     def _line(marker: str, project: str, title: str, assignee: str, dt_local: datetime | None) -> list[str]:
-        proj = (project or "—").strip()
+        proj = (project or "вЂ”").strip()
         t = (title or "").strip()
-        a = (assignee or "—").strip()
-        due = dt_local.strftime("%d.%m %H:%M") if dt_local else "без срока"
+        a = (assignee or "вЂ”").strip()
+        due = dt_local.strftime("%d.%m %H:%M") if dt_local else "Р±РµР· СЃСЂРѕРєР°"
         if len(t) > 40:
-            t_show = t if len(t) <= 90 else (t[:89] + "…")
+            t_show = t if len(t) <= 90 else (t[:89] + "вЂ¦")
             return [
                 f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   {h(a)} → <i>{h('до ' + due) if dt_local else h(due)}</i>",
+                f"   {h(a)} в†’ <i>{h('РґРѕ ' + due) if dt_local else h(due)}</i>",
             ]
-        t_show = t if len(t) <= 90 else (t[:89] + "…")
-        due_part = f"до {due}" if dt_local else due
-        return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h(due_part)}</i>"]
+        t_show = t if len(t) <= 90 else (t[:89] + "вЂ¦")
+        due_part = f"РґРѕ {due}" if dt_local else due
+        return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} вЂ” {h(a)}, <i>{h(due_part)}</i>"]
 
     try:
         async with db_pool.acquire() as conn:
@@ -1721,7 +1768,7 @@ async def ui_render_work(
             if args:
                 rows = await conn.fetch(
                     f"""
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -1736,7 +1783,7 @@ async def ui_render_work(
             else:
                 rows = await conn.fetch(
                     f"""
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                     FROM tasks t
                     JOIN projects p ON p.id=t.project_id
                     LEFT JOIN team tm ON tm.id=t.assignee_id
@@ -1752,7 +1799,7 @@ async def ui_render_work(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=chat_id,
-            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
+            text=f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}",
             reply_markup=back_home_kb(),
             screen="work",
             fallback_message=message,
@@ -1764,32 +1811,32 @@ async def ui_render_work(
     rows = list(rows or [])
     total = int(total or 0)
 
-    head = "<b>⚡ В РАБОТЕ</b>"
+    head = "<b>вљЎ Р’ Р РђР‘РћРўР•</b>"
     if current_project_code and not current_project_is_inbox:
-        head += f" — <b>{h(current_project_code)}</b>"
-    lines = [head, f"<i>Всего: {total}</i>", ""]
+        head += f" вЂ” <b>{h(current_project_code)}</b>"
+    lines = [head, f"<i>Р’СЃРµРіРѕ: {total}</i>", ""]
     if toast_line:
         lines = [toast_line, ""] + lines
     if not rows:
-        lines.append("Задач в работе нет.")
+        lines.append("Р—Р°РґР°С‡ РІ СЂР°Р±РѕС‚Рµ РЅРµС‚.")
     else:
-        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
+        lines.append("РќР°Р¶РјРёС‚Рµ РЅР° Р·Р°РґР°С‡Сѓ РЅРёР¶Рµ, С‡С‚РѕР±С‹ РѕС‚РєСЂС‹С‚СЊ РєР°СЂС‚РѕС‡РєСѓ.")
 
     # Keyboard
     kb: list[list[InlineKeyboardButton]] = []
-    kb.extend(_single_column_task_buttons(rows, icon="⚡", tz=tz))
+    kb.extend(_single_column_task_buttons(rows, icon="вљЎ", tz=tz))
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:work:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:work:{page-1}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:work:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="вћЎпёЏ", callback_data=f"nav:work:{page+1}"))
     if nav_row:
         kb.append(nav_row)
 
     kb.append([
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-        InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"),
+        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
+        InlineKeyboardButton(text="рџ“Ѓ РџСЂРѕРµРєС‚С‹", callback_data="nav:projects"),
     ])
 
     return await ui_render(
@@ -1826,21 +1873,21 @@ async def ui_render_inbox(
 
     def _short(s: str, n: int = 30) -> str:
         s = (s or "").strip()
-        return s if len(s) <= n else (s[: n - 1] + "…")
+        return s if len(s) <= n else (s[: n - 1] + "вЂ¦")
 
     def _line(title: str, assignee: str, dt_local: datetime | None) -> list[str]:
         t = (title or "").strip()
-        a = (assignee or "—").strip()
-        due = dt_local.strftime("%d.%m %H:%M") if dt_local else "без срока"
+        a = (assignee or "вЂ”").strip()
+        due = dt_local.strftime("%d.%m %H:%M") if dt_local else "Р±РµР· СЃСЂРѕРєР°"
         if len(t) > 40:
-            t_show = t if len(t) <= 90 else (t[:89] + "…")
+            t_show = t if len(t) <= 90 else (t[:89] + "вЂ¦")
             return [
-                f"📥 {h(t_show)}",
-                f"   {h(a)} → <i>{h('до ' + due) if dt_local else h(due)}</i>",
+                f"рџ“Ґ {h(t_show)}",
+                f"   {h(a)} в†’ <i>{h('РґРѕ ' + due) if dt_local else h(due)}</i>",
             ]
-        t_show = t if len(t) <= 90 else (t[:89] + "…")
-        due_part = f"до {due}" if dt_local else due
-        return [f"📥 {h(t_show)} — {h(a)}, <i>{h(due_part)}</i>"]
+        t_show = t if len(t) <= 90 else (t[:89] + "вЂ¦")
+        due_part = f"РґРѕ {due}" if dt_local else due
+        return [f"рџ“Ґ {h(t_show)} вЂ” {h(a)}, <i>{h(due_part)}</i>"]
 
     toast_line: str | None = None
 
@@ -1859,7 +1906,7 @@ async def ui_render_inbox(
                     bot=message.bot,
                     db_pool=db_pool,
                     chat_id=chat_id,
-                    text="❌ Проект INBOX не найден.",
+                    text="вќЊ РџСЂРѕРµРєС‚ INBOX РЅРµ РЅР°Р№РґРµРЅ.",
                     reply_markup=back_home_kb(),
                     screen="inbox",
                     fallback_message=message,
@@ -1876,7 +1923,7 @@ async def ui_render_inbox(
 
             rows = await conn.fetch(
                 """
-                SELECT t.id, t.title, COALESCE(tm.name,'—') AS assignee, t.deadline, t.created_at
+                SELECT t.id, t.title, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline, t.created_at
                 FROM tasks t
                 LEFT JOIN team tm ON tm.id=t.assignee_id
                 WHERE t.status != 'done' AND t.kind != 'super' AND t.project_id=$1
@@ -1892,7 +1939,7 @@ async def ui_render_inbox(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=chat_id,
-            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
+            text=f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}",
             reply_markup=back_home_kb(),
             screen="inbox",
             fallback_message=message,
@@ -1906,33 +1953,33 @@ async def ui_render_inbox(
     lines: list[str] = []
     if toast_line:
         lines.extend([toast_line, ""])
-    lines.extend(["📥 <b>INBOX</b> — входящие", f"<i>Всего: {total}</i>", ""])
+    lines.extend(["рџ“Ґ <b>INBOX</b> вЂ” РІС…РѕРґСЏС‰РёРµ", f"<i>Р’СЃРµРіРѕ: {total}</i>", ""])
     if not rows:
-        lines.append("Inbox пуст. Добавляйте задачи через ➕ Добавить или ⚡ Быстрая задача.")
+        lines.append("Inbox РїСѓСЃС‚. Р”РѕР±Р°РІР»СЏР№С‚Рµ Р·Р°РґР°С‡Рё С‡РµСЂРµР· вћ• Р”РѕР±Р°РІРёС‚СЊ РёР»Рё вљЎ Р‘С‹СЃС‚СЂР°СЏ Р·Р°РґР°С‡Р°.")
     else:
-        lines.append("Нажмите на задачу ниже или запустите разбор по одной.")
+        lines.append("РќР°Р¶РјРёС‚Рµ РЅР° Р·Р°РґР°С‡Сѓ РЅРёР¶Рµ РёР»Рё Р·Р°РїСѓСЃС‚РёС‚Рµ СЂР°Р·Р±РѕСЂ РїРѕ РѕРґРЅРѕР№.")
 
     kb: list[list[InlineKeyboardButton]] = []
     kb.append(
         [
-            InlineKeyboardButton(text="🧹 Разобрать", callback_data="inbox:triage:start"),
-            InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
+            InlineKeyboardButton(text="рџ§№ Р Р°Р·РѕР±СЂР°С‚СЊ", callback_data="inbox:triage:start"),
+            InlineKeyboardButton(text="вљЎпёЏ Р‘С‹СЃС‚СЂР°СЏ Р·Р°РґР°С‡Р°", callback_data="quick:task"),
         ]
     )
 
-    kb.extend(_single_column_task_buttons(rows, icon="📥", project_key=None, tz=tz))
+    kb.extend(_single_column_task_buttons(rows, icon="рџ“Ґ", project_key=None, tz=tz))
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:inbox:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:inbox:{page-1}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:inbox:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="вћЎпёЏ", callback_data=f"nav:inbox:{page+1}"))
     if nav_row:
         kb.append(nav_row)
 
     kb.append([
-        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:inbox:{page}"),
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+        InlineKeyboardButton(text="рџ”„ РћР±РЅРѕРІРёС‚СЊ", callback_data=f"nav:inbox:{page}"),
+        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
     ])
 
     return await ui_render(
@@ -1970,21 +2017,21 @@ async def ui_render_overdue(
 
     def _short(s: str, n: int = 30) -> str:
         s = (s or "").strip()
-        return s if len(s) <= n else (s[: n - 1] + "…")
+        return s if len(s) <= n else (s[: n - 1] + "вЂ¦")
 
     def _task_lines(project: str, title: str, assignee: str, dt_local: datetime | None) -> list[str]:
-        proj = (project or "—").strip()
+        proj = (project or "вЂ”").strip()
         t = (title or "").strip()
-        a = (assignee or "—").strip()
-        due = dt_local.strftime("%d.%m %H:%M") if dt_local else "—"
+        a = (assignee or "вЂ”").strip()
+        due = dt_local.strftime("%d.%m %H:%M") if dt_local else "вЂ”"
         if len(t) > 40:
-            t_show = t if len(t) <= 90 else (t[:89] + "…")
+            t_show = t if len(t) <= 90 else (t[:89] + "вЂ¦")
             return [
-                f"🔥 <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   {h(a)} → <i>{h('был ' + due)}</i>",
+                f"рџ”Ґ <b>[{h(proj)}]</b> {h(t_show)}",
+                f"   {h(a)} в†’ <i>{h('Р±С‹Р» ' + due)}</i>",
             ]
-        t_show = t if len(t) <= 90 else (t[:89] + "…")
-        return [f"🔥 <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h('был ' + due)}</i>"]
+        t_show = t if len(t) <= 90 else (t[:89] + "вЂ¦")
+        return [f"рџ”Ґ <b>[{h(proj)}]</b> {h(t_show)} вЂ” {h(a)}, <i>{h('Р±С‹Р» ' + due)}</i>"]
 
     try:
         async with db_pool.acquire() as conn:
@@ -1995,7 +2042,7 @@ async def ui_render_overdue(
             total = int(total or 0)
             rows = await conn.fetch(
                 """
-                SELECT t.id, t.title, p.code as project, COALESCE(tm.name,'—') as assignee, t.deadline
+                SELECT t.id, t.title, p.code as project, COALESCE(tm.name,'вЂ”') as assignee, t.deadline
                 FROM tasks t
                 JOIN projects p ON t.project_id = p.id
                 LEFT JOIN team tm ON t.assignee_id = tm.id
@@ -2012,7 +2059,7 @@ async def ui_render_overdue(
             bot=message.bot,
             db_pool=db_pool,
             chat_id=chat_id,
-            text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
+            text=f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}",
             reply_markup=back_home_kb(),
             screen="overdue",
             fallback_message=message,
@@ -2023,33 +2070,33 @@ async def ui_render_overdue(
 
     rows = list(rows or [])
 
-    lines = [f"<b>🔥 СРОЧНО</b> — просроченные задачи", f"<i>Всего: {total}</i>", ""]
+    lines = [f"<b>рџ”Ґ РЎР РћР§РќРћ</b> вЂ” РїСЂРѕСЃСЂРѕС‡РµРЅРЅС‹Рµ Р·Р°РґР°С‡Рё", f"<i>Р’СЃРµРіРѕ: {total}</i>", ""]
     if toast_line:
         lines = [toast_line, ""] + lines
     kb: list[list[InlineKeyboardButton]] = []
 
     if not rows:
-        lines = ([toast_line, ""] if toast_line else []) + ["🎉 <b>Просроченных задач нет.</b>"]
+        lines = ([toast_line, ""] if toast_line else []) + ["рџЋ‰ <b>РџСЂРѕСЃСЂРѕС‡РµРЅРЅС‹С… Р·Р°РґР°С‡ РЅРµС‚.</b>"]
     else:
-        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
+        lines.append("РќР°Р¶РјРёС‚Рµ РЅР° Р·Р°РґР°С‡Сѓ РЅРёР¶Рµ, С‡С‚РѕР±С‹ РѕС‚РєСЂС‹С‚СЊ РєР°СЂС‚РѕС‡РєСѓ.")
 
-        kb.extend(_single_column_task_buttons(rows, icon="🔥", tz=tz))
+        kb.extend(_single_column_task_buttons(rows, icon="рџ”Ґ", tz=tz))
 
         # Bulk actions
-        kb.append([InlineKeyboardButton(text="🧹 Разгрести", callback_data="bulk:start:0")])
+        kb.append([InlineKeyboardButton(text="рџ§№ Р Р°Р·РіСЂРµСЃС‚Рё", callback_data="bulk:start:0")])
 
         # Pagination
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:
-            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:overdue:{page-1}"))
+            nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:overdue:{page-1}"))
         if (page + 1) * page_size < total:
-            nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:overdue:{page+1}"))
+            nav_row.append(InlineKeyboardButton(text="вћЎпёЏ", callback_data=f"nav:overdue:{page+1}"))
         if nav_row:
             kb.append(nav_row)
 
     kb.append([
-        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:overdue:{page}"),
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+        InlineKeyboardButton(text="рџ”„ РћР±РЅРѕРІРёС‚СЊ", callback_data=f"nav:overdue:{page}"),
+        InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
     ])
 
     return await ui_render(
@@ -2065,5 +2112,7 @@ async def ui_render_overdue(
         force_new=force_new,
         parse_mode="HTML",
     )
+
+
 
 

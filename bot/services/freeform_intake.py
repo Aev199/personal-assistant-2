@@ -429,7 +429,7 @@ async def _render_screen(
     if screen == "projects":
         return await ui_render_projects_portfolio(message, db_pool, tz_name=tz_name, force_new=False)
     if screen == "today":
-        return await ui_render_today(message, db_pool, tz_name=tz_name, force_new=False)
+        return await ui_render_today(message, db_pool, tz_name=tz_name, icloud=deps.icloud, force_new=False)
     if screen == "overdue":
         page = int((payload or {}).get("page") or 0)
         return await ui_render_overdue(message, db_pool, page=page, tz_name=tz_name, force_new=False)

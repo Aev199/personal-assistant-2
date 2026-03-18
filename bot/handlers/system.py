@@ -1,4 +1,4 @@
-"""System and SPA glue handlers.
+﻿"""System and SPA glue handlers.
 
 This module contains the remaining top-level commands, reply-keyboard routers,
 and a few utility screens (sync status, Today pick/done, global tails).
@@ -102,13 +102,13 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
 
     await state.clear()
     if db_pool is None:
-        return await message.answer("⚠️ Undo доступен только при подключённой БД.")
+        return await message.answer("вљ пёЏ Undo РґРѕСЃС‚СѓРїРµРЅ С‚РѕР»СЊРєРѕ РїСЂРё РїРѕРґРєР»СЋС‡С‘РЅРЅРѕР№ Р‘Р”.")
 
     await try_delete_user_message(message)
 
     chat_id = int(message.chat.id)
     work_project_id: int | None = None
-    toast = "Нечего отменять."
+    toast = "РќРµС‡РµРіРѕ РѕС‚РјРµРЅСЏС‚СЊ."
 
     try:
         async with db_pool.acquire() as conn:
@@ -131,10 +131,10 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
                     if row:
                         work_project_id = int(row["project_id"])
                         await conn.execute("DELETE FROM tasks WHERE id=$1", task_id)
-                        await db_add_event(conn, "task_undo", work_project_id, None, f"↩️ Отмена создания задачи #{task_id} {row['title']}")
-                        toast = f"↩️ Отменил задачу: {row['title']}"
+                        await db_add_event(conn, "task_undo", work_project_id, None, f"в†©пёЏ РћС‚РјРµРЅР° СЃРѕР·РґР°РЅРёСЏ Р·Р°РґР°С‡Рё #{task_id} {row['title']}")
+                        toast = f"в†©пёЏ РћС‚РјРµРЅРёР» Р·Р°РґР°С‡Сѓ: {row['title']}"
                     else:
-                        toast = "Задача уже отсутствует."
+                        toast = "Р—Р°РґР°С‡Р° СѓР¶Рµ РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚."
                 elif action == "reminder":
                     reminder_id = int(undo.get("reminder_id") or 0)
                     row = await conn.fetchrow("SELECT text, status FROM reminders WHERE id=$1", reminder_id)
@@ -151,37 +151,37 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
                             reminder_id,
                         )
                         text = str(row["text"] or "")
-                        await db_add_event(conn, "reminder_undo", None, None, f"↩️ Отмена напоминания: {text or reminder_id}")
-                        toast = f"↩️ Напоминание отменено: {text or 'без текста'}"
+                        await db_add_event(conn, "reminder_undo", None, None, f"в†©пёЏ РћС‚РјРµРЅР° РЅР°РїРѕРјРёРЅР°РЅРёСЏ: {text or reminder_id}")
+                        toast = f"в†©пёЏ РќР°РїРѕРјРёРЅР°РЅРёРµ РѕС‚РјРµРЅРµРЅРѕ: {text or 'Р±РµР· С‚РµРєСЃС‚Р°'}"
                     elif row:
-                        toast = "Напоминание уже отправлено или отменено."
+                        toast = "РќР°РїРѕРјРёРЅР°РЅРёРµ СѓР¶Рµ РѕС‚РїСЂР°РІР»РµРЅРѕ РёР»Рё РѕС‚РјРµРЅРµРЅРѕ."
                     else:
-                        toast = "Напоминание уже отсутствует."
+                        toast = "РќР°РїРѕРјРёРЅР°РЅРёРµ СѓР¶Рµ РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚."
                 elif action == "personal_task":
                     gtasks = getattr(deps, "gtasks", None)
                     list_id = str(undo.get("list_id") or "")
                     g_task_id = str(undo.get("g_task_id") or "")
-                    title = str(undo.get("title") or "личное дело")
+                    title = str(undo.get("title") or "Р»РёС‡РЅРѕРµ РґРµР»Рѕ")
                     if gtasks is None or not gtasks.enabled() or not list_id or not g_task_id:
                         raise RuntimeError("Google Tasks undo unavailable")
                     await gtasks.delete_task(list_id, g_task_id)
-                    await db_add_event(conn, "personal_task_undo", None, None, f"↩️ Отмена личной задачи: {title}")
-                    toast = f"↩️ Личное дело отменено: {title}"
+                    await db_add_event(conn, "personal_task_undo", None, None, f"в†©пёЏ РћС‚РјРµРЅР° Р»РёС‡РЅРѕР№ Р·Р°РґР°С‡Рё: {title}")
+                    toast = f"в†©пёЏ Р›РёС‡РЅРѕРµ РґРµР»Рѕ РѕС‚РјРµРЅРµРЅРѕ: {title}"
                 elif action == "idea":
                     gtasks = getattr(deps, "gtasks", None)
                     list_id = str(undo.get("list_id") or "")
                     g_task_id = str(undo.get("g_task_id") or "")
-                    title = str(undo.get("title") or "идея")
+                    title = str(undo.get("title") or "РёРґРµСЏ")
                     if gtasks is None or not gtasks.enabled() or not list_id or not g_task_id:
                         raise RuntimeError("Google Tasks undo unavailable")
                     await gtasks.delete_task(list_id, g_task_id)
-                    await db_add_event(conn, "idea_undo", None, None, f"↩️ Отмена идеи: {title}")
-                    toast = f"↩️ Идея отменена: {title}"
+                    await db_add_event(conn, "idea_undo", None, None, f"в†©пёЏ РћС‚РјРµРЅР° РёРґРµРё: {title}")
+                    toast = f"в†©пёЏ РРґРµСЏ РѕС‚РјРµРЅРµРЅР°: {title}"
                 elif action == "event":
                     icloud = getattr(deps, "icloud", None)
                     ics_url = str(undo.get("ics_url") or "")
                     calendar_url = str(undo.get("calendar_url") or "")
-                    summary = str(undo.get("summary") or "событие")
+                    summary = str(undo.get("summary") or "СЃРѕР±С‹С‚РёРµ")
                     dtstart_utc = str(undo.get("dtstart_utc") or "")
                     dtend_utc = str(undo.get("dtend_utc") or "")
                     work_project_id = int(undo.get("project_id") or 0) or None
@@ -201,8 +201,8 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
                             dtstart_utc,
                             dtend_utc,
                         )
-                    await db_add_event(conn, "ical_event_undo", work_project_id, None, f"↩️ Отмена события: {summary}")
-                    toast = f"↩️ Событие отменено: {summary}"
+                    await db_add_event(conn, "ical_event_undo", work_project_id, None, f"в†©пёЏ РћС‚РјРµРЅР° СЃРѕР±С‹С‚РёСЏ: {summary}")
+                    toast = f"в†©пёЏ РЎРѕР±С‹С‚РёРµ РѕС‚РјРµРЅРµРЅРѕ: {summary}"
 
                 if journal and journal.get("id"):
                     await mark_action_undone(conn, int(journal["id"]))
@@ -212,7 +212,7 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
                 await ui_set_state(conn, chat_id, ui_payload=payload)
     except Exception as e:
         await db_log_error(db_pool, "msg_undo_last", e, {"chat_id": chat_id})
-        toast = "Не удалось выполнить undo."
+        toast = "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ undo."
 
     if work_project_id:
         fire_and_forget(
@@ -257,7 +257,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Вы вернулись к незавершенному черновику. Продолжите диалог или нажмите Отмена.",
+            text="Р’С‹ РІРµСЂРЅСѓР»РёСЃСЊ Рє РЅРµР·Р°РІРµСЂС€РµРЅРЅРѕРјСѓ С‡РµСЂРЅРѕРІРёРєСѓ. РџСЂРѕРґРѕР»Р¶РёС‚Рµ РґРёР°Р»РѕРі РёР»Рё РЅР°Р¶РјРёС‚Рµ РћС‚РјРµРЅР°.",
             reply_markup=None,
         )
         return
@@ -272,7 +272,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
     if final_id == 0:
         # Fallback: send a simple message if SPA rendering failed completely
         sent_message = await message.answer(
-            "⚠️ Не удалось отобразить главный экран. Попробуйте позже.",
+            "вљ пёЏ РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РѕР±СЂР°Р·РёС‚СЊ РіР»Р°РІРЅС‹Р№ СЌРєСЂР°РЅ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.",
             reply_markup=back_home_kb(),
         )
         final_id = sent_message.message_id
@@ -307,7 +307,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Вы вернулись к незавершенному черновику. Продолжите диалог или нажмите Отмена.",
+            text="Р’С‹ РІРµСЂРЅСѓР»РёСЃСЊ Рє РЅРµР·Р°РІРµСЂС€РµРЅРЅРѕРјСѓ С‡РµСЂРЅРѕРІРёРєСѓ. РџСЂРѕРґРѕР»Р¶РёС‚Рµ РґРёР°Р»РѕРі РёР»Рё РЅР°Р¶РјРёС‚Рµ РћС‚РјРµРЅР°.",
             reply_markup=None,
         )
         return
@@ -322,7 +322,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
     if final_id == 0:
         # Fallback: send a simple message if SPA rendering failed completely
         sent_message = await message.answer(
-            "⚠️ Не удалось отобразить главный экран. Попробуйте позже.",
+            "вљ пёЏ РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РѕР±СЂР°Р·РёС‚СЊ РіР»Р°РІРЅС‹Р№ СЌРєСЂР°РЅ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.",
             reply_markup=back_home_kb(),
         )
         final_id = sent_message.message_id
@@ -357,15 +357,15 @@ async def cmd_tz(message: Message, deps: AppDeps, db_pool: asyncpg.Pool | None =
         off = None
 
     txt = (
-        "🕰 <b>TZ debug</b>\n"
-        f"BOT_TIMEZONE={env_bot_tz or '—'}\n"
-        f"TZ={env_tz or '—'}\n"
-        f"deps.tz_name={dep_tz or '—'}\n"
+        "рџ•° <b>TZ debug</b>\n"
+        f"BOT_TIMEZONE={env_bot_tz or 'вЂ”'}\n"
+        f"TZ={env_tz or 'вЂ”'}\n"
+        f"deps.tz_name={dep_tz or 'вЂ”'}\n"
         f"resolve_tz_name(...)={resolved_name}\n"
         f"tzinfo={type(tzinfo).__name__} offset={off}\n\n"
         f"now_sys={now_sys.isoformat()}\n"
         f"now_utc={now_utc.isoformat()}\n\n"
-        f"sample_utc_naive=2026-03-04 15:00 → local={sample_local.isoformat() if sample_local else '—'}\n"
+        f"sample_utc_naive=2026-03-04 15:00 в†’ local={sample_local.isoformat() if sample_local else 'вЂ”'}\n"
     )
 
     # DB diagnostics (optional)
@@ -383,9 +383,9 @@ async def cmd_tz(message: Message, deps: AppDeps, db_pool: asyncpg.Pool | None =
             ct = {(r['table_name'], r['column_name']): (r['data_type'] or '') for r in cols}
             txt += (
                 "\n<b>DB</b>\n"
-                f"db_session_tz={h(str(db_tz or '—'))}\n"
-                f"tasks.deadline={h(ct.get(('tasks','deadline'),'—'))}\n"
-                f"reminders.remind_at={h(ct.get(('reminders','remind_at'),'—'))}\n"
+                f"db_session_tz={h(str(db_tz or 'вЂ”'))}\n"
+                f"tasks.deadline={h(ct.get(('tasks','deadline'),'вЂ”'))}\n"
+                f"reminders.remind_at={h(ct.get(('reminders','remind_at'),'вЂ”'))}\n"
                 f"deps.db_tasks_deadline_timestamptz={getattr(deps,'db_tasks_deadline_timestamptz', False)}\n"
                 f"deps.db_reminders_remind_at_timestamptz={getattr(deps,'db_reminders_remind_at_timestamptz', False)}\n"
             )
@@ -425,9 +425,9 @@ async def cmd_help(message: Message, state: FSMContext, deps: AppDeps, db_pool: 
         return
 
     help_text = (
-        "🛠 Доступно (основной режим — кнопки внизу):\n\n"
-        "Откройте справку: /help\n"
-        "Для основной навигации используйте кнопки внизу."
+        "рџ›  Р”РѕСЃС‚СѓРїРЅРѕ (РѕСЃРЅРѕРІРЅРѕР№ СЂРµР¶РёРј вЂ” РєРЅРѕРїРєРё РІРЅРёР·Сѓ):\n\n"
+        "РћС‚РєСЂРѕР№С‚Рµ СЃРїСЂР°РІРєСѓ: /help\n"
+        "Р”Р»СЏ РѕСЃРЅРѕРІРЅРѕР№ РЅР°РІРёРіР°С†РёРё РёСЃРїРѕР»СЊР·СѓР№С‚Рµ РєРЅРѕРїРєРё РІРЅРёР·Сѓ."
     )
     await message.answer(help_text, reply_markup=main_menu_kb())
 
@@ -482,7 +482,7 @@ async def cmd_help_button_router(message: Message, state: FSMContext, db_pool: a
 
 async def cb_sync_status(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if not callback.from_user or callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
     await state.clear()
     vault = deps.vault
@@ -494,24 +494,24 @@ async def cb_sync_status(callback: CallbackQuery, state: FSMContext, db_pool: as
                 "vault",
             )
 
-        status = "—"
+        status = "вЂ”"
         details = ""
         if row:
             ok_at = row["last_ok_at"]
             err_at = row["last_error_at"]
             err = (row["last_error"] or "").strip()
             if ok_at and (not err_at or ok_at >= err_at):
-                status = f"✅ OK — {fmt_msk(ok_at)}"
+                status = f"вњ… OK вЂ” {fmt_msk(ok_at)}"
             elif err_at:
-                status = f"❌ Ошибка — {fmt_msk(err_at)}"
+                status = f"вќЊ РћС€РёР±РєР° вЂ” {fmt_msk(err_at)}"
                 if err:
                     details = f"\n\n<i>{h(err)}</i>"
 
-        text = f"🔄 <b>Синхронизация</b>\n\nVault/Obsidian: <b>{h(status)}</b>{details}"
+        text = f"рџ”„ <b>РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ</b>\n\nVault/Obsidian: <b>{h(status)}</b>{details}"
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🔁 Повторить", callback_data="sync:retry")],
-                [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+                [InlineKeyboardButton(text="рџ”Ѓ РџРѕРІС‚РѕСЂРёС‚СЊ", callback_data="sync:retry")],
+                [InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home")],
             ]
         )
         await ui_render(
@@ -526,12 +526,12 @@ async def cb_sync_status(callback: CallbackQuery, state: FSMContext, db_pool: as
             parse_mode="HTML",
         )
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def cb_sync_retry(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if not callback.from_user or callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
     await state.clear()
     vault = deps.vault
@@ -546,7 +546,7 @@ async def cb_sync_retry(callback: CallbackQuery, state: FSMContext, db_pool: asy
 
             ui_state = await ui_get_state(conn, chat_id)
             payload = _ui_payload_get(ui_state)
-            payload = ui_payload_with_toast(payload, "🔄 Запустил синхронизацию…", ttl_sec=20)
+            payload = ui_payload_with_toast(payload, "рџ”„ Р—Р°РїСѓСЃС‚РёР» СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёСЋвЂ¦", ttl_sec=20)
             await ui_set_state(conn, chat_id, ui_payload=payload)
 
         vault = deps.vault
@@ -554,34 +554,14 @@ async def cb_sync_retry(callback: CallbackQuery, state: FSMContext, db_pool: asy
             fire_and_forget(background_project_sync(int(pid), db_pool, vault), label=f"sync:retry:{pid}")
         await ui_render_home(callback.message, db_pool, tz_name=resolve_tz_name(deps.tz_name), force_new=False)
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
-async def cb_today_pick(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
-    if not callback.from_user or callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
-    await callback.answer()
-    await state.clear()
-    try:
-        parts = (callback.data or "").split(":")
-        page = 0
-        if len(parts) >= 4 and parts[3].isdigit():
-            page = max(0, int(parts[3]))
-        from bot.ui import ui_render_today
-
-        await ui_render_today(
-            callback.message,
-            db_pool,
-            tz_name=resolve_tz_name(deps.tz_name),
-            page=page,
-        )
-    except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if not callback.from_user or callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
     await state.clear()
     try:
@@ -598,17 +578,17 @@ async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asy
                 """,
                 tz_name,
             )
-        lines = ["✅ СДЕЛАНО СЕГОДНЯ", ""]
+        lines = ["вњ… РЎР”Р•Р›РђРќРћ РЎР•Р“РћР”РќРЇ", ""]
         if not rows:
-            lines.append("Пока ничего не закрыто.")
+            lines.append("РџРѕРєР° РЅРёС‡РµРіРѕ РЅРµ Р·Р°РєСЂС‹С‚Рѕ.")
         else:
             for r in rows:
                 lines.append(r["text"])
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="⬅ Сегодня", callback_data="nav:today"),
-                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                    InlineKeyboardButton(text="в¬… РЎРµРіРѕРґРЅСЏ", callback_data="nav:today"),
+                    InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
                 ]
             ]
         )
@@ -624,7 +604,7 @@ async def cb_today_done(callback: CallbackQuery, state: FSMContext, db_pool: asy
             parse_mode=None,
         )
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def _render_global_tails_screen(msg: Message, db_pool: asyncpg.Pool, back_cb: str, deps: AppDeps):
@@ -633,19 +613,19 @@ async def _render_global_tails_screen(msg: Message, db_pool: asyncpg.Pool, back_
         postponed = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND status='postponed'")
 
     parts = [
-        "<b>🧺 ХВОСТЫ</b>",
-        f"💤 Без срока: <b>{int(nodate or 0)}</b>",
-        f"⏸ Отложено: <b>{int(postponed or 0)}</b>",
+        "<b>рџ§є РҐР’РћРЎРўР«</b>",
+        f"рџ’¤ Р‘РµР· СЃСЂРѕРєР°: <b>{int(nodate or 0)}</b>",
+        f"вЏё РћС‚Р»РѕР¶РµРЅРѕ: <b>{int(postponed or 0)}</b>",
         "",
-        "<i>Выберите список:</i>",
+        "<i>Р’С‹Р±РµСЂРёС‚Рµ СЃРїРёСЃРѕРє:</i>",
     ]
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💤 Без срока", callback_data=f"nav:tails_pick:nodate:0:{back_cb}")],
-            [InlineKeyboardButton(text="⏸ Отложено", callback_data=f"nav:tails_pick:postponed:0:{back_cb}")],
+            [InlineKeyboardButton(text="рџ’¤ Р‘РµР· СЃСЂРѕРєР°", callback_data=f"nav:tails_pick:nodate:0:{back_cb}")],
+            [InlineKeyboardButton(text="вЏё РћС‚Р»РѕР¶РµРЅРѕ", callback_data=f"nav:tails_pick:postponed:0:{back_cb}")],
             [
-                InlineKeyboardButton(text="⬅ Назад", callback_data=back_cb),
-                InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                InlineKeyboardButton(text="в¬… РќР°Р·Р°Рґ", callback_data=back_cb),
+                InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
             ],
         ]
     )
@@ -664,18 +644,18 @@ async def _render_global_tails_screen(msg: Message, db_pool: asyncpg.Pool, back_
 
 async def cb_global_tails(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if not callback.from_user or callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
     await state.clear()
     try:
         await _render_global_tails_screen(callback.message, db_pool, "nav:projects", deps)
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if not callback.from_user or callback.from_user.id != deps.admin_id:
-        return await callback.answer("Недоступно", show_alert=True)
+        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
     await callback.answer()
     await state.clear()
     try:
@@ -694,7 +674,7 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
             total = await conn.fetchval(f"SELECT COUNT(*) FROM tasks t WHERE t.status != 'done' AND t.kind != 'super' AND {where}")
             rows = await conn.fetch(
                 f"""
-                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
+                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'вЂ”') AS assignee, t.deadline
                 FROM tasks t
                 JOIN projects p ON t.project_id = p.id
                 LEFT JOIN team tm ON t.assignee_id = tm.id
@@ -708,31 +688,31 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
 
         def _short(s: str, n: int = 34) -> str:
             s = (s or "").strip()
-            return s if len(s) <= n else (s[: n - 1] + "…")
+            return s if len(s) <= n else (s[: n - 1] + "вЂ¦")
 
         def _tail_caption(r: dict) -> str:
-            project = str(r.get("project") or "—").strip()
-            assignee = str(r.get("assignee") or "—").strip()
+            project = str(r.get("project") or "вЂ”").strip()
+            assignee = str(r.get("assignee") or "вЂ”").strip()
             dt_loc = _to_local(r.get("deadline"), tz_name) if r.get("deadline") else None
             meta: list[str] = [f"[{project}]"]
-            if assignee and assignee != "—":
+            if assignee and assignee != "вЂ”":
                 meta.append(assignee)
             if dt_loc:
                 meta.append(dt_loc.strftime("%d.%m %H:%M"))
             elif kind == "nodate":
-                meta.append("без срока")
+                meta.append("Р±РµР· СЃСЂРѕРєР°")
             else:
-                meta.append("отложено")
-            prefix = "💤" if kind == "nodate" else "⏸"
-            return f"{prefix} {_short(str(r.get('title') or ''), 24)} — {' • '.join(meta)}"
+                meta.append("РѕС‚Р»РѕР¶РµРЅРѕ")
+            prefix = "рџ’¤" if kind == "nodate" else "вЏё"
+            return f"{prefix} {_short(str(r.get('title') or ''), 24)} вЂ” {' вЂў '.join(meta)}"
 
-        title = "💤 БЕЗ СРОКА" if kind == "nodate" else "⏸ ОТЛОЖЕНО"
+        title = "рџ’¤ Р‘Р•Р— РЎР РћРљРђ" if kind == "nodate" else "вЏё РћРўР›РћР–Р•РќРћ"
         total_i = int(total or 0)
-        lines = [f"<b>🧺 {h(title)}</b>", f"<i>Всего: {total_i}</i>", ""]
+        lines = [f"<b>рџ§є {h(title)}</b>", f"<i>Р’СЃРµРіРѕ: {total_i}</i>", ""]
         if not rows:
-            lines.append("Задач нет.")
+            lines.append("Р—Р°РґР°С‡ РЅРµС‚.")
         else:
-            lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
+            lines.append("РќР°Р¶РјРёС‚Рµ РЅР° Р·Р°РґР°С‡Сѓ РЅРёР¶Рµ, С‡С‚РѕР±С‹ РѕС‚РєСЂС‹С‚СЊ РєР°СЂС‚РѕС‡РєСѓ.")
 
         kb: list[list[InlineKeyboardButton]] = []
         for r in rows:
@@ -740,16 +720,16 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
 
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:
-            nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:tails_pick:{kind}:{page-1}:{back_cb}"))
+            nav_row.append(InlineKeyboardButton(text="в¬…пёЏ", callback_data=f"nav:tails_pick:{kind}:{page-1}:{back_cb}"))
         if (page + 1) * page_size < int(total or 0):
-            nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:tails_pick:{kind}:{page+1}:{back_cb}"))
+            nav_row.append(InlineKeyboardButton(text="вћЎпёЏ", callback_data=f"nav:tails_pick:{kind}:{page+1}:{back_cb}"))
         if nav_row:
             kb.append(nav_row)
 
         kb.append(
             [
-                InlineKeyboardButton(text="⬅ Хвосты", callback_data="nav:global_tails"),
-                InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                InlineKeyboardButton(text="в¬… РҐРІРѕСЃС‚С‹", callback_data="nav:global_tails"),
+                InlineKeyboardButton(text="в¬…пёЏ Р”РѕРјРѕР№", callback_data="nav:home"),
             ]
         )
 
@@ -765,7 +745,7 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
             parse_mode="HTML",
         )
     except Exception as e:
-        await safe_edit(callback.message, f"❌ Ошибка загрузки. Для фикса: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
+        await safe_edit(callback.message, f"вќЊ РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё. Р”Р»СЏ С„РёРєСЃР°: {h(str(e))}", reply_markup=back_home_kb(), parse_mode="HTML")
 
 
 async def msg_projects_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
@@ -815,7 +795,7 @@ async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.
     if final_id == 0:
         # Fallback: send a simple message if SPA rendering failed completely
         sent_message = await message.answer(
-            "⚠️ Не удалось отобразить главный экран. Попробуйте позже.",
+            "вљ пёЏ РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РѕР±СЂР°Р·РёС‚СЊ РіР»Р°РІРЅС‹Р№ СЌРєСЂР°РЅ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.",
             reply_markup=back_home_kb(),
         )
         final_id = sent_message.message_id
@@ -843,6 +823,7 @@ async def msg_today_button(message: Message, state: FSMContext, db_pool: asyncpg
         message,
         db_pool,
         tz_name=resolve_tz_name(deps.tz_name),
+        icloud=deps.icloud,
         preferred_message_id=preferred_message_id,
         force_new=bool(anchor_sent),
     )
@@ -960,7 +941,7 @@ async def _freeform_followup_missing_context(
         async with db_pool.acquire() as conn:
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
-            payload = ui_payload_with_toast(payload, "Контекст уточнения потерян. Повторите запрос целиком.", ttl_sec=25)
+            payload = ui_payload_with_toast(payload, "РљРѕРЅС‚РµРєСЃС‚ СѓС‚РѕС‡РЅРµРЅРёСЏ РїРѕС‚РµСЂСЏРЅ. РџРѕРІС‚РѕСЂРёС‚Рµ Р·Р°РїСЂРѕСЃ С†РµР»РёРєРѕРј.", ttl_sec=25)
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
     except Exception:
         pass
@@ -974,7 +955,7 @@ async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: 
 
     if db_pool is None:
         await state.clear()
-        return await message.answer("⚠️ Уточнение доступно только при подключённой БД и LLM.")
+        return await message.answer("вљ пёЏ РЈС‚РѕС‡РЅРµРЅРёРµ РґРѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РїСЂРё РїРѕРґРєР»СЋС‡С‘РЅРЅРѕР№ Р‘Р” Рё LLM.")
 
     base_text = await _freeform_followup_base_text(state, db_pool, int(message.chat.id))
     if not base_text:
@@ -999,7 +980,7 @@ async def msg_freeform_followup_text(message: Message, state: FSMContext, deps: 
         async with db_pool.acquire() as conn:
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
-            payload = ui_payload_with_toast(payload, "Не удалось обработать уточнение. Попробуйте ещё раз.", ttl_sec=25)
+            payload = ui_payload_with_toast(payload, "РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ СѓС‚РѕС‡РЅРµРЅРёРµ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.", ttl_sec=25)
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
     except Exception:
         pass
@@ -1014,7 +995,7 @@ async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps:
 
     if db_pool is None:
         await state.clear()
-        return await message.answer("⚠️ Голосовые уточнения доступны только при подключённой БД и LLM.")
+        return await message.answer("вљ пёЏ Р“РѕР»РѕСЃРѕРІС‹Рµ СѓС‚РѕС‡РЅРµРЅРёСЏ РґРѕСЃС‚СѓРїРЅС‹ С‚РѕР»СЊРєРѕ РїСЂРё РїРѕРґРєР»СЋС‡С‘РЅРЅРѕР№ Р‘Р” Рё LLM.")
 
     base_text = await _freeform_followup_base_text(state, db_pool, int(message.chat.id))
     if not base_text:
@@ -1037,7 +1018,7 @@ async def msg_freeform_followup_voice(message: Message, state: FSMContext, deps:
         async with db_pool.acquire() as conn:
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
-            payload = ui_payload_with_toast(payload, "Не удалось обработать голосовое уточнение. Попробуйте ещё раз.", ttl_sec=25)
+            payload = ui_payload_with_toast(payload, "РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ РіРѕР»РѕСЃРѕРІРѕРµ СѓС‚РѕС‡РЅРµРЅРёРµ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.", ttl_sec=25)
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
     except Exception:
         pass
@@ -1054,11 +1035,11 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
 
     if db_pool is None:
         if not message.text:
-            return await message.answer("⚠️ Я понимаю только текст. Откройте /help.", reply_markup=main_menu_kb())
+            return await message.answer("вљ пёЏ РЇ РїРѕРЅРёРјР°СЋ С‚РѕР»СЊРєРѕ С‚РµРєСЃС‚. РћС‚РєСЂРѕР№С‚Рµ /help.", reply_markup=main_menu_kb())
         if (message.text or "").strip().startswith("/"):
-            return await message.answer("⚠️ Неизвестная команда. Откройте /help.", reply_markup=main_menu_kb())
+            return await message.answer("вљ пёЏ РќРµРёР·РІРµСЃС‚РЅР°СЏ РєРѕРјР°РЅРґР°. РћС‚РєСЂРѕР№С‚Рµ /help.", reply_markup=main_menu_kb())
         return await message.answer(
-            "🤔 Не понял. Откройте /help или воспользуйтесь кнопками внизу.",
+            "рџ¤” РќРµ РїРѕРЅСЏР». РћС‚РєСЂРѕР№С‚Рµ /help РёР»Рё РІРѕСЃРїРѕР»СЊР·СѓР№С‚РµСЃСЊ РєРЅРѕРїРєР°РјРё РІРЅРёР·Сѓ.",
             reply_markup=main_menu_kb(),
         )
 
@@ -1078,11 +1059,11 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             await ensure_main_menu(message, db_pool)
             return
     if not raw:
-        toast = "⚠️ Я понимаю только текст. Откройте /help."
+        toast = "вљ пёЏ РЇ РїРѕРЅРёРјР°СЋ С‚РѕР»СЊРєРѕ С‚РµРєСЃС‚. РћС‚РєСЂРѕР№С‚Рµ /help."
     elif raw.startswith("/"):
-        toast = "⚠️ Неизвестная команда. Откройте /help."
+        toast = "вљ пёЏ РќРµРёР·РІРµСЃС‚РЅР°СЏ РєРѕРјР°РЅРґР°. РћС‚РєСЂРѕР№С‚Рµ /help."
     else:
-        toast = "⚠️ Не понял. Используйте ➕ Добавить или ⚡️ Быстрая задача."
+        toast = "вљ пёЏ РќРµ РїРѕРЅСЏР». РСЃРїРѕР»СЊР·СѓР№С‚Рµ вћ• Р”РѕР±Р°РІРёС‚СЊ РёР»Рё вљЎпёЏ Р‘С‹СЃС‚СЂР°СЏ Р·Р°РґР°С‡Р°."
 
     try:
         async with db_pool.acquire() as conn:
@@ -1104,7 +1085,7 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
     await state.clear()
 
     if db_pool is None:
-        return await message.answer("⚠️ Голосовые сообщения доступны только при подключённой БД и LLM.")
+        return await message.answer("вљ пёЏ Р“РѕР»РѕСЃРѕРІС‹Рµ СЃРѕРѕР±С‰РµРЅРёСЏ РґРѕСЃС‚СѓРїРЅС‹ С‚РѕР»СЊРєРѕ РїСЂРё РїРѕРґРєР»СЋС‡С‘РЅРЅРѕР№ Р‘Р” Рё LLM.")
 
     await try_delete_user_message(message)
 
@@ -1122,7 +1103,7 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
         async with db_pool.acquire() as conn:
             ui_state = await ui_get_state(conn, int(message.chat.id))
             payload = _ui_payload_get(ui_state)
-            payload = ui_payload_with_toast(payload, "⚠️ Не удалось обработать голосовое сообщение.", ttl_sec=25)
+            payload = ui_payload_with_toast(payload, "вљ пёЏ РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ РіРѕР»РѕСЃРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ.", ttl_sec=25)
             await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
     except Exception:
         pass
@@ -1136,9 +1117,9 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(cmd_menu, Command("menu"))
     dp.message.register(cmd_tz, Command("tz"))
     dp.message.register(cmd_help, Command("help"))
-    dp.message.register(msg_undo_last, StateFilter(None), lambda m: m.text and canon(m.text) in {"undo", "отмени", "отмени последнее"})
-    dp.message.register(cmd_add_menu, lambda m: m.text and canon(m.text) in {"добавить", "➕ добавить"})
-    dp.message.register(cmd_help_button_router, lambda m: m.text and canon(m.text) in {"help", "помощь"})
+    dp.message.register(msg_undo_last, StateFilter(None), lambda m: m.text and canon(m.text) in {"undo", "РѕС‚РјРµРЅРё", "РѕС‚РјРµРЅРё РїРѕСЃР»РµРґРЅРµРµ"})
+    dp.message.register(cmd_add_menu, lambda m: m.text and canon(m.text) in {"РґРѕР±Р°РІРёС‚СЊ", "вћ• РґРѕР±Р°РІРёС‚СЊ"})
+    dp.message.register(cmd_help_button_router, lambda m: m.text and canon(m.text) in {"help", "РїРѕРјРѕС‰СЊ"})
 
     dp.callback_query.register(cb_sync_status, F.data == "sync:status")
     dp.callback_query.register(cb_sync_retry, F.data == "sync:retry")
@@ -1147,15 +1128,16 @@ def register(dp: Dispatcher) -> None:
 
     dp.callback_query.register(cb_global_tails, F.data == "nav:global_tails")
     dp.callback_query.register(cb_global_tails_pick, F.data.startswith("nav:tails_pick:"))
-    dp.message.register(msg_home_button, lambda m: m.text and canon(m.text) == "домой")
+    dp.message.register(msg_home_button, lambda m: m.text and canon(m.text) == "РґРѕРјРѕР№")
 
-    dp.message.register(msg_projects_button, lambda m: m.text and canon(m.text) == "проекты")
-    dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "сегодня")
-    dp.message.register(msg_all_tasks_button, lambda m: m.text and canon(m.text) == "все задачи")
-    dp.message.register(msg_overdue_button, lambda m: m.text and canon(m.text) == "просрочки")
-    dp.message.register(msg_reminders_button, lambda m: m.text and canon(m.text) == "напоминания")
+    dp.message.register(msg_projects_button, lambda m: m.text and canon(m.text) == "РїСЂРѕРµРєС‚С‹")
+    dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "СЃРµРіРѕРґРЅСЏ")
+    dp.message.register(msg_all_tasks_button, lambda m: m.text and canon(m.text) == "РІСЃРµ Р·Р°РґР°С‡Рё")
+    dp.message.register(msg_overdue_button, lambda m: m.text and canon(m.text) == "РїСЂРѕСЃСЂРѕС‡РєРё")
+    dp.message.register(msg_reminders_button, lambda m: m.text and canon(m.text) == "РЅР°РїРѕРјРёРЅР°РЅРёСЏ")
 
     dp.message.register(msg_freeform_followup_voice, StateFilter(FreeformFollowup.awaiting_text), lambda m: bool(m.voice or m.audio))
     dp.message.register(msg_freeform_followup_text, StateFilter(FreeformFollowup.awaiting_text), F.text)
     dp.message.register(msg_voice_freeform, StateFilter(None), lambda m: bool(m.voice or m.audio))
     dp.message.register(cmd_unknown, StateFilter(None))
+

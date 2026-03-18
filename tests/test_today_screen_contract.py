@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -26,15 +26,9 @@ class _Pool:
 
 
 class _Conn:
-    def __init__(self, *, events=None, total_events: int = 0):
-        self._events = list(events or [])
-        self._total_events = total_events
-
     async def fetchval(self, query, *_args):
         if "FROM tasks t" in query and "COUNT(*)" in query:
             return 1
-        if "FROM icloud_events" in query and "COUNT(*)" in query:
-            return self._total_events
         raise AssertionError(f"Unexpected fetchval query: {query}")
 
     async def fetch(self, query, *_args):
@@ -42,16 +36,14 @@ class _Conn:
             return [
                 {
                     "id": 42,
-                    "title": "Позвонить клиенту",
+                    "title": "РџРѕР·РІРѕРЅРёС‚СЊ РєР»РёРµРЅС‚Сѓ",
                     "project": "CRM",
-                    "assignee": "—",
+                    "assignee": "вЂ”",
                     "deadline": None,
                 }
             ]
         if "FROM reminders" in query:
             return []
-        if "FROM icloud_events" in query:
-            return self._events
         raise AssertionError(f"Unexpected fetch query: {query}")
 
 
@@ -75,45 +67,76 @@ class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_today_screen_shows_calendar_events_summary(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=102), bot=SimpleNamespace())
-        conn = _Conn(
-            total_events=4,
-            events=[
-                {
-                    "calendar_url": "work://calendar",
-                    "summary": "Дейли",
-                    "dtstart_utc": datetime(2026, 3, 18, 7, 0, tzinfo=timezone.utc),
-                    "dtend_utc": datetime(2026, 3, 18, 7, 30, tzinfo=timezone.utc),
-                },
-                {
-                    "calendar_url": "personal://calendar",
-                    "summary": "Спортзал",
-                    "dtstart_utc": datetime(2026, 3, 18, 16, 0, tzinfo=timezone.utc),
-                    "dtend_utc": datetime(2026, 3, 18, 17, 0, tzinfo=timezone.utc),
-                },
-                {
-                    "calendar_url": "other://calendar",
-                    "summary": "Созвон",
-                    "dtstart_utc": datetime(2026, 3, 18, 18, 0, tzinfo=timezone.utc),
-                    "dtend_utc": datetime(2026, 3, 18, 19, 0, tzinfo=timezone.utc),
-                },
-            ],
+        pool = _Pool(_Conn())
+        icloud = SimpleNamespace(
+            list_events=AsyncMock(
+                side_effect=[
+                    [
+                        SimpleNamespace(
+                            calendar_url="work://calendar",
+                            summary="Р”РµР№Р»Рё",
+                            dtstart_utc=datetime(2026, 3, 18, 7, 0, tzinfo=timezone.utc),
+                            dtend_utc=datetime(2026, 3, 18, 7, 30, tzinfo=timezone.utc),
+                            uid="w1",
+                        ),
+                        SimpleNamespace(
+                            calendar_url="other://calendar",
+                            summary="РЎРѕР·РІРѕРЅ",
+                            dtstart_utc=datetime(2026, 3, 18, 18, 0, tzinfo=timezone.utc),
+                            dtend_utc=datetime(2026, 3, 18, 19, 0, tzinfo=timezone.utc),
+                            uid="o1",
+                        ),
+                    ],
+                    [
+                        SimpleNamespace(
+                            calendar_url="personal://calendar",
+                            summary="РЎРїРѕСЂС‚Р·Р°Р»",
+                            dtstart_utc=datetime(2026, 3, 18, 16, 0, tzinfo=timezone.utc),
+                            dtend_utc=datetime(2026, 3, 18, 17, 0, tzinfo=timezone.utc),
+                            uid="p1",
+                        ),
+                        SimpleNamespace(
+                            calendar_url="personal://calendar",
+                            summary="РЈР¶РёРЅ",
+                            dtstart_utc=datetime(2026, 3, 18, 20, 0, tzinfo=timezone.utc),
+                            dtend_utc=datetime(2026, 3, 18, 21, 0, tzinfo=timezone.utc),
+                            uid="p2",
+                        ),
+                    ],
+                ]
+            )
         )
-        pool = _Pool(conn)
 
         with (
             patch("bot.ui.screens._pop_screen_toast", AsyncMock(return_value=None)),
             patch("bot.ui.screens.os.getenv", side_effect=lambda key: {"ICLOUD_CALENDAR_URL_WORK": "work://calendar", "ICLOUD_CALENDAR_URL_PERSONAL": "personal://calendar"}.get(key, "")),
             patch("bot.ui.screens.ui_render", AsyncMock(return_value=1)) as render,
         ):
-            await ui_render_today(message, pool, tz_name="Europe/Moscow", page=0)
+            await ui_render_today(message, pool, tz_name="Europe/Moscow", page=0, icloud=icloud)
 
         text = render.await_args.kwargs["text"]
-        self.assertIn("Событий: 4", text)
-        self.assertIn("<b>📅 События</b>", text)
-        self.assertIn("💼 <b>10:00–10:30</b> • Дейли", text)
-        self.assertIn("🏡 <b>19:00–20:00</b> • Спортзал", text)
-        self.assertIn("📅 <b>21:00–22:00</b> • Созвон", text)
-        self.assertIn("… ещё 1", text)
+        self.assertIn("РЎРѕР±С‹С‚РёР№: 4", text)
+        self.assertIn("<b>рџ“… РЎРѕР±С‹С‚РёСЏ</b>", text)
+        self.assertIn("рџ’ј <b>10:00вЂ“10:30</b> вЂў Р”РµР№Р»Рё", text)
+        self.assertIn("рџЏЎ <b>19:00вЂ“20:00</b> вЂў РЎРїРѕСЂС‚Р·Р°Р»", text)
+        self.assertIn("рџ“… <b>21:00вЂ“22:00</b> вЂў РЎРѕР·РІРѕРЅ", text)
+        self.assertIn("вЂ¦ РµС‰С‘ 1", text)
+
+    async def test_today_screen_shows_calendar_unavailable_fallback(self) -> None:
+        message = SimpleNamespace(chat=SimpleNamespace(id=103), bot=SimpleNamespace())
+        pool = _Pool(_Conn())
+        icloud = SimpleNamespace(list_events=AsyncMock(side_effect=RuntimeError("calendar offline")))
+
+        with (
+            patch("bot.ui.screens._pop_screen_toast", AsyncMock(return_value=None)),
+            patch("bot.ui.screens.os.getenv", side_effect=lambda key: {"ICLOUD_CALENDAR_URL_WORK": "work://calendar"}.get(key, "")),
+            patch("bot.ui.screens.ui_render", AsyncMock(return_value=1)) as render,
+        ):
+            await ui_render_today(message, pool, tz_name="Europe/Moscow", page=0, icloud=icloud)
+
+        text = render.await_args.kwargs["text"]
+        self.assertIn("РЎРѕР±С‹С‚РёР№: 0", text)
+        self.assertIn("РЎРѕР±С‹С‚РёСЏ РІСЂРµРјРµРЅРЅРѕ РЅРµРґРѕСЃС‚СѓРїРЅС‹", text)
 
 
 if __name__ == "__main__":

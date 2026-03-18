@@ -42,12 +42,6 @@ class AddEventWizard(StatesGroup):
     confirming = State()
 
 
-class QuickTaskWizard(StatesGroup):
-    """Quick capture for work tasks into INBOX project."""
-
-    entering_text = State()
-
-
 class QuickIdeaWizard(StatesGroup):
     """Quick capture for personal ideas into Google Tasks."""
 
@@ -56,6 +50,12 @@ class QuickIdeaWizard(StatesGroup):
 
 class AddTeamWizard(StatesGroup):
     """Add team member from SPA UI."""
+
+    entering = State()
+
+
+class EditTeamNoteWizard(StatesGroup):
+    """Edit small note displayed in the team member card."""
 
     entering = State()
 

@@ -20,7 +20,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from bot.deps import AppDeps
 
 from bot.db import db_log_error
-from bot.fsm import AddTeamWizard
+from bot.fsm import AddTeamWizard, EditTeamNoteWizard
 from bot.handlers.common import (
     cleanup_stale_wizard_message,
     escape_hatch_menu_or_command,
@@ -36,6 +36,11 @@ from bot.keyboards import back_home_kb
 
 
 UTC = ZoneInfo("UTC")
+
+
+class _NoopState:
+    async def clear(self) -> None:
+        return None
 
 
 
@@ -184,7 +189,7 @@ async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_
     page_size = 8
     try:
         async with db_pool.acquire() as conn:
-            tm = await conn.fetchrow("SELECT name, role FROM team WHERE id = $1", emp_id)
+            tm = await conn.fetchrow("SELECT name, role, note FROM team WHERE id = $1", emp_id)
             if not tm:
                 return await safe_edit(
                     callback.message,
@@ -230,6 +235,7 @@ async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_
 
         name = str(tm["name"] or "")
         role = str(tm["role"] or "")
+        note = str(tm["note"] or "").strip()
 
         lines: list[str] = []
         if role:
@@ -238,12 +244,24 @@ async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_
             lines.append(f"👤 <b>{h(name)}</b>")
         lines.append(f"📊 Активных задач: <b>{total_tasks}</b>")
         lines.append(f"🚨 Просрочено: <b>{overdue_count}</b>")
+        lines.append("")
+        if note:
+            lines.append("<b>📝 Заметка</b>")
+            lines.append(h(note).replace("\n", "<br>"))
+        else:
+            lines.append("<i>Заметки пока нет.</i>")
 
         kb: list[list[InlineKeyboardButton]] = []
 
         if not tasks:
             lines.append("")
             lines.append("✅ Сейчас нет активных задач.")
+            kb.append([
+                InlineKeyboardButton(
+                    text=("📝 Редактировать заметку" if note else "📝 Добавить заметку"),
+                    callback_data=f"teamnote:edit:{emp_id}:{page}",
+                )
+            ])
             kb.append([
                 InlineKeyboardButton(text="⬅ Назад", callback_data="nav:team"),
                 InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
@@ -292,6 +310,12 @@ async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_
                 kb.append(pager)
 
         kb.append([
+            InlineKeyboardButton(
+                text=("📝 Редактировать заметку" if note else "📝 Добавить заметку"),
+                callback_data=f"teamnote:edit:{emp_id}:{page}",
+            )
+        ])
+        kb.append([
             InlineKeyboardButton(text="⬅ Назад", callback_data="nav:team"),
             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
@@ -317,10 +341,156 @@ async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_
         )
 
 
+def _team_note_kb(emp_id: int, page: int, *, has_note: bool) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if has_note:
+        rows.append([InlineKeyboardButton(text="🗑 Очистить заметку", callback_data=f"teamnote:clear:{emp_id}:{page}")])
+    rows.append([
+        InlineKeyboardButton(text="⬅ Назад", callback_data=f"team:{emp_id}:{page}"),
+        InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def cb_team_note_edit(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not callback.from_user or callback.from_user.id != deps.admin_id:
+        return await callback.answer("Недоступно", show_alert=True)
+    await callback.answer()
+    await state.clear()
+
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3 or not parts[2].isdigit():
+        return
+    emp_id = int(parts[2])
+    page = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 0
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT name, note FROM team WHERE id=$1", emp_id)
+    if not row:
+        return await safe_edit(callback.message, "❌ Сотрудник не найден.", reply_markup=back_home_kb(), parse_mode="HTML")
+
+    note = str(row["note"] or "").strip()
+    await state.update_data(
+        team_note_emp_id=emp_id,
+        team_note_page=page,
+        team_note_has_note=bool(note),
+        wizard_chat_id=int(callback.message.chat.id),
+        wizard_msg_id=int(callback.message.message_id),
+    )
+    await state.set_state(EditTeamNoteWizard.entering)
+
+    lines = [f"📝 <b>Заметка — {h(str(row['name'] or ''))}</b>", ""]
+    if note:
+        lines.extend(["Текущая заметка:", h(note), "", "Отправьте новый текст заметки сообщением."])
+    else:
+        lines.append("Отправьте короткую заметку сообщением. Она будет показана прямо в карточке сотрудника.")
+    await wizard_render(
+        bot=callback.bot,
+        state=state,
+        chat_id=int(callback.message.chat.id),
+        fallback_msg=callback.message,
+        text="\n".join(lines),
+        reply_markup=_team_note_kb(emp_id, page, has_note=bool(note)),
+        parse_mode="HTML",
+    )
+
+
+async def cb_team_note_clear(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not callback.from_user or callback.from_user.id != deps.admin_id:
+        return await callback.answer("Недоступно", show_alert=True)
+    await callback.answer()
+    await state.clear()
+
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3 or not parts[2].isdigit():
+        return
+    emp_id = int(parts[2])
+    page = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 0
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("UPDATE team SET note='' WHERE id=$1", emp_id)
+        ui_state = await ui_get_state(conn, int(callback.message.chat.id))
+        payload = _ui_payload_get(ui_state)
+        payload = ui_payload_with_toast(payload, "📝 Заметка очищена", ttl_sec=15)
+        await ui_set_state(conn, int(callback.message.chat.id), ui_payload=payload)
+
+    callback.data = f"team:{emp_id}:{page}"
+    return await cb_team_member_details(callback, state, db_pool, deps)
+
+
+async def msg_team_note_save(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+    if await escape_hatch_menu_or_command(message, state, db_pool):
+        return
+    if not message.text:
+        return
+    await try_delete_user_message(message)
+
+    note = (message.text or "").strip()
+    if not note:
+        data = await state.get_data()
+        emp_id = int(data.get("team_note_emp_id") or 0)
+        page = int(data.get("team_note_page") or 0)
+        has_note = bool(data.get("team_note_has_note"))
+        return await wizard_render(
+            bot=message.bot,
+            state=state,
+            chat_id=int(message.chat.id),
+            fallback_msg=None,
+            text="Текст пустой. Отправьте заметку или очистите ее кнопкой ниже.",
+            reply_markup=_team_note_kb(emp_id, page, has_note=has_note),
+        )
+    if len(note) > 500:
+        data = await state.get_data()
+        emp_id = int(data.get("team_note_emp_id") or 0)
+        page = int(data.get("team_note_page") or 0)
+        has_note = bool(data.get("team_note_has_note"))
+        return await wizard_render(
+            bot=message.bot,
+            state=state,
+            chat_id=int(message.chat.id),
+            fallback_msg=None,
+            text="Заметка слишком длинная. Оставьте до 500 символов.",
+            reply_markup=_team_note_kb(emp_id, page, has_note=has_note),
+        )
+
+    data = await state.get_data()
+    emp_id = int(data.get("team_note_emp_id") or 0)
+    page = int(data.get("team_note_page") or 0)
+    if emp_id <= 0:
+        await state.clear()
+        return await ui_render_team(message, db_pool, force_new=False)
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("UPDATE team SET note=$2 WHERE id=$1", emp_id, note)
+        ui_state = await ui_get_state(conn, int(message.chat.id))
+        payload = _ui_payload_get(ui_state)
+        payload = ui_payload_with_toast(payload, "📝 Заметка сохранена", ttl_sec=15)
+        await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
+
+    await state.clear()
+    await ui_render_team_member_from_message(message, db_pool, deps, emp_id=emp_id, page=page)
+
+
+async def ui_render_team_member_from_message(message: Message, db_pool: asyncpg.Pool, deps: AppDeps, *, emp_id: int, page: int) -> None:
+    callback = type("CallbackShim", (), {})()
+    callback.from_user = message.from_user
+    callback.message = message
+    callback.data = f"team:{emp_id}:{page}"
+    async def _answer(*_args, **_kwargs) -> None:
+        return None
+    callback.answer = _answer
+    await cb_team_member_details(callback, _NoopState(), db_pool, deps)  # type: ignore[arg-type]
+
+
 def register(dp: Dispatcher) -> None:
     dp.message.register(cmd_team_load, lambda m: m.text and canon(m.text) == "команда")
 
     dp.callback_query.register(cb_team_add, F.data == "team:add")
+    dp.callback_query.register(cb_team_note_edit, F.data.startswith("teamnote:edit:"))
+    dp.callback_query.register(cb_team_note_clear, F.data.startswith("teamnote:clear:"))
     dp.message.register(msg_team_add, StateFilter(AddTeamWizard.entering), F.text)
+    dp.message.register(msg_team_note_save, StateFilter(EditTeamNoteWizard.entering), F.text)
 
     dp.callback_query.register(cb_team_member_details, F.data.startswith("team:"))

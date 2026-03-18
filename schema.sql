@@ -22,7 +22,8 @@ CREATE INDEX IF NOT EXISTS idx_projects_status_created ON projects(status, creat
 CREATE TABLE IF NOT EXISTS team (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL DEFAULT ''
+    role TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

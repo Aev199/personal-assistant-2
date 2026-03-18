@@ -37,7 +37,6 @@ from bot.fsm import (
     AddReminderWizard,
     AddPersonalWizard,
     AddEventWizard,
-    QuickTaskWizard,
     QuickIdeaWizard,
     AddSuperTaskWizard,
 )
@@ -1654,54 +1653,6 @@ async def cb_quick_cancel(callback: CallbackQuery, state: FSMContext, db_pool: a
     await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name, force_new=False)
 
 
-async def msg_quick_task_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
-        return
-    vault = deps.vault
-    
-    if await escape_hatch_menu_or_command(message, state, db_pool):
-        return
-    await try_delete_user_message(message)
-    raw = (message.text or "").strip()
-    if not raw:
-        return
-
-    tz = _tz_from_deps(deps)
-    title, dt = quick_extract_datetime_ru(raw, deps.tz_name, date_only_time=(18, 0))
-    deadline_local = dt.astimezone(tz) if dt and dt.tzinfo else (dt.replace(tzinfo=tz) if dt else None)
-    title = (title or "").strip() or raw
-
-    async with db_pool.acquire() as conn:
-        inbox_id = await ensure_inbox_project_id(conn)
-        task_id = await conn.fetchval(
-            "INSERT INTO tasks (project_id, title, assignee_id, deadline) VALUES ($1,$2,NULL,$3) RETURNING id",
-            inbox_id,
-            title,
-            to_deadline_db(deadline_local, deps) if deadline_local else None,
-        )
-        await db_add_event(conn, "task_created", inbox_id, int(task_id), f"🆕 INBOX #{task_id} {title}")
-
-    fire_and_forget(
-        background_project_sync(int(inbox_id), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
-        label="vault_sync",
-    )
-
-    # IMPORTANT: render into the existing wizard "screen" message.
-    # If we clear FSM state before rendering, wizard_render won't know which
-    # message to edit and will send a new message, leaving the wizard prompt
-    # hanging in chat.
-    await wizard_render(
-        bot=message.bot,
-        state=state,
-        chat_id=int(message.chat.id),
-        fallback_msg=None,
-        text=f"✅ Добавлено во <b>Входящие</b>:\n{h(title)}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
-        parse_mode="HTML",
-    )
-    await state.clear()
-
-
 async def msg_quick_idea_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
@@ -1788,7 +1739,6 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_quick_task, F.data == "quick:task")
     dp.callback_query.register(cb_quick_idea, F.data == "quick:idea")
     dp.callback_query.register(cb_quick_cancel, F.data == "quick:cancel")
-    dp.message.register(msg_quick_task_text, StateFilter(QuickTaskWizard.entering_text), F.text)
     dp.message.register(msg_quick_idea_text, StateFilter(QuickIdeaWizard.entering_text), F.text)
 
     # event wizard is registered in bot.handlers.events

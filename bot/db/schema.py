@@ -74,10 +74,15 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         CREATE TABLE IF NOT EXISTS team (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
-            role TEXT NOT NULL DEFAULT ''
+            role TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT ''
         )
         """
     )
+    try:
+        await conn.execute("ALTER TABLE team ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
 
     # tasks
     await conn.execute(

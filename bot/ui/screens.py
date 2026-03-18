@@ -576,23 +576,17 @@ async def ui_render_stats(
             sync_status_txt = "—"
 
         lines = [
-            "🧠 <b>Дашборд</b>",
-            f"⭐ Текущий проект: <b>{h(str(current_project_code))}</b>",
+            "🧠 <b>Статистика</b>",
+            f"<i>Текущий проект: {h(str(current_project_code))}</i>",
             "",
-            "<b>Внимание:</b>",
             f"🚨 Просрочено: <b>{int(overdue or 0)}</b>",
-            f"🧺 Без срока (в работе): <b>{int(nodate or 0)}</b>",
+            f"📅 Сегодня: <b>{int(today or 0)}</b>",
+            f"📥 Inbox: <b>{int(inbox_count or 0)}</b>",
+            f"🧺 Без срока: <b>{int(nodate or 0)}</b>",
             "",
-            "<b>Фокус дня:</b>",
-            f"📅 Задач на сегодня: <b>{int(today or 0)}</b>",
-            f"🔔 Напомню: <i>{next_rem_txt}</i>",
-            "",
-            "<b>Интеграции:</b>",
+            f"📁 Проектов: <b>{int(projects or 0)}</b> • ✅ Активных задач: <b>{int(active_tasks or 0)}</b>",
+            f"🔔 Ближайшее напоминание: <i>{next_rem_txt}</i>",
             f"🔄 Obsidian: <i>{sync_status_txt}</i>",
-            "",
-            "<b>Пульс:</b>",
-            f"📁 Проектов: <b>{int(projects or 0)}</b> | ✅ Задач: <b>{int(active_tasks or 0)}</b>",
-            f"📥 Неразобрано (Inbox): <b>{int(inbox_count or 0)}</b>",
         ]
         if toast_line:
             lines.insert(0, toast_line)
@@ -601,14 +595,13 @@ async def ui_render_stats(
         stats_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="⬅️ Фокус", callback_data="nav:home"),
                     InlineKeyboardButton(text="🔄 Обновить", callback_data="home:stats"),
+                    InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
                 ],
                 [
-                    InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
-                    InlineKeyboardButton(text="➕ Добавить", callback_data="nav:add"),
+                    InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
+                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                 ],
-                [InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status")],
             ]
         )
 
@@ -629,9 +622,10 @@ async def ui_render_stats(
         fallback_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="⬅️ Фокус", callback_data="nav:home"),
                     InlineKeyboardButton(text="🔄 Обновить", callback_data="home:stats"),
-                ]
+                    InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
+                ],
+                [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
             ]
         )
         return await ui_render(
@@ -657,7 +651,7 @@ async def ui_render_home_more(
     chat_id = int(message.chat.id)
     toast_line = await _pop_screen_toast(db_pool, chat_id)
 
-    lines = ["⋯ <b>Ещё</b>", "", "Редкие действия и вспомогательные разделы."]
+    lines = ["⋯ <b>Ещё</b>", "", "Вспомогательные разделы и редкие действия."]
     if toast_line:
         lines = [toast_line, ""] + lines
 
@@ -673,8 +667,9 @@ async def ui_render_home_more(
             ],
             [
                 InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help"),
-                InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                InlineKeyboardButton(text="👥 Команда", callback_data="nav:team"),
             ],
+            [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
         ]
     )
 
@@ -701,20 +696,19 @@ async def ui_render_help(
 ) -> int:
     toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
     help_text = (
-        "❓ <b>Справка и навигация</b>\n\n"
-        "<b>🧭 Управление</b>\n"
-        "• Бот работает в формате одного экрана (сообщения).\n"
-        "• Нижние кнопки ⬇️ можно нажимать всегда для быстрой навигации.\n"
-        "• Большинство действий обновляет текущий экран без лишних уведомлений.\n\n"
-        "<b>📂 Разделы</b>\n"
-        "• 🏠 <b>Домой:</b> Сводка, фокус, задачи в работе.\n"
-        "• 📅 <b>Сегодня:</b> Задачи на сегодня и напоминания.\n"
-        "• 🚨 <b>Просрочки:</b> Задачи с истёкшим дедлайном.\n"
-        "• 📁 <b>Проекты:</b> Дерево проектов и суперзадач.\n"
-        "• 📋 <b>Все задачи:</b> Списком (доступно из Домой).\n"
-        "• ➕ <b>Добавить:</b> Быстрое создание.\n\n"
-        "<b>💡 Как добавлять задачи</b>\n"
-        "Просто напишите текстом: <i>«напомни купить хлеб завтра в 18:00»</i> или <i>«задача подготовить отчет к пятнице»</i>."
+        "❓ <b>Короткая справка</b>\n\n"
+        "• Нижнее меню всегда возвращает в нужный раздел.\n"
+        "• Большинство действий обновляет один экран, без лишней ленты.\n"
+        "• Для задачи чаще всего достаточно открыть карточку и выбрать `✅` или `📅`.\n"
+        "• Быстрое создание работает через `⚡ Быстрая задача` или `➕ Добавить`.\n\n"
+        "<b>Основные разделы</b>\n"
+        "• 🏠 Домой: сводка и быстрые действия.\n"
+        "• 📅 Сегодня: план дня сразу с кнопками задач.\n"
+        "• 🚨 Просрочки: срочные хвосты.\n"
+        "• 📁 Проекты: структура и рабочие списки.\n"
+        "• 🔔 Напоминания: активные напоминания и snooze.\n\n"
+        "<b>Пример свободного ввода</b>\n"
+        "<i>напомни купить хлеб завтра в 18:00</i>"
     )
     if toast_line:
         help_text = f"{toast_line}\n\n{help_text}"
@@ -723,7 +717,18 @@ async def ui_render_help(
         db_pool=db_pool,
         chat_id=int(message.chat.id),
         text=help_text,
-        reply_markup=back_home_kb(),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="📅 Сегодня", callback_data="nav:today"),
+                    InlineKeyboardButton(text="➕ Добавить", callback_data="nav:add"),
+                ],
+                [
+                    InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
+                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                ],
+            ]
+        ),
         screen="help",
         fallback_message=message,
         preferred_message_id=preferred_message_id,
@@ -1142,27 +1147,43 @@ async def ui_render_team(
             s = stats.get(tid, {"active": 0, "overdue": 0})
             return (-int(s.get("overdue", 0)), -int(s.get("active", 0)), str(r["name"] or ""))
 
-        lines = ["<b>👥 Команда</b>", "<i>Загрузка по активным задачам</i>", ""]
+        total_members = len(team_rows)
+        total_active = sum(int(s["active"]) for s in stats.values())
+        total_overdue = sum(int(s["overdue"]) for s in stats.values())
+        lines = [
+            "<b>👥 Команда</b>",
+            f"<i>Участников: {total_members} • Активных задач: {total_active} • Просрочено: {total_overdue}</i>",
+            "",
+        ]
         if toast_line:
             lines = [toast_line, ""] + lines
         kb: list[list[InlineKeyboardButton]] = []
-        member_buttons: list[InlineKeyboardButton] = []
 
         for r in sorted(team_rows, key=sort_key):
             tid = int(r["id"])
             s = stats.get(tid, {"active": 0, "overdue": 0, "today": 0, "next7": 0, "nodate": 0})
-            lines.append(
-                f"🔹 <b>{h(str(r['name'] or ''))}</b> — "
-                f"активно: <b>{s['active']}</b> | 🚨 <b>{s['overdue']}</b> | "
-                f"📅 {s['today']} | ⏳ {s['next7']} | 🧺 {s['nodate']}"
-            )
-            member_buttons.append(InlineKeyboardButton(text=str(r["name"]), callback_data=f"team:{tid}:0"))
+            name = str(r["name"] or "")
+            meta = [f"активно {s['active']}"]
+            if int(s["overdue"]):
+                meta.append(f"🚨 {s['overdue']}")
+            if int(s["today"]):
+                meta.append(f"📅 {s['today']}")
+            if int(s["next7"]):
+                meta.append(f"⏳ {s['next7']}")
+            if int(s["nodate"]):
+                meta.append(f"🧺 {s['nodate']}")
+            kb.append([
+                InlineKeyboardButton(
+                    text=f"👤 {name} — {' • '.join(meta)}",
+                    callback_data=f"team:{tid}:0",
+                )
+            ])
 
-        kb.extend(kb_columns(member_buttons, 2))
         kb.append([
             InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add"),
-            InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+            InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
         ])
+        kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
 
         return await ui_render(
             bot=message.bot,

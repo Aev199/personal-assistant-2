@@ -909,6 +909,15 @@ def reminder_time_kb() -> InlineKeyboardMarkup:
     )
 
 
+def reminder_text_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="⬅ Назад", callback_data="add:rback:time"),
+            InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+        ]]
+    )
+
+
 def reminder_repeat_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -922,9 +931,44 @@ def reminder_repeat_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="Каждый месяц", callback_data="add:rrep:monthly"),
+            ],
+            [
+                InlineKeyboardButton(text="⬅ Назад", callback_data="add:rback:text"),
                 InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
             ],
         ]
+    )
+
+
+def _format_reminder_local(remind_at: str | datetime | None, deps: AppDeps) -> str:
+    if not remind_at:
+        return "—"
+    try:
+        dt = remind_at if isinstance(remind_at, datetime) else datetime.fromisoformat(str(remind_at))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(_tz_from_deps(deps)).strftime("%d.%m %H:%M")
+    except Exception:
+        return "—"
+
+
+async def _render_reminder_text_prompt(
+    *,
+    bot,
+    state: FSMContext,
+    chat_id: int,
+    deps: AppDeps,
+    remind_at: str | datetime | None,
+    fallback_msg: Message | None,
+) -> None:
+    await wizard_render(
+        bot=bot,
+        state=state,
+        chat_id=chat_id,
+        fallback_msg=fallback_msg,
+        text=f"Ок. Напомню <b>{h(_format_reminder_local(remind_at, deps))}</b>.\nВведите текст напоминания одной строкой.",
+        reply_markup=reminder_text_kb(),
+        parse_mode="HTML",
     )
 
 
@@ -962,7 +1006,12 @@ async def cb_add_reminder_time(callback: CallbackQuery, state: FSMContext, deps:
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
             text="Введите дату/время (например 26.02 14:00 или завтра 9:00).",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅ Назад", callback_data="add:rback:time"),
+                    InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+                ]]
+            ),
         )
 
     remind_local: datetime | None = None
@@ -991,14 +1040,13 @@ async def cb_add_reminder_time(callback: CallbackQuery, state: FSMContext, deps:
     remind_utc = remind_local.astimezone(UTC)
     await state.update_data(remind_at=remind_utc.isoformat())
     await state.set_state(AddReminderWizard.entering_text)
-    return await wizard_render(
+    return await _render_reminder_text_prompt(
         bot=callback.bot,
         state=state,
         chat_id=int(callback.message.chat.id),
+        deps=deps,
+        remind_at=remind_utc,
         fallback_msg=callback.message,
-        text=f"Ок. Напомню <b>{h(remind_local.strftime('%d.%m %H:%M'))}</b>.\nВведите текст напоминания одной строкой.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
-        parse_mode="HTML",
     )
 
 
@@ -1016,7 +1064,12 @@ async def msg_add_reminder_time(message: Message, state: FSMContext, db_pool: as
             chat_id=int(message.chat.id),
             fallback_msg=None,
             text="Не понял дату. Пример: 26.02 14:00 или завтра 9:00.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅ Назад", callback_data="add:rback:time"),
+                    InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+                ]]
+            ),
         )
     tz = _tz_from_deps(deps)
     if parsed.tzinfo is None:
@@ -1029,19 +1082,22 @@ async def msg_add_reminder_time(message: Message, state: FSMContext, db_pool: as
             chat_id=int(message.chat.id),
             fallback_msg=None,
             text="Время уже прошло. Укажите время в будущем.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="⬅ Назад", callback_data="add:rback:time"),
+                    InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+                ]]
+            ),
         )
     await state.update_data(remind_at=remind_utc.isoformat())
     await state.set_state(AddReminderWizard.entering_text)
-    tz = _tz_from_deps(deps)
-    return await wizard_render(
+    return await _render_reminder_text_prompt(
         bot=message.bot,
         state=state,
         chat_id=int(message.chat.id),
+        deps=deps,
+        remind_at=remind_utc,
         fallback_msg=None,
-        text=f"Ок. Напомню <b>{h(remind_utc.astimezone(tz).strftime('%d.%m %H:%M'))}</b>.\nВведите текст напоминания одной строкой.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
-        parse_mode="HTML",
     )
 
 
@@ -1061,7 +1117,7 @@ async def msg_add_reminder_text(message: Message, state: FSMContext, db_pool: as
             chat_id=int(message.chat.id),
             fallback_msg=None,
             text="Текст пустой. Введите текст напоминания.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=reminder_text_kb(),
         )
     if not remind_at:
         await wizard_render(
@@ -1089,6 +1145,37 @@ async def msg_add_reminder_text(message: Message, state: FSMContext, db_pool: as
         fallback_msg=None,
         text="Повторять это напоминание?",
         reply_markup=reminder_repeat_kb(),
+    )
+
+
+async def cb_add_reminder_back(callback: CallbackQuery, state: FSMContext, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await callback.answer()
+    parts = (callback.data or "").split(":")
+    target = parts[2] if len(parts) >= 3 else "time"
+    data = await state.get_data()
+
+    if target == "text" and data.get("remind_at"):
+        await state.set_state(AddReminderWizard.entering_text)
+        return await _render_reminder_text_prompt(
+            bot=callback.bot,
+            state=state,
+            chat_id=int(callback.message.chat.id),
+            deps=deps,
+            remind_at=data.get("remind_at"),
+            fallback_msg=callback.message,
+        )
+
+    await state.set_state(AddReminderWizard.choosing_time)
+    return await wizard_render(
+        bot=callback.bot,
+        state=state,
+        chat_id=int(callback.message.chat.id),
+        fallback_msg=callback.message,
+        text="⏰ <b>Добавить напоминание</b>: выберите время или отправьте дату/время сообщением",
+        reply_markup=reminder_time_kb(),
+        parse_mode="HTML",
     )
 
 
@@ -1683,6 +1770,7 @@ def register(dp: Dispatcher) -> None:
     # reminders
     dp.callback_query.register(cb_add_reminder_start, F.data == "add:rem")
     dp.callback_query.register(cb_add_reminder_time, StateFilter(AddReminderWizard.choosing_time), F.data.startswith("add:rtime:"))
+    dp.callback_query.register(cb_add_reminder_back, StateFilter(AddReminderWizard.entering_time, AddReminderWizard.entering_text, AddReminderWizard.choosing_repeat), F.data.startswith("add:rback:"))
     dp.message.register(msg_add_reminder_time, StateFilter(AddReminderWizard.choosing_time), F.text)
     dp.message.register(msg_add_reminder_time, StateFilter(AddReminderWizard.entering_time), F.text)
     dp.message.register(msg_add_reminder_text, StateFilter(AddReminderWizard.entering_text), F.text)

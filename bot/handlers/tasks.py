@@ -287,6 +287,19 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
         s = (s or "").strip()
         return s if len(s) <= n else (s[: n - 1] + "…")
 
+    def _child_caption(r: dict) -> str:
+        t_title = (r.get("title") or "").strip()
+        assignee = (r.get("assignee") or "—").strip()
+        dl_local = to_local(r.get("deadline"), tz)
+        meta: list[str] = []
+        if assignee and assignee != "—":
+            meta.append(assignee)
+        if dl_local:
+            meta.append(dl_local.strftime("%d.%m %H:%M"))
+        else:
+            meta.append("без срока")
+        return f"🧩 {_short(t_title, 24)} — {' • '.join(meta)}"
+
     lines: list[str] = [
         f"🧩 <b>Суперзадача</b> #{int(task_id)}",
         f"Проект: <b>{h(project_code)}</b>",
@@ -295,18 +308,12 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
         "",
         f"🧩 {h(title)}",
         "",
-        "<b>Задачи внутри:</b>",
     ]
 
     if not rows:
-        lines.append("—")
+        lines.append("Активных задач внутри сейчас нет.")
     else:
-        for r in rows:
-            t_title = (r.get("title") or "").strip()
-            assignee = (r.get("assignee") or "—").strip()
-            dl_local = to_local(r.get("deadline"), tz)
-            due = dl_local.strftime("%d.%m %H:%M") if dl_local else "без срока"
-            lines.append(f"• {h(t_title)} — {h(assignee)}, <i>{h('до ' + due) if dl_local else h(due)}</i>")
+        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
 
     kb: list[list[InlineKeyboardButton]] = []
     kb.append(
@@ -316,11 +323,8 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
         ]
     )
 
-    task_buttons: list[InlineKeyboardButton] = []
     for r in rows:
-        t_title = (r.get("title") or "").strip()
-        task_buttons.append(InlineKeyboardButton(text=_short(t_title, 24), callback_data=f"task:{int(r['id'])}"))
-    kb.extend(kb_columns(task_buttons, 2))
+        kb.append([InlineKeyboardButton(text=_child_caption(dict(r)), callback_data=f"task:{int(r['id'])}")])
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:

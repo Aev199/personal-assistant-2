@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 
 
 def main_menu_kb() -> ReplyKeyboardMarkup:
@@ -24,19 +19,6 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
         is_persistent=True,
         selective=True,
     )
-
-
-def home_kb() -> InlineKeyboardMarkup:
-    """Dashboard inline keyboard (Home screen). Navigation to sections is via bottom ReplyKeyboard."""
-    kb = [
-        [
-            InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
-            InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
-        ],
-        [InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status")],
-        [InlineKeyboardButton(text="🔄 Обновить сводку", callback_data="nav:home")],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
 def back_home_kb() -> InlineKeyboardMarkup:

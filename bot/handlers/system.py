@@ -709,25 +709,33 @@ async def cb_global_tails_pick(callback: CallbackQuery, state: FSMContext, db_po
             s = (s or "").strip()
             return s if len(s) <= n else (s[: n - 1] + "…")
 
+        def _tail_caption(r: dict) -> str:
+            project = str(r.get("project") or "—").strip()
+            assignee = str(r.get("assignee") or "—").strip()
+            dt_loc = _to_local(r.get("deadline"), tz_name) if r.get("deadline") else None
+            meta: list[str] = [f"[{project}]"]
+            if assignee and assignee != "—":
+                meta.append(assignee)
+            if dt_loc:
+                meta.append(dt_loc.strftime("%d.%m %H:%M"))
+            elif kind == "nodate":
+                meta.append("без срока")
+            else:
+                meta.append("отложено")
+            prefix = "💤" if kind == "nodate" else "⏸"
+            return f"{prefix} {_short(str(r.get('title') or ''), 24)} — {' • '.join(meta)}"
+
         title = "💤 БЕЗ СРОКА" if kind == "nodate" else "⏸ ОТЛОЖЕНО"
-        lines = [f"<b>🧺 {h(title)}</b>"]
+        total_i = int(total or 0)
+        lines = [f"<b>🧺 {h(title)}</b>", f"<i>Всего: {total_i}</i>", ""]
         if not rows:
             lines.append("Задач нет.")
         else:
-            for r in rows:
-                lines.append(
-                    "• "
-                    + fmt_task_line_html(
-                        r.get("title") or "",
-                        r.get("project") or "",
-                        r.get("assignee") or "—",
-                        (_to_local(r.get("deadline"), tz_name)),
-                    )
-                )
+            lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
 
         kb: list[list[InlineKeyboardButton]] = []
         for r in rows:
-            kb.append([InlineKeyboardButton(text=_short(r["title"], 30), callback_data=f"task:{r['id']}")])
+            kb.append([InlineKeyboardButton(text=_tail_caption(dict(r)), callback_data=f"task:{r['id']}")])
 
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:

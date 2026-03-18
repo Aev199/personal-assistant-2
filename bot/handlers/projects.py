@@ -445,18 +445,33 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     s = (s or "").strip()
                     return s if len(s) <= n else (s[: n - 1] + "…")
 
+                def _tail_caption(r: dict) -> str:
+                    dt_loc = to_local(r["deadline"], tz) if r.get("deadline") else None
+                    assignee = str(r.get("assignee") or "—").strip()
+                    meta: list[str] = []
+                    if assignee and assignee != "—":
+                        meta.append(assignee)
+                    if dt_loc:
+                        meta.append(dt_loc.strftime("%d.%m %H:%M"))
+                    elif kind == "nodate":
+                        meta.append("без срока")
+                    else:
+                        meta.append("отложено")
+                    prefix = "💤" if kind == "nodate" else "⏸"
+                    suffix = f" — {' • '.join(meta)}" if meta else ""
+                    return f"{prefix} {_short(str(r.get('title') or ''), 26)}{suffix}"
+
                 title = "💤 БЕЗ СРОКА" if kind == "nodate" else "⏸ ОТЛОЖЕНО"
-                lines = [f"<b>🧺 {h(title)} — {h(proj['code'])}</b>"]
+                total_i = int(total or 0)
+                lines = [f"<b>🧺 {h(title)} — {h(proj['code'])}</b>", f"<i>Всего: {total_i}</i>", ""]
                 if not rows:
                     lines.append("Задач нет.")
                 else:
-                    for r in rows:
-                        dt_loc = to_local(r["deadline"], tz) if r.get("deadline") else None
-                        lines.append("• " + fmt_task_line_html(r.get("title") or "", proj["code"] or "", r.get("assignee") or "—", dt_loc))
+                    lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
 
                 kb_rows: list[list[InlineKeyboardButton]] = []
                 for r in rows:
-                    kb_rows.append([InlineKeyboardButton(text=_short(r["title"], 30), callback_data=f"task:{r['id']}")])
+                    kb_rows.append([InlineKeyboardButton(text=_tail_caption(dict(r)), callback_data=f"task:{r['id']}")])
 
                 nav_row: list[InlineKeyboardButton] = []
                 if page > 0:

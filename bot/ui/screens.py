@@ -21,7 +21,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from bot.ui.render import ui_render
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_take_toast
 from bot.utils import h, fmt_task_line_html, kb_columns
-from bot.keyboards import home_kb, back_home_kb, add_menu_kb, today_screen_kb, main_menu_kb
+from bot.keyboards import back_home_kb, add_menu_kb, main_menu_kb
 
 logger = logging.getLogger(__name__)
 _REMINDER_SELECTION_UNSET = object()

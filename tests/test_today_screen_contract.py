@@ -36,9 +36,9 @@ class _Conn:
             return [
                 {
                     "id": 42,
-                    "title": "РџРѕР·РІРѕРЅРёС‚СЊ РєР»РёРµРЅС‚Сѓ",
+                    "title": "Позвонить клиенту",
                     "project": "CRM",
-                    "assignee": "вЂ”",
+                    "assignee": "—",
                     "deadline": None,
                 }
             ]
@@ -74,14 +74,14 @@ class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
                     [
                         SimpleNamespace(
                             calendar_url="work://calendar",
-                            summary="Р”РµР№Р»Рё",
+                            summary="Дейли",
                             dtstart_utc=datetime(2026, 3, 18, 7, 0, tzinfo=timezone.utc),
                             dtend_utc=datetime(2026, 3, 18, 7, 30, tzinfo=timezone.utc),
                             uid="w1",
                         ),
                         SimpleNamespace(
                             calendar_url="other://calendar",
-                            summary="РЎРѕР·РІРѕРЅ",
+                            summary="Созвон",
                             dtstart_utc=datetime(2026, 3, 18, 18, 0, tzinfo=timezone.utc),
                             dtend_utc=datetime(2026, 3, 18, 19, 0, tzinfo=timezone.utc),
                             uid="o1",
@@ -90,14 +90,14 @@ class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
                     [
                         SimpleNamespace(
                             calendar_url="personal://calendar",
-                            summary="РЎРїРѕСЂС‚Р·Р°Р»",
+                            summary="Спортзал",
                             dtstart_utc=datetime(2026, 3, 18, 16, 0, tzinfo=timezone.utc),
                             dtend_utc=datetime(2026, 3, 18, 17, 0, tzinfo=timezone.utc),
                             uid="p1",
                         ),
                         SimpleNamespace(
                             calendar_url="personal://calendar",
-                            summary="РЈР¶РёРЅ",
+                            summary="Ужин",
                             dtstart_utc=datetime(2026, 3, 18, 20, 0, tzinfo=timezone.utc),
                             dtend_utc=datetime(2026, 3, 18, 21, 0, tzinfo=timezone.utc),
                             uid="p2",
@@ -115,12 +115,12 @@ class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_today(message, pool, tz_name="Europe/Moscow", page=0, icloud=icloud)
 
         text = render.await_args.kwargs["text"]
-        self.assertIn("РЎРѕР±С‹С‚РёР№: 4", text)
-        self.assertIn("<b>рџ“… РЎРѕР±С‹С‚РёСЏ</b>", text)
-        self.assertIn("рџ’ј <b>10:00вЂ“10:30</b> вЂў Р”РµР№Р»Рё", text)
-        self.assertIn("рџЏЎ <b>19:00вЂ“20:00</b> вЂў РЎРїРѕСЂС‚Р·Р°Р»", text)
-        self.assertIn("рџ“… <b>21:00вЂ“22:00</b> вЂў РЎРѕР·РІРѕРЅ", text)
-        self.assertIn("вЂ¦ РµС‰С‘ 1", text)
+        self.assertIn("Событий: 4", text)
+        self.assertIn("<b>📅 События</b>", text)
+        self.assertIn("💼 <b>10:00–10:30</b> • Дейли", text)
+        self.assertIn("🏡 <b>19:00–20:00</b> • Спортзал", text)
+        self.assertIn("📅 <b>21:00–22:00</b> • Созвон", text)
+        self.assertIn("… ещё 1", text)
 
     async def test_today_screen_shows_calendar_unavailable_fallback(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=103), bot=SimpleNamespace())
@@ -135,8 +135,8 @@ class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_today(message, pool, tz_name="Europe/Moscow", page=0, icloud=icloud)
 
         text = render.await_args.kwargs["text"]
-        self.assertIn("РЎРѕР±С‹С‚РёР№: 0", text)
-        self.assertIn("РЎРѕР±С‹С‚РёСЏ РІСЂРµРјРµРЅРЅРѕ РЅРµРґРѕСЃС‚СѓРїРЅС‹", text)
+        self.assertIn("Событий: 0", text)
+        self.assertIn("События временно недоступны", text)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ class _Pool:
 class _CardConn:
     async def fetchrow(self, query, *_args):
         if "SELECT name, role, note FROM team" in query:
-            return {"name": "РСЂР°", "role": "pm", "note": "Р›СЋР±РёС‚ РєРѕСЂРѕС‚РєРёРµ СЃРёРЅРєРё"}
+            return {"name": "Ира", "role": "pm", "note": "Любит короткие синки"}
         raise AssertionError(f"Unexpected fetchrow query: {query}")
 
     async def fetchval(self, query, *_args):
@@ -46,7 +46,7 @@ class _CardConn:
 class _EditConn:
     async def fetchrow(self, query, *_args):
         if "SELECT name, note FROM team WHERE id=$1" in query:
-            return {"name": "РСЂР°", "note": "Р›СЋР±РёС‚ РєРѕСЂРѕС‚РєРёРµ СЃРёРЅРєРё"}
+            return {"name": "Ира", "note": "Любит короткие синки"}
         raise AssertionError(f"Unexpected fetchrow query: {query}")
 
 
@@ -72,9 +72,9 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
             await cb_team_member_details(callback, state, pool, deps)
 
         kwargs = render.await_args.kwargs
-        self.assertIn("Р›СЋР±РёС‚ РєРѕСЂРѕС‚РєРёРµ СЃРёРЅРєРё", kwargs["text"])
+        self.assertIn("Любит короткие синки", kwargs["text"])
         rows = [[btn.text for btn in row] for row in kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(rows[0], ["рџ“ќ Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ Р·Р°РјРµС‚РєСѓ"])
+        self.assertEqual(rows[0], ["📝 Редактировать заметку"])
 
     async def test_note_edit_prompt_shows_clear_when_note_exists(self) -> None:
         callback = SimpleNamespace(
@@ -93,12 +93,12 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
 
         state.set_state.assert_awaited_once()
         rows = [[btn.text for btn in row] for row in render.await_args.kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(rows[0], ["рџ—‘ РћС‡РёСЃС‚РёС‚СЊ Р·Р°РјРµС‚РєСѓ"])
-        self.assertEqual(rows[1], ["в¬… РќР°Р·Р°Рґ", "вњ–пёЏ РћС‚РјРµРЅР°"])
+        self.assertEqual(rows[0], ["🗑 Очистить заметку"])
+        self.assertEqual(rows[1], ["⬅ Назад", "✖️ Отмена"])
 
     async def test_note_save_updates_team_and_rerenders_card(self) -> None:
         message = SimpleNamespace(
-            text="РЎРѕР·РІР°РЅРёРІР°С‚СЊСЃСЏ РІРµС‡РµСЂРѕРј",
+            text="Созваниваться вечером",
             chat=SimpleNamespace(id=77),
             from_user=SimpleNamespace(id=1),
             bot=SimpleNamespace(),
@@ -118,7 +118,7 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
         ):
             await msg_team_note_save(message, state, pool, deps)
 
-        conn.execute.assert_awaited_once_with("UPDATE team SET note=$2 WHERE id=$1", 7, "РЎРѕР·РІР°РЅРёРІР°С‚СЊСЃСЏ РІРµС‡РµСЂРѕРј")
+        conn.execute.assert_awaited_once_with("UPDATE team SET note=$2 WHERE id=$1", 7, "Созваниваться вечером")
         render_card.assert_awaited_once_with(message, pool, emp_id=7, page=1)
 
     async def test_team_member_rerender_uses_direct_renderer(self) -> None:

@@ -1,4 +1,4 @@
-"""Navigation handlers (SPA).
+﻿"""Navigation handlers (SPA).
 
 This module registers handlers for top-level navigation buttons:
 Home / Projects / Today / Overdue / Add / Help.
@@ -71,7 +71,7 @@ async def _callback_wizard_context(
 
 async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -91,7 +91,7 @@ async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: async
 
 async def cb_nav_stats(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -134,7 +134,7 @@ async def cb_nav_secondary(callback: CallbackQuery, state: FSMContext, db_pool: 
 
 async def cb_nav_close_inline(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -154,7 +154,7 @@ async def cb_nav_close_inline(callback: CallbackQuery, state: FSMContext, db_poo
 
 async def cb_nav_projects(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -174,7 +174,7 @@ async def cb_nav_projects(callback: CallbackQuery, state: FSMContext, db_pool: a
 
 async def cb_nav_all(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("Р СњР ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р С•", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -197,7 +197,7 @@ async def cb_nav_all(callback: CallbackQuery, state: FSMContext, db_pool: asyncp
 
 async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -226,7 +226,7 @@ async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyn
 
 async def cb_nav_overdue(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -254,7 +254,7 @@ async def cb_nav_overdue(callback: CallbackQuery, state: FSMContext, db_pool: as
 
 async def cb_nav_work(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -282,7 +282,7 @@ async def cb_nav_work(callback: CallbackQuery, state: FSMContext, db_pool: async
 
 async def cb_nav_inbox(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -310,7 +310,7 @@ async def cb_nav_inbox(callback: CallbackQuery, state: FSMContext, db_pool: asyn
 
 async def cb_nav_add(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -329,7 +329,7 @@ async def cb_nav_add(callback: CallbackQuery, state: FSMContext, db_pool: asyncp
 
 async def cb_nav_help(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
@@ -348,7 +348,7 @@ async def cb_nav_help(callback: CallbackQuery, state: FSMContext, db_pool: async
 
 async def cb_nav_team(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
-        return await callback.answer("РќРµРґРѕСЃС‚СѓРїРЅРѕ", show_alert=True)
+        return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()

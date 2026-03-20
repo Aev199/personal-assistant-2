@@ -61,11 +61,13 @@ class _TeamConn:
             return [
                 {"id": 1, "name": "Ира", "role": "pm"},
                 {"id": 2, "name": "Оля", "role": "dev"},
+                {"id": 3, "name": "Саша", "role": "qa"},
             ]
         if "SELECT assignee_id, deadline FROM tasks" in query:
             return [
                 {"assignee_id": 1, "deadline": None},
                 {"assignee_id": 2, "deadline": None},
+                {"assignee_id": 3, "deadline": None},
             ]
         raise AssertionError(f"Unexpected fetch query: {query}")
 
@@ -132,8 +134,8 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
 
         kwargs = render.await_args.kwargs
         rows = _callbacks(kwargs["reply_markup"])
-        self.assertEqual(rows[0], ["team:1:0"])
-        self.assertEqual(rows[1], ["team:2:0"])
+        self.assertEqual(rows[0], ["team:1:0", "team:2:0"])
+        self.assertEqual(rows[1], ["team:3:0"])
         self.assertEqual(rows[-2], ["team:add", "nav:secondary"])
         self.assertEqual(rows[-1], ["nav:home"])
 

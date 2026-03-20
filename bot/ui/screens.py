@@ -1153,6 +1153,7 @@ async def ui_render_team(
         if toast_line:
             lines = [toast_line, ""] + lines
         kb: list[list[InlineKeyboardButton]] = []
+        member_buttons: list[InlineKeyboardButton] = []
 
         for r in sorted(team_rows, key=sort_key):
             tid = int(r["id"])
@@ -1167,12 +1168,14 @@ async def ui_render_team(
                 meta.append(f"⏳ {s['next7']}")
             if int(s["nodate"]):
                 meta.append(f"🧺 {s['nodate']}")
-            kb.append([
+            member_buttons.append(
                 InlineKeyboardButton(
                     text=f"👤 {name} — {' • '.join(meta)}",
                     callback_data=f"team:{tid}:0",
                 )
-            ])
+            )
+
+        kb.extend(kb_columns(member_buttons, 2))
 
         kb.append([
             InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add"),
@@ -2103,6 +2106,5 @@ async def ui_render_overdue(
         force_new=force_new,
         parse_mode="HTML",
     )
-
 
 

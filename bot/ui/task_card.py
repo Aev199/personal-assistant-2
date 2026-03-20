@@ -54,19 +54,6 @@ def task_card_kb(
     back_cb = (return_cb or "").strip() or fallback_back_cb
     back_label = (return_label or "").strip() or "⬅ Назад"
 
-    def _subtask_rows() -> list[list[InlineKeyboardButton]]:
-        rows: list[list[InlineKeyboardButton]] = []
-        if not subtasks:
-            return rows
-
-        def _short(s: str, n: int = 30) -> str:
-            s = (s or "").strip()
-            return s if len(s) <= n else (s[: n - 1] + "…")
-
-        for sid, title in subtasks:
-            rows.append([InlineKeyboardButton(text=f"↳ {_short(title, 30)}", callback_data=f"task:{int(sid)}")])
-        return rows
-
     def _triage_row() -> list[list[InlineKeyboardButton]]:
         if not triage:
             return []
@@ -121,30 +108,14 @@ def task_card_kb(
         InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
     ])
 
-    # Relations (secondary)
-    if parent_task_id:
-        rows.append([
-            InlineKeyboardButton(text="🧩 Суперзадача…", callback_data=f"task:{task_id}:parent:0"),
-            InlineKeyboardButton(text="⛓ Отвязать", callback_data=f"task:{task_id}:detach"),
-        ])
-    else:
-        rows.append([InlineKeyboardButton(text="🧩 В суперзадачу…", callback_data=f"task:{task_id}:parent:0")])
-
-    rows.append([InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")])
-    rows.append([InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee")])
-    rows.append([InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone")])
-
-    # Google Tasks export/update
-    if in_gtasks and gtasks_dirty:
-        rows.append([InlineKeyboardButton(text="🔄 Обновить Google Tasks", callback_data=f"task:{task_id}:gtasks")])
-    elif in_gtasks:
-        rows.append([InlineKeyboardButton(text="✅ Google Tasks", callback_data=f"task:{task_id}:gtasks")])
-    else:
-        rows.append([InlineKeyboardButton(text="📤 В Google Tasks", callback_data=f"task:{task_id}:gtasks")])
-
-    # Active subtasks quick open (optional)
-    rows.extend(_subtask_rows())
-
+    rows.append([
+        InlineKeyboardButton(text="🧩 Связи…", callback_data=f"task:{task_id}:relations"),
+        InlineKeyboardButton(text="↳ Подзадачи…", callback_data=f"task:{task_id}:subtasks"),
+    ])
+    rows.append([
+        InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
+        InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
+    ])
     rows.append([InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less")])
 
     rows.extend(_triage_row())

@@ -22,7 +22,7 @@ class TaskCardKeyboardTests(unittest.TestCase):
         self.assertEqual(rows[2], ["⋯ Ещё"])
         self.assertEqual(rows[3], ["⬅ Inbox", "⬅️ Домой"])
 
-    def test_expanded_card_moves_structural_actions_out_of_primary_layer(self) -> None:
+    def test_expanded_card_keeps_secondary_layer_compact(self) -> None:
         kb = task_card_kb(
             10,
             20,
@@ -33,11 +33,17 @@ class TaskCardKeyboardTests(unittest.TestCase):
             return_label="⬅ В работе",
         )
 
+        rows = [[btn.text for btn in row] for row in kb.inline_keyboard]
+        self.assertEqual(rows[0], ["⬅ В работе", "⬅️ Домой"])
+        self.assertEqual(rows[1], ["🧩 Связи…", "↳ Подзадачи…"])
+        self.assertEqual(rows[2], ["👤 Исполнитель", "⏸ Отложить"])
+        self.assertEqual(rows[3], ["⋯ Свернуть"])
+
         labels = [btn.text for row in kb.inline_keyboard for btn in row]
-        self.assertIn("👤 Исполнитель", labels)
-        self.assertIn("⏸ Отложить", labels)
-        self.assertIn("📁 В проект…", labels)
-        self.assertIn("🧩 Суперзадача…", labels)
+        self.assertNotIn("📁 В проект…", labels)
+        self.assertNotIn("🧩 В суперзадачу…", labels)
+        self.assertNotIn("⛓ Отвязать", labels)
+        self.assertNotIn("📤 В Google Tasks", labels)
 
 
 if __name__ == "__main__":

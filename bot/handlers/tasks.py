@@ -475,16 +475,9 @@ async def build_task_card(
     if row.get("parent_task_id"):
         lines.append(f"Родитель: #{int(row['parent_task_id'])}")
 
-    if subs:
-        lines.append("")
-        lines.append("<b>Подзадачи:</b>")
-        for s in subs[:10]:
-            mark = "✅" if s.get("status") == "done" else "•"
-            lines.append(f"{mark} #{int(s['id'])} {h(str(s.get('title') or ''))}")
-        if len(subs) > 10:
-            lines.append(f"…и ещё {len(subs)-10}")
-
     active_subs = [(int(s["id"]), str(s.get("title") or "")) for s in (subs or []) if (s.get("status") != "done")]
+    if active_subs:
+        lines.append(f"Подзадач: <b>{len(active_subs)}</b>")
 
     in_gtasks = bool(row.get("g_task_id"))
     fp = _gtasks_fingerprint(
@@ -514,6 +507,135 @@ async def build_task_card(
         kb.inline_keyboard.insert(0, [InlineKeyboardButton(text="↩️ Undo", callback_data=f"undo:task:{task_id}")])
 
     return "\n".join(lines), kb, kind
+
+
+async def _render_task_relations_menu(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps) -> None:
+    """Render a compact secondary screen for structural task actions."""
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT t.id, t.title, t.status, t.deadline, t.project_id, t.parent_task_id,
+                   t.g_task_id, t.g_task_list_id, t.g_task_hash,
+                   p.code AS project_code,
+                   COALESCE(tm.name, '—') AS assignee
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            LEFT JOIN team tm ON tm.id = t.assignee_id
+            WHERE t.id=$1
+            """,
+            int(task_id),
+        )
+        if not row:
+            return await _render_task_overlay(msg, db_pool, "❌ Задача не найдена.")
+
+    in_gtasks = bool(row.get("g_task_id"))
+    fp = _gtasks_fingerprint(
+        project_code=str(row.get("project_code") or ""),
+        title=str(row.get("title") or ""),
+        assignee=str(row.get("assignee") or ""),
+        status=str(row.get("status") or ""),
+        deadline=row.get("deadline"),
+    )
+    gtasks_dirty = bool(in_gtasks and (not row.get("g_task_hash") or str(row.get("g_task_hash")) != fp))
+    if in_gtasks and gtasks_dirty:
+        gt_label = "🔄 Обновить Google Tasks"
+    elif in_gtasks:
+        gt_label = "✅ Google Tasks"
+    else:
+        gt_label = "📤 В Google Tasks"
+
+    lines = [
+        f"🧩 <b>Связи</b> • #{int(row['id'])}",
+        f"Проект: <b>{h(str(row.get('project_code') or ''))}</b>",
+    ]
+    if row.get("parent_task_id"):
+        lines.append(f"Родитель: #{int(row['parent_task_id'])}")
+    lines.append("")
+    lines.append("<i>Структурные действия вынесены сюда.</i>")
+
+    kb_rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move")],
+    ]
+    if row.get("parent_task_id"):
+        kb_rows.append([
+            InlineKeyboardButton(text="🧩 В суперзадачу…", callback_data=f"task:{task_id}:parent:0"),
+            InlineKeyboardButton(text="⛓ Отвязать", callback_data=f"task:{task_id}:detach"),
+        ])
+    else:
+        kb_rows.append([InlineKeyboardButton(text="🧩 В суперзадачу…", callback_data=f"task:{task_id}:parent:0")])
+    kb_rows.append([InlineKeyboardButton(text=gt_label, callback_data=f"task:{task_id}:gtasks")])
+    kb_rows.append([
+        InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:more"),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+    ])
+
+    return await ui_render(
+        bot=msg.bot,
+        db_pool=db_pool,
+        chat_id=int(msg.chat.id),
+        text="\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+        screen="task_relations",
+        payload={"task_id": int(task_id)},
+        fallback_message=msg,
+        parse_mode="HTML",
+    )
+
+
+async def _render_task_subtasks_menu(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps) -> None:
+    """Render a compact browsing screen for active subtasks."""
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT t.id, t.title, p.code AS project_code
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            WHERE t.id=$1
+            """,
+            int(task_id),
+        )
+        if not row:
+            return await _render_task_overlay(msg, db_pool, "❌ Задача не найдена.")
+        subs = await conn.fetch(
+            "SELECT id, title, status FROM tasks WHERE parent_task_id=$1 AND status != 'done' ORDER BY id",
+            int(task_id),
+        )
+
+    def _short(s: str, n: int = 34) -> str:
+        s = (s or "").strip()
+        return s if len(s) <= n else (s[: n - 1] + "…")
+
+    visible = [dict(r) for r in subs[:8]]
+    lines = [
+        f"↳ <b>Подзадачи</b> • #{int(row['id'])}",
+        f"Проект: <b>{h(str(row.get('project_code') or ''))}</b>",
+        "",
+    ]
+    if visible:
+        lines.append("Нажмите на подзадачу, чтобы открыть карточку.")
+        if len(subs) > len(visible):
+            lines.append(f"… и ещё {len(subs) - len(visible)}")
+    else:
+        lines.append("Активных подзадач нет.")
+
+    kb_rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=f"⬅ Назад", callback_data=f"task:{task_id}:more")],
+    ]
+    for s in visible:
+        kb_rows.insert(-1, [InlineKeyboardButton(text=f"↳ {_short(str(s.get('title') or ''))}", callback_data=f"task:{int(s['id'])}")])
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+
+    return await ui_render(
+        bot=msg.bot,
+        db_pool=db_pool,
+        chat_id=int(msg.chat.id),
+        text="\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+        screen="task_subtasks",
+        payload={"task_id": int(task_id)},
+        fallback_message=msg,
+        parse_mode="HTML",
+    )
 
 
 async def show_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int, deps: AppDeps, *, expanded: bool = False) -> None:
@@ -691,11 +813,15 @@ async def cb_task(
     # Card display
     # -----------------
     if action == "open":
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
     if action == "more":
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
     if action == "less":
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=False)
+    if action == "relations":
+        return await _render_task_relations_menu(callback.message, db_pool, task_id, deps)
+    if action == "subtasks":
+        return await _render_task_subtasks_menu(callback.message, db_pool, task_id, deps)
     if action == "super":
         page = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 0
         return await show_super_task_card(callback.message, db_pool, task_id, deps=deps, page=page)
@@ -777,7 +903,7 @@ async def cb_task(
         )
     if action == "dlcancel":
         await state.clear()
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
     # Block unsupported actions on supertasks (old callbacks, direct links).
     async with db_pool.acquire() as conn:
@@ -814,7 +940,7 @@ async def cb_task(
         if row_buf:
             kb_rows.append(row_buf)
         kb_rows.append([
-            InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:more"),
+            InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:relations"),
             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
         return await _render_task_overlay(
@@ -859,7 +985,7 @@ async def cb_task(
     if action == "gtasks":
         if not gtasks.enabled():
             await callback.answer("❌ Google Tasks не настроен", show_alert=True)
-            return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+            return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
         tz = _tz_from_deps(deps)
 
@@ -1007,7 +1133,7 @@ async def cb_task(
         except Exception as e:
             await callback.answer("❌ Ошибка Google Tasks", show_alert=True)
             await db_log_error(db_pool, "cb_task_gtasks", e, {"task_id": task_id})
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
 
     # -----------------
@@ -1071,7 +1197,7 @@ async def cb_task(
             fire_and_forget(_mark_done(gtask_to_complete[0], gtask_to_complete[1]), label="gtasks_done")
         if await _advance_inbox_triage_after_action(callback.message, db_pool, deps, task_id=task_id):
             return
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
     # -----------------
     # Assignee
@@ -1091,7 +1217,7 @@ async def cb_task(
         ]
         kb.extend(kb_columns(member_buttons, 2))
         kb.append([
-            InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}"),
+            InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:more"),
             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
         ])
         return await _render_task_overlay(
@@ -1122,7 +1248,7 @@ async def cb_task(
             background_project_sync(pid, db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
     # -----------------
     # Parent / subtask relations
@@ -1145,7 +1271,7 @@ async def cb_task(
             background_project_sync(pid, db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
     if action == "parent":
         page = 0
@@ -1219,7 +1345,7 @@ async def cb_task(
                 callback.message,
                 db_pool,
                 "⚠️ Нельзя назначить задачу родителем самой себе.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}")]]),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}:relations")]]),
             )
 
         async with db_pool.acquire() as conn:
@@ -1250,7 +1376,7 @@ async def cb_task(
             background_project_sync(int(cur["project_id"]), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
 
     # -----------------
     # Deadline controls

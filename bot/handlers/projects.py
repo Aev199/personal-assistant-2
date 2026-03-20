@@ -225,7 +225,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
         action = "open"
 
     page = 0
-    if action == "open" and len(parts) >= 4 and parts[3].isdigit():
+    if len(parts) >= 4 and parts[3].isdigit():
         page = max(0, int(parts[3]))
 
     tz = _tz_from_deps(deps)
@@ -266,7 +266,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="📦 Да, в архив", callback_data=f"proj:{project_id}:archive_do")],
                         [
-                            InlineKeyboardButton(text="⬅ Назад", callback_data=f"proj:{project_id}"),
+                            InlineKeyboardButton(text="⬅ Назад", callback_data=f"proj:{project_id}:more:{page}"),
                             InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                         ],
                     ])
@@ -337,6 +337,42 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     )
                     return
 
+            if action == "more":
+                code = str(proj.get("code") or "")
+                name = (proj.get("name") or "").strip()
+                is_cur = current_id is not None and int(current_id) == int(project_id)
+                lines = [f"<b>⋯ {h(code)}</b>" + (f" — {h(name)}" if name else ""), "", "<i>Дополнительные действия проекта.</i>"]
+                more_kb_rows: list[list[InlineKeyboardButton]] = [
+                    [
+                        InlineKeyboardButton(text="🗂 Структура", callback_data=f"proj:{project_id}:structure:{page}"),
+                        InlineKeyboardButton(text="🧺 Хвосты", callback_data=f"proj:{project_id}:tails:{page}"),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=("Снять текущий проект" if is_cur else "Сделать текущим"),
+                            callback_data=f"proj:{project_id}:toggle_current",
+                        ),
+                    ],
+                ]
+                if code.upper() != "INBOX":
+                    more_kb_rows.insert(2, [InlineKeyboardButton(text="📦 В архив", callback_data=f"proj:{project_id}:archive_ask:{page}")])
+                more_kb_rows.append([
+                    InlineKeyboardButton(text="⬅ Проект", callback_data=f"proj:{project_id}:open:{page}"),
+                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+                ])
+                await ui_render(
+                    bot=callback.bot,
+                    db_pool=db_pool,
+                    chat_id=int(callback.message.chat.id),
+                    text="\n".join(lines),
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=more_kb_rows),
+                    screen="project_more",
+                    payload={"project_id": project_id, "page": page},
+                    fallback_message=callback.message,
+                    parse_mode="HTML",
+                )
+                return
+
             # --- Project tails
             if action == "structure":
                 records = await conn.fetch(
@@ -363,7 +399,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                 ]
                 tree_text = "✅ Задач нет." if not tasks else render_task_tree(tasks, tz)[0]
                 kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="⬅ Проект", callback_data=f"proj:{project_id}")],
+                    [InlineKeyboardButton(text="⬅ Ещё", callback_data=f"proj:{project_id}:more:{page}")],
                     [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
                 ])
                 await ui_render(
@@ -396,10 +432,10 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     "<i>Выберите список:</i>",
                 ])
                 kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="💤 Без срока", callback_data=f"proj:{project_id}:tails_pick:nodate:0")],
-                    [InlineKeyboardButton(text="⏸ Отложено", callback_data=f"proj:{project_id}:tails_pick:postponed:0")],
+                    [InlineKeyboardButton(text="💤 Без срока", callback_data=f"proj:{project_id}:tails_pick:nodate:{page}")],
+                    [InlineKeyboardButton(text="⏸ Отложено", callback_data=f"proj:{project_id}:tails_pick:postponed:{page}")],
                     [
-                        InlineKeyboardButton(text="⬅ Проект", callback_data=f"proj:{project_id}"),
+                        InlineKeyboardButton(text="⬅ Ещё", callback_data=f"proj:{project_id}:more:{page}"),
                         InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                     ],
                 ])
@@ -482,10 +518,10 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     kb_rows.append(nav_row)
 
                 kb_rows.append([
-                    InlineKeyboardButton(text="⬅ Хвосты", callback_data=f"proj:{project_id}:tails"),
+                    InlineKeyboardButton(text="⬅ Хвосты", callback_data=f"proj:{project_id}:tails:{page}"),
                     InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
                 ])
-                kb_rows.append([InlineKeyboardButton(text="⬅ Проект", callback_data=f"proj:{project_id}")])
+                kb_rows.append([InlineKeyboardButton(text="⬅ Ещё", callback_data=f"proj:{project_id}:more:{page}")])
 
                 await ui_render(
                     bot=callback.bot,
@@ -564,7 +600,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
         if is_cur:
             meta_bits.append("⭐ <b>текущий</b>")
 
-        lines = [head, "<i>" + " • ".join(meta_bits) + "</i>", "", "<i>Нажмите на корневую задачу ниже или откройте полную структуру.</i>"]
+        lines = [head, "<i>" + " • ".join(meta_bits) + "</i>", "", "<i>Нажмите на корневую задачу ниже или откройте дополнительные действия.</i>"]
 
         kb: list[list[InlineKeyboardButton]] = []
         kb.extend(root_btns)
@@ -574,18 +610,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
             InlineKeyboardButton(text="➕ Задача", callback_data=f"add:task:{project_id}"),
             InlineKeyboardButton(text="🧩 Суперзадача", callback_data=f"add:super:{project_id}"),
         ])
-        kb.append([InlineKeyboardButton(text="🗂 Структура", callback_data=f"proj:{project_id}:structure")])
-        kb.append([InlineKeyboardButton(text="🧺 Хвосты", callback_data=f"proj:{project_id}:tails")])
-        kb.append([
-            InlineKeyboardButton(
-                text=("Снять текущий проект" if is_cur else "Сделать текущим"),
-                callback_data=f"proj:{project_id}:toggle_current",
-            ),
-        ])
-
-        # Archive button
-        if str(code).upper() != "INBOX":
-            kb.append([InlineKeyboardButton(text="📦 В архив", callback_data=f"proj:{project_id}:archive_ask")])
+        kb.append([InlineKeyboardButton(text="⋯ Ещё", callback_data=f"proj:{project_id}:more:{page}")])
 
         kb.append([
             InlineKeyboardButton(text="⬅️ Проекты", callback_data="nav:projects"),

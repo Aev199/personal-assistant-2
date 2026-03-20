@@ -353,7 +353,7 @@ async def ui_render_home(
                 LEFT JOIN team tm ON tm.id=t.assignee_id
                 WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline < $1
                 ORDER BY t.deadline ASC
-                LIMIT 3
+                LIMIT 1
                 """,
                 now_utc_naive,
             )
@@ -366,7 +366,7 @@ async def ui_render_home(
                 LEFT JOIN team tm ON tm.id=t.assignee_id
                 WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline >= $1 AND t.deadline < $2
                 ORDER BY t.deadline ASC
-                LIMIT 3
+                LIMIT 1
                 """,
                 start_utc_naive,
                 end_utc_naive,
@@ -381,7 +381,7 @@ async def ui_render_home(
                     LEFT JOIN team tm ON tm.id=t.assignee_id
                     WHERE {work_where}
                     ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC
-                    LIMIT 3
+                    LIMIT 1
                     """,
                     *args,
                 )
@@ -394,7 +394,7 @@ async def ui_render_home(
                     LEFT JOIN team tm ON tm.id=t.assignee_id
                     WHERE {work_where}
                     ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC
-                    LIMIT 3
+                    LIMIT 1
                     """
                 )
 
@@ -409,37 +409,28 @@ async def ui_render_home(
         lines.append("🧠 <b>Фокус</b>")
         lines.append(f"⭐ Проект: <b>{h(str(current_project_code))}</b>")
         lines.append("")
-        lines.append(f"🔥 Срочно: <b>{int(overdue_count or 0)}</b>")
-        lines.append(f"⏰ Сегодня: <b>{int(today_count or 0)}</b>")
-        lines.append(f"⚡ В работе: <b>{int(work_count or 0)}</b>")
-        lines.append(f"📥 Inbox: <b>{int(inbox_count or 0)}</b>")
+        lines.append(
+            f"🔥 Срочно: <b>{int(overdue_count or 0)}</b> • "
+            f"⏰ Сегодня: <b>{int(today_count or 0)}</b> • "
+            f"⚡ В работе: <b>{int(work_count or 0)}</b> • "
+            f"📥 Inbox: <b>{int(inbox_count or 0)}</b>"
+        )
 
-        # Sections
         lines.append("")
-        lines.append("<b>🔥 СРОЧНО</b>")
+        lines.append("<b>Ближайшее</b>")
         if overdue_rows:
-            for r in overdue_rows:
-                dt_local = to_local(r.get("deadline"), tz)
-                lines.extend(_preview_lines("🔥", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "overdue"))
-        else:
-            lines.append("—")
-
-        lines.append("")
-        lines.append("<b>⏰ СЕГОДНЯ</b>")
+            r = overdue_rows[0]
+            dt_local = to_local(r.get("deadline"), tz)
+            lines.extend(_preview_lines("🔥", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "overdue"))
         if today_rows:
-            for r in today_rows:
-                dt_local = to_local(r.get("deadline"), tz)
-                lines.extend(_preview_lines("⏰", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "today"))
-        else:
-            lines.append("—")
-
-        lines.append("")
-        lines.append("<b>⚡ В РАБОТЕ</b>")
+            r = today_rows[0]
+            dt_local = to_local(r.get("deadline"), tz)
+            lines.extend(_preview_lines("⏰", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "today"))
         if work_rows:
-            for r in work_rows:
-                dt_local = to_local(r.get("deadline"), tz)
-                lines.extend(_preview_lines("⚡", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "work"))
-        else:
+            r = work_rows[0]
+            dt_local = to_local(r.get("deadline"), tz)
+            lines.extend(_preview_lines("⚡", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "work"))
+        if not (overdue_rows or today_rows or work_rows):
             lines.append("—")
 
         kb: list[list[InlineKeyboardButton]] = [
@@ -2112,7 +2103,6 @@ async def ui_render_overdue(
         force_new=force_new,
         parse_mode="HTML",
     )
-
 
 
 

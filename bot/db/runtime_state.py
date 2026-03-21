@@ -227,6 +227,25 @@ async def create_pending_action(
     )
 
 
+async def update_pending_action_payload(
+    conn: asyncpg.Connection,
+    *,
+    pending_action_id: int,
+    payload: dict[str, Any],
+) -> None:
+    if not hasattr(conn, "execute"):
+        return
+    await conn.execute(
+        """
+        UPDATE pending_actions
+        SET payload_json=$2::jsonb
+        WHERE id=$1
+        """,
+        int(pending_action_id),
+        json.dumps(payload or {}, ensure_ascii=False),
+    )
+
+
 async def get_pending_action(
     conn: asyncpg.Connection,
     *,

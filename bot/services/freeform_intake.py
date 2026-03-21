@@ -706,11 +706,6 @@ async def _resolve_project(
     if requested_label:
         return None, None, f"\u041d\u0435 \u043d\u0430\u0448\u0451\u043b \u043f\u0440\u043e\u0435\u043a\u0442 {requested_label}."
 
-    if current_project_id:
-        current_project = next((project for project in projects if project.id == int(current_project_id)), None)
-        if current_project is not None:
-            return current_project.id, current_project.code, None
-
     inbox_project = next((project for project in projects if project.code.upper() == "INBOX"), None)
     if inbox_project is not None:
         return inbox_project.id, inbox_project.code, None

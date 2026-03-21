@@ -133,10 +133,16 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_team(message, pool)
 
         kwargs = render.await_args.kwargs
-        rows = _callbacks(kwargs["reply_markup"])
+        markup = kwargs["reply_markup"]
+        rows = _callbacks(markup)
+        buttons = markup.inline_keyboard
+        self.assertTrue(buttons[0][0].text.startswith("👤 Ира · "))
+        self.assertTrue(buttons[0][1].text.startswith("👤 Оля · "))
+        self.assertTrue(buttons[1][0].text.startswith("👤 Саша · "))
+        self.assertNotIn("активно", buttons[0][0].text)
         self.assertEqual(rows[0], ["team:1:0", "team:2:0"])
         self.assertEqual(rows[1], ["team:3:0"])
-        self.assertEqual(rows[-2], ["team:add", "nav:secondary"])
+        self.assertEqual(rows[-2], ["team:add"])
         self.assertEqual(rows[-1], ["nav:home"])
 
 

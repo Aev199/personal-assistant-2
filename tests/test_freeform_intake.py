@@ -11,6 +11,7 @@ from bot.services.freeform_intake import (
     _match_assignee_option,
     _match_project_option,
     _normalize_intake_payload,
+    _resolve_project,
     _start_followup,
     _voice_file_meta,
     handle_freeform_text,
@@ -364,6 +365,23 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         self.assertEqual(find_duplicate.await_args.args[1], 202)
+
+    async def test_resolve_project_defaults_to_inbox_when_no_match(self) -> None:
+        project_id, project_code, error = await _resolve_project(
+            SimpleNamespace(),
+            requested_code=None,
+            requested_name=None,
+            raw_text="send report",
+            current_project_id=42,
+            projects=[
+                ProjectOption(id=1, code="OPS", name="Operations"),
+                ProjectOption(id=2, code="INBOX", name="Inbox"),
+            ],
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(project_id, 2)
+        self.assertEqual(project_code, "INBOX")
 
     async def test_personal_task_creation_builds_pending_preview(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))

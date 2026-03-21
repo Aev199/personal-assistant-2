@@ -1155,32 +1155,27 @@ async def ui_render_team(
         kb: list[list[InlineKeyboardButton]] = []
         member_buttons: list[InlineKeyboardButton] = []
 
+        def _team_button_text(name: str, active: int) -> str:
+            clean_name = str(name or "").strip() or "Без имени"
+            max_name = 11
+            if len(clean_name) > max_name:
+                clean_name = clean_name[: max_name - 1] + "…"
+            return f"👤 {clean_name} · {int(active)}"
+
         for r in sorted(team_rows, key=sort_key):
             tid = int(r["id"])
             s = stats.get(tid, {"active": 0, "overdue": 0, "today": 0, "next7": 0, "nodate": 0})
             name = str(r["name"] or "")
-            meta = [f"активно {s['active']}"]
-            if int(s["overdue"]):
-                meta.append(f"🚨 {s['overdue']}")
-            if int(s["today"]):
-                meta.append(f"📅 {s['today']}")
-            if int(s["next7"]):
-                meta.append(f"⏳ {s['next7']}")
-            if int(s["nodate"]):
-                meta.append(f"🧺 {s['nodate']}")
             member_buttons.append(
                 InlineKeyboardButton(
-                    text=f"👤 {name} — {' • '.join(meta)}",
+                    text=_team_button_text(name, s["active"]),
                     callback_data=f"team:{tid}:0",
                 )
             )
 
         kb.extend(kb_columns(member_buttons, 2))
 
-        kb.append([
-            InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add"),
-            InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary"),
-        ])
+        kb.append([InlineKeyboardButton(text="➕ Сотрудник", callback_data="team:add")])
         kb.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
 
         return await ui_render(
@@ -2106,5 +2101,3 @@ async def ui_render_overdue(
         force_new=force_new,
         parse_mode="HTML",
     )
-
-

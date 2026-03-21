@@ -9,12 +9,13 @@ from typing import Any
 import asyncpg
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from bot.db import db_add_event
+from bot.db import db_add_event, ensure_inbox_project_id
 from bot.db.runtime_state import (
     create_pending_action,
     mark_pending_action_status,
     record_action_journal,
     remember_recent_action,
+    update_pending_action_payload,
 )
 from bot.deps import AppDeps
 from bot.services.gtasks_service import due_from_local_date, get_or_create_list_id
@@ -35,6 +36,43 @@ def _parse_iso_dt(raw: str | None) -> datetime | None:
 
 def _can_write(conn: Any) -> bool:
     return hasattr(conn, "execute") and hasattr(conn, "fetchval")
+
+
+def _event_summary(kind: str, title: str, project_code: str | None) -> str:
+    title = str(title or "").strip()
+    project_code = str(project_code or "").strip()
+    if kind == "work":
+        work_tpl = os.getenv("ICLOUD_WORK_SUMMARY_TEMPLATE", "{project_prefix}{title}")
+        prefix = ""
+        if project_code and title and not title.startswith(f"{project_code}:"):
+            prefix = f"{project_code}: "
+        return work_tpl.format(title=title, project=project_code, project_prefix=prefix).strip()
+    personal_tpl = os.getenv("ICLOUD_PERSONAL_SUMMARY_TEMPLATE", "{title}")
+    return personal_tpl.format(title=title, project="", project_prefix="").strip()
+
+
+def _event_toggle_button_text(calendar_kind: str | None) -> str:
+    current = str(calendar_kind or "personal").strip().lower()
+    return "🏡 Личное" if current == "work" else "💼 Рабочее"
+
+
+def _preview_keyboard(kind: str, pending_action_id: int, payload: dict[str, Any]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"llm:confirm:{pending_action_id}"),
+            InlineKeyboardButton(text="✖ Отмена", callback_data=f"llm:cancel:{pending_action_id}"),
+        ]
+    ]
+    if kind == "event":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_event_toggle_button_text(payload.get("calendar_kind")),
+                    callback_data=f"llm:toggle_event_kind:{pending_action_id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _preview_text(kind: str, payload: dict[str, Any], *, tz_name: str) -> str:
@@ -107,14 +145,7 @@ async def create_pending_preview(
             ttl_sec=max(45, ttl_sec),
         )
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"llm:confirm:{pending_action_id}"),
-                InlineKeyboardButton(text="✖ Отмена", callback_data=f"llm:cancel:{pending_action_id}"),
-            ]
-        ]
-    )
+    kb = _preview_keyboard(kind, int(pending_action_id), payload)
     if hasattr(message, "answer"):
         await message.answer(_preview_text(kind, payload, tz_name=deps.tz_name), reply_markup=kb)
     return int(pending_action_id)
@@ -308,6 +339,11 @@ async def execute_pending_action(
         dtstart_utc = start_local.astimezone(timezone.utc)
         dtend_utc = dtstart_utc + timedelta(minutes=duration_min)
         async with db_pool.acquire() as conn:
+            if payload.get("calendar_kind") == "work" and not payload.get("project_id"):
+                inbox_project_id = await ensure_inbox_project_id(conn)
+                payload["project_id"] = int(inbox_project_id)
+                payload["project_code"] = "INBOX"
+                payload["project_name"] = "INBOX"
             event_id = int(
                 await conn.fetchval(
                     """

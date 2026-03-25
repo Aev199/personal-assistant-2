@@ -1,10 +1,9 @@
-"""Minimal Gemini API adapter for free-form intake and voice transcription with fallback support."""
+"""Minimal Gemini API adapter for free-form intake and voice transcription."""
 
 from __future__ import annotations
 
 import base64
 import json
-import time
 from typing import Any, Optional
 
 import aiohttp
@@ -19,7 +18,6 @@ class GeminiAdapter:
         llm_model: str = "gemini-2.5-flash",
         transcribe_model: str = "gemini-2.5-flash",
         timeout_sec: int = 45,
-        fallback_models: list[str] | None = None,
     ) -> None:
         self._api_key = (api_key or "").strip()
         self._base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
@@ -27,12 +25,6 @@ class GeminiAdapter:
         self._transcribe_model = (transcribe_model or "gemini-2.5-flash").strip()
         self._session: Optional[aiohttp.ClientSession] = None
         self._timeout = aiohttp.ClientTimeout(total=max(5, int(timeout_sec or 45)))
-        
-        # Fallback models for 503 errors
-        if fallback_models is None:
-            fallback_models = ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemma-3-2b"]
-        self._fallback_models = fallback_models
-        self._last_503_time: dict[str, float] = {}
 
     @property
     def enabled(self) -> bool:
@@ -98,48 +90,19 @@ class GeminiAdapter:
             raise RuntimeError("Gemini returned empty text")
         return out
 
-    async def _generate_content_with_fallback(
-        self, *, model: str, payload: dict[str, Any], operation: str = "llm"
-    ) -> dict[str, Any]:
-        """Try primary model, fallback to alternatives on 503."""
-        models_to_try = [model] + self._fallback_models
-        last_error = None
-        
-        for attempt_model in models_to_try:
-            # Skip if this model had 503 recently (within 60 seconds)
-            cache_key = f"{operation}:{attempt_model}"
-            if cache_key in self._last_503_time:
-                if time.time() - self._last_503_time[cache_key] < 60:
-                    continue
-            
-            try:
-                if not self.enabled:
-                    raise RuntimeError("Gemini adapter is not configured")
-                
-                session = await self._get_session()
-                async with session.post(
-                    f"{self._base_url}/models/{attempt_model}:generateContent",
-                    headers=self._headers(),
-                    json=payload,
-                ) as resp:
-                    body = await resp.text()
-                    
-                    if resp.status == 503:
-                        self._last_503_time[cache_key] = time.time()
-                        last_error = RuntimeError(f"Model {attempt_model} unavailable (503)")
-                        continue
-                    
-                    if resp.status >= 400:
-                        raise RuntimeError(f"Gemini request failed: {resp.status} {body[:500]}")
-                    
-                    return json.loads(body)
-                    
-            except Exception as e:
-                last_error = e
-                continue
-        
-        # All models failed
-        raise last_error or RuntimeError("All fallback models failed")
+    async def _generate_content(self, *, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.enabled:
+            raise RuntimeError("Gemini adapter is not configured")
+        session = await self._get_session()
+        async with session.post(
+            f"{self._base_url}/models/{model}:generateContent",
+            headers=self._headers(),
+            json=payload,
+        ) as resp:
+            body = await resp.text()
+            if resp.status >= 400:
+                raise RuntimeError(f"Gemini request failed: {resp.status} {body[:500]}")
+            return json.loads(body)
 
     async def classify_intake(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         payload = {
@@ -183,7 +146,7 @@ class GeminiAdapter:
                 },
             },
         }
-        data = await self._generate_content_with_fallback(model=self._llm_model, payload=payload, operation="classify")
+        data = await self._generate_content(model=self._llm_model, payload=payload)
         return self._extract_json_object(self._extract_text(data))
 
     async def transcribe_audio(self, *, audio_bytes: bytes, filename: str, mime_type: str | None = None) -> str:
@@ -208,5 +171,5 @@ class GeminiAdapter:
                 "temperature": 0,
             },
         }
-        data = await self._generate_content_with_fallback(model=self._transcribe_model, payload=payload, operation="transcribe")
+        data = await self._generate_content(model=self._transcribe_model, payload=payload)
         return self._extract_text(data).strip()

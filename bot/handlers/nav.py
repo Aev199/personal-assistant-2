@@ -12,6 +12,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 from bot.deps import AppDeps
+from bot.db.user_settings import set_persona_mode
+from bot.persona import is_solo_mode, normalize_persona_mode, persona_switch_toast
 from bot.handlers.common import (
     cleanup_stale_wizard_message,
     get_wizard_message_data,
@@ -26,11 +28,14 @@ from bot.ui.screens import (
     ui_render_inbox,
     ui_render_overdue,
     ui_render_projects_portfolio,
+    ui_render_reminders,
     ui_render_stats,
     ui_render_team,
     ui_render_today,
     ui_render_work,
+    ensure_main_menu,
 )
+from bot.ui.state import ui_get_state, ui_payload_with_toast, _ui_payload_get, ui_set_state
 
 
 def _parse_nav_all_callback(data: str | None) -> tuple[str, int]:
@@ -67,6 +72,116 @@ async def _callback_wizard_context(
         current_message_id=getattr(callback.message, "message_id", None),
     )
     return wizard_chat_id, preferred_message_id, stale_wizard_msg_id
+
+
+async def _rerender_current_screen(
+    message,
+    db_pool: asyncpg.Pool,
+    deps: AppDeps,
+    *,
+    persona_mode: str,
+    toast: str,
+    preferred_message_id: int | None = None,
+) -> int:
+    chat_id = int(message.chat.id)
+    async with db_pool.acquire() as conn:
+        ui_state = await ui_get_state(conn, chat_id)
+        screen = str(ui_state.get("ui_screen") or "home").lower()
+        payload = ui_payload_with_toast(_ui_payload_get(ui_state), toast, ttl_sec=20)
+        await ui_set_state(conn, chat_id, ui_payload=payload)
+
+    tz_name = deps.tz_name
+    if screen == "secondary":
+        return await ui_render_home_more(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)
+    if screen == "help":
+        return await ui_render_help(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)
+    if screen == "today":
+        page = 0
+        try:
+            page = max(0, int(payload.get("page") or 0))
+        except Exception:
+            page = 0
+        return await ui_render_today(
+            message,
+            db_pool,
+            tz_name=tz_name,
+            page=page,
+            icloud=deps.icloud,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    if screen == "all_tasks":
+        page = max(0, int(payload.get("page") or 0))
+        filter_key = str(payload.get("filter") or "all").strip().lower() or "all"
+        return await ui_render_all_tasks(
+            message,
+            db_pool,
+            tz_name=tz_name,
+            page=page,
+            filter_key=filter_key,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    if screen == "projects":
+        return await ui_render_projects_portfolio(
+            message,
+            db_pool,
+            tz_name=tz_name,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    if screen == "reminders":
+        page = max(0, int(payload.get("reminders_page") or 0))
+        selected = int(payload.get("selected_reminder_id") or 0) or None
+        return await ui_render_reminders(
+            message,
+            db_pool,
+            tz_name=tz_name,
+            page=page,
+            selected_reminder_id=selected,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    if screen == "work":
+        page = max(0, int(payload.get("page") or 0))
+        return await ui_render_work(
+            message,
+            db_pool,
+            tz_name=tz_name,
+            page=page,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    if screen in {"inbox", "inbox_triage"}:
+        page = max(0, int(payload.get("inbox_page", payload.get("page")) or 0))
+        return await ui_render_inbox(
+            message,
+            db_pool,
+            tz_name=tz_name,
+            page=page,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    if screen == "stats":
+        return await ui_render_stats(
+            message,
+            db_pool,
+            tz_name=tz_name,
+            preferred_message_id=preferred_message_id,
+        )
+    if screen == "team":
+        if is_solo_mode(persona_mode):
+            return await ui_render_home_more(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)
+        return await ui_render_team(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)
+    if screen == "add":
+        return await ui_render_add_menu(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)
+    return await ui_render_home(
+        message,
+        db_pool,
+        tz_name=tz_name,
+        preferred_message_id=preferred_message_id,
+        force_new=False,
+    )
 
 
 async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -365,6 +480,32 @@ async def cb_nav_team(callback: CallbackQuery, state: FSMContext, db_pool: async
     )
 
 
+async def cb_settings_persona(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
+        return await callback.answer("Недоступно", show_alert=True)
+    target = normalize_persona_mode((callback.data or "").split(":")[-1])
+    await callback.answer()
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
+    await state.clear()
+    async with db_pool.acquire() as conn:
+        persona_mode = await set_persona_mode(conn, int(callback.message.chat.id), target)
+    await ensure_main_menu(callback.message, db_pool, refresh=True)
+    final_id = await _rerender_current_screen(
+        callback.message,
+        db_pool,
+        deps,
+        persona_mode=persona_mode,
+        toast=persona_switch_toast(persona_mode),
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
+
+
 async def cb_nav_reminders(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
@@ -379,7 +520,6 @@ async def cb_nav_reminders(callback: CallbackQuery, state: FSMContext, db_pool: 
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
     
-    from bot.ui.screens import ui_render_reminders
     final_id = await ui_render_reminders(
         callback.message,
         db_pool,
@@ -413,3 +553,4 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_nav_inbox, F.data.startswith("nav:inbox"))
     dp.callback_query.register(cb_nav_team, F.data == "nav:team")
     dp.callback_query.register(cb_nav_reminders, F.data.startswith("nav:reminders"))
+    dp.callback_query.register(cb_settings_persona, F.data.regexp(r"^settings:persona:(lead|solo)$"))

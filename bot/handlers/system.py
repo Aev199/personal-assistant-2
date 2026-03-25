@@ -45,6 +45,7 @@ from bot.ui import (
     ui_render_help,
     ui_render_home,
     ui_render_reminders,
+    ui_render_work,
     ui_get_state,
     ui_set_state,
 )
@@ -859,6 +860,31 @@ async def msg_all_tasks_button(message: Message, state: FSMContext, db_pool: asy
     )
 
 
+async def msg_work_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
+    if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
+        return
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _reply_wizard_context(
+        state,
+        fallback_chat_id=int(message.chat.id),
+    )
+    await state.clear()
+    await try_delete_user_message(message)
+    anchor_sent = await ensure_main_menu(message, db_pool)
+    final_id = await ui_render_work(
+        message,
+        db_pool,
+        tz_name=resolve_tz_name(deps.tz_name),
+        preferred_message_id=preferred_message_id,
+        force_new=bool(anchor_sent),
+    )
+    await cleanup_stale_wizard_message(
+        message.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
+
+
 async def msg_overdue_button(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps):
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
@@ -1133,6 +1159,7 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(msg_projects_button, lambda m: m.text and canon(m.text) == "проекты")
     dp.message.register(msg_today_button, lambda m: m.text and canon(m.text) == "сегодня")
     dp.message.register(msg_all_tasks_button, lambda m: m.text and canon(m.text) == "все задачи")
+    dp.message.register(msg_work_button, lambda m: m.text and canon(m.text) == "в работе")
     dp.message.register(msg_overdue_button, lambda m: m.text and canon(m.text) == "просрочки")
     dp.message.register(msg_reminders_button, lambda m: m.text and canon(m.text) == "напоминания")
 
@@ -1140,4 +1167,3 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(msg_freeform_followup_text, StateFilter(FreeformFollowup.awaiting_text), F.text)
     dp.message.register(msg_voice_freeform, StateFilter(None), lambda m: bool(m.voice or m.audio))
     dp.message.register(cmd_unknown, StateFilter(None))
-

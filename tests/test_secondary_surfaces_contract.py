@@ -56,6 +56,11 @@ class _StatsConn:
 
 
 class _TeamConn:
+    async def fetchval(self, query, *_args):
+        if "SELECT persona_mode FROM user_settings" in query:
+            return "lead"
+        raise AssertionError(f"Unexpected fetchval query: {query}")
+
     async def fetch(self, query, *_args):
         if "SELECT id, name, role FROM team" in query:
             return [
@@ -82,6 +87,7 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.ui.screens._pop_screen_toast", AsyncMock(return_value=None)),
+            patch("bot.ui.screens._persona_mode_or_lead", AsyncMock(return_value="lead")),
             patch("bot.ui.screens.ui_render", AsyncMock(return_value=77)) as render,
         ):
             await ui_render_home_more(message, db_pool=object())
@@ -90,6 +96,23 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0], ["nav:all", "nav:reminders:0"])
         self.assertEqual(rows[1], ["home:stats", "sync:status"])
         self.assertEqual(rows[2], ["nav:help", "nav:team"])
+        self.assertEqual(rows[3], ["settings:persona:solo"])
+        self.assertEqual(rows[4], ["nav:home"])
+
+    async def test_secondary_menu_hides_team_in_solo(self) -> None:
+        message = SimpleNamespace(chat=SimpleNamespace(id=15), bot=SimpleNamespace())
+
+        with (
+            patch("bot.ui.screens._pop_screen_toast", AsyncMock(return_value=None)),
+            patch("bot.ui.screens._persona_mode_or_lead", AsyncMock(return_value="solo")),
+            patch("bot.ui.screens.ui_render", AsyncMock(return_value=77)) as render,
+        ):
+            await ui_render_home_more(message, db_pool=object())
+
+        rows = _callbacks(render.await_args.kwargs["reply_markup"])
+        self.assertEqual(rows[0], ["nav:all", "nav:reminders:0"])
+        self.assertEqual(rows[1], ["home:stats", "sync:status"])
+        self.assertEqual(rows[2], ["nav:help", "settings:persona:lead"])
         self.assertEqual(rows[3], ["nav:home"])
 
     async def test_help_screen_has_fast_escape_routes(self) -> None:
@@ -97,6 +120,7 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.ui.screens._pop_screen_toast", AsyncMock(return_value=None)),
+            patch("bot.ui.screens._persona_mode_or_lead", AsyncMock(return_value="lead")),
             patch("bot.ui.screens.ui_render", AsyncMock(return_value=77)) as render,
         ):
             await ui_render_help(message, db_pool=object())
@@ -106,6 +130,20 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
         rows = _callbacks(render.await_args.kwargs["reply_markup"])
         self.assertEqual(rows[0], ["nav:today", "nav:add"])
         self.assertEqual(rows[1], ["nav:secondary", "nav:home"])
+
+    async def test_help_screen_switches_team_copy_to_work_for_solo(self) -> None:
+        message = SimpleNamespace(chat=SimpleNamespace(id=16), bot=SimpleNamespace())
+
+        with (
+            patch("bot.ui.screens._pop_screen_toast", AsyncMock(return_value=None)),
+            patch("bot.ui.screens._persona_mode_or_lead", AsyncMock(return_value="solo")),
+            patch("bot.ui.screens.ui_render", AsyncMock(return_value=77)) as render,
+        ):
+            await ui_render_help(message, db_pool=object())
+
+        text = render.await_args.kwargs["text"]
+        self.assertIn("⚡ В работе", text)
+        self.assertNotIn("👥 Команда", text)
 
     async def test_stats_screen_is_secondary_not_daily_action_hub(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=13), bot=SimpleNamespace())

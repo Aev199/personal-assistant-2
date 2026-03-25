@@ -20,8 +20,14 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudVisibleEvent
+from bot.db.user_settings import get_persona_mode
+from bot.persona import (
+    is_solo_mode,
+    persona_toggle_button_text,
+    persona_toggle_target,
+)
 from bot.ui.render import ui_render
-from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_take_toast
+from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_take_toast, ui_payload_with_toast
 from bot.utils import h, fmt_task_line_html, kb_columns
 from bot.keyboards import back_home_kb, add_menu_kb, main_menu_kb
 
@@ -41,6 +47,26 @@ async def _pop_screen_toast(db_pool: asyncpg.Pool, chat_id: int) -> str | None:
         payload, toast_line = await _take_screen_payload(conn, chat_id)
         await ui_set_state(conn, chat_id, ui_payload=payload)
     return toast_line
+
+
+def _visible_assignee(assignee: str | None, persona_mode: str) -> str:
+    if is_solo_mode(persona_mode):
+        return ""
+    value = (assignee or "—").strip()
+    if not value or value == "—":
+        return ""
+    return value
+
+
+async def _persona_mode_or_lead(db_pool: asyncpg.Pool | object, chat_id: int) -> str:
+    try:
+        acquire = getattr(db_pool, "acquire", None)
+        if acquire is None:
+            return "lead"
+        async with db_pool.acquire() as conn:
+            return await get_persona_mode(conn, chat_id)
+    except Exception:
+        return "lead"
 
 
 async def ensure_main_menu(
@@ -66,10 +92,13 @@ async def ensure_main_menu(
 
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT menu_message_id FROM user_settings WHERE chat_id=$1",
+            "SELECT menu_message_id, persona_mode FROM user_settings WHERE chat_id=$1",
             chat_id,
         )
         menu_mid = row["menu_message_id"] if row else None
+        persona_mode = "lead"
+        if row:
+            persona_mode = await get_persona_mode(conn, chat_id)
 
     # Keep anchor compact but explicit so recovery does not look like a blank phantom message.
     _ANCHOR_TEXT_A = "⌨️ Главное меню"
@@ -85,7 +114,7 @@ async def ensure_main_menu(
                 chat_id=chat_id,
                 message_id=stale_menu_mid,
                 text=_ANCHOR_TEXT_A,
-                reply_markup=main_menu_kb(),
+                reply_markup=main_menu_kb(persona_mode),
             )
             return False
         except TelegramBadRequest as e:
@@ -95,7 +124,7 @@ async def ensure_main_menu(
                         chat_id=chat_id,
                         message_id=stale_menu_mid,
                         text=_ANCHOR_TEXT_B,
-                        reply_markup=main_menu_kb(),
+                        reply_markup=main_menu_kb(persona_mode),
                     )
                     return False
                 except TelegramBadRequest as retry_error:
@@ -109,7 +138,7 @@ async def ensure_main_menu(
             pass
 
     try:
-        anchor = await message.answer(_ANCHOR_TEXT_A, reply_markup=main_menu_kb())
+        anchor = await message.answer(_ANCHOR_TEXT_A, reply_markup=main_menu_kb(persona_mode))
         async with db_pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO user_settings(chat_id, menu_message_id, updated_at) VALUES($1,$2,NOW()) "
@@ -285,23 +314,40 @@ async def ui_render_home(
         # work
         return f"до {dt_local.strftime('%d.%m %H:%M')}"
 
-    def _preview_lines(marker: str, project: str, title: str, assignee: str, dt_local: datetime | None, mode: str) -> list[str]:
+    def _preview_lines(
+        marker: str,
+        project: str,
+        title: str,
+        assignee: str,
+        dt_local: datetime | None,
+        mode: str,
+        *,
+        persona_mode: str,
+    ) -> list[str]:
         proj = (project or "—").strip()
         t = (title or "").strip()
-        a = (assignee or "—").strip()
+        a = _visible_assignee(assignee, persona_mode)
         # keep lines readable
         t_show = t if len(t) <= 90 else (t[:89] + "…")
         due = _due_str(dt_local, mode)
         if len(t) > 40:
+            if a:
+                return [
+                    f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
+                    f"   {h(a)} → <i>{h(due)}</i>",
+                ]
             return [
                 f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   {h(a)} → <i>{h(due)}</i>",
+                f"   <i>{h(due)}</i>",
             ]
-        return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h(due)}</i>"]
+        if a:
+            return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h(due)}</i>"]
+        return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — <i>{h(due)}</i>"]
 
     try:
         async with db_pool.acquire() as conn:
             payload, toast_line = await _take_screen_payload(conn, chat_id)
+            persona_mode = await get_persona_mode(conn, chat_id)
 
             # Context: current project + INBOX
             current_project_id = await conn.fetchval(
@@ -421,15 +467,45 @@ async def ui_render_home(
         if overdue_rows:
             r = overdue_rows[0]
             dt_local = to_local(r.get("deadline"), tz)
-            lines.extend(_preview_lines("🔥", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "overdue"))
+            lines.extend(
+                _preview_lines(
+                    "🔥",
+                    r.get("project") or "",
+                    r.get("title") or "",
+                    r.get("assignee") or "—",
+                    dt_local,
+                    "overdue",
+                    persona_mode=persona_mode,
+                )
+            )
         if today_rows:
             r = today_rows[0]
             dt_local = to_local(r.get("deadline"), tz)
-            lines.extend(_preview_lines("⏰", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "today"))
+            lines.extend(
+                _preview_lines(
+                    "⏰",
+                    r.get("project") or "",
+                    r.get("title") or "",
+                    r.get("assignee") or "—",
+                    dt_local,
+                    "today",
+                    persona_mode=persona_mode,
+                )
+            )
         if work_rows:
             r = work_rows[0]
             dt_local = to_local(r.get("deadline"), tz)
-            lines.extend(_preview_lines("⚡", r.get("project") or "", r.get("title") or "", r.get("assignee") or "—", dt_local, "work"))
+            lines.extend(
+                _preview_lines(
+                    "⚡",
+                    r.get("project") or "",
+                    r.get("title") or "",
+                    r.get("assignee") or "—",
+                    dt_local,
+                    "work",
+                    persona_mode=persona_mode,
+                )
+            )
         if not (overdue_rows or today_rows or work_rows):
             lines.append("—")
 
@@ -643,28 +719,50 @@ async def ui_render_home_more(
 ) -> int:
     chat_id = int(message.chat.id)
     toast_line = await _pop_screen_toast(db_pool, chat_id)
+    persona_mode = await _persona_mode_or_lead(db_pool, chat_id)
 
     lines = ["⋯ <b>Ещё</b>", "", "Вспомогательные разделы и редкие действия."]
     if toast_line:
         lines = [toast_line, ""] + lines
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
+    kb_rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
+            InlineKeyboardButton(text="🔔 Напоминания", callback_data="nav:reminders:0"),
+        ],
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
+            InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
+        ],
+    ]
+    if is_solo_mode(persona_mode):
+        kb_rows.append(
             [
-                InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-                InlineKeyboardButton(text="🔔 Напоминания", callback_data="nav:reminders:0"),
-            ],
-            [
-                InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
-                InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
-            ],
+                InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help"),
+                InlineKeyboardButton(
+                    text=persona_toggle_button_text(persona_mode),
+                    callback_data=f"settings:persona:{persona_toggle_target(persona_mode)}",
+                ),
+            ]
+        )
+    else:
+        kb_rows.append(
             [
                 InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help"),
                 InlineKeyboardButton(text="👥 Команда", callback_data="nav:team"),
-            ],
-            [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
-        ]
-    )
+            ]
+        )
+        kb_rows.append(
+            [
+                InlineKeyboardButton(
+                    text=persona_toggle_button_text(persona_mode),
+                    callback_data=f"settings:persona:{persona_toggle_target(persona_mode)}",
+                )
+            ]
+        )
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
     return await ui_render(
         bot=message.bot,
@@ -687,24 +785,37 @@ async def ui_render_help(
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
-    toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
-    help_text = (
-        "❓ <b>Короткая справка</b>\n\n"
-        "• Нижнее меню дает быстрый вход в ежедневные разделы.\n"
-        "• Большинство действий обновляет один экран, без лишней ленты.\n"
-        "• Для задачи чаще всего достаточно открыть карточку и выбрать `✅` или `📅`.\n"
-        "• Быстрое создание работает через `⚡ Быстрая задача` или `➕ Добавить`.\n\n"
-        "<b>Основные разделы</b>\n"
-        "• 📅 Сегодня: план дня, напоминания и календарные события.\n"
-        "• 📋 Все задачи: общий список с фильтрами, включая просрочку.\n"
-        "• 📁 Проекты: структура и рабочие списки.\n"
-        "• 🔔 Напоминания: активные напоминания и snooze.\n\n"
-        "• ➕ Добавить: создать задачу, событие или напоминание.\n"
-        "• 👥 Команда: сотрудники и их загрузка.\n"
-        "• /help: открыть эту справку в любой момент.\n\n"
-        "<b>Пример свободного ввода</b>\n"
-        "<i>напомни купить хлеб завтра в 18:00</i>"
+    chat_id = int(message.chat.id)
+    toast_line = await _pop_screen_toast(db_pool, chat_id)
+    persona_mode = await _persona_mode_or_lead(db_pool, chat_id)
+    help_lines = [
+        "❓ <b>Короткая справка</b>",
+        "",
+        "• Нижнее меню дает быстрый вход в ежедневные разделы.",
+        "• Большинство действий обновляет один экран, без лишней ленты.",
+        "• Для задачи чаще всего достаточно открыть карточку и выбрать `✅` или `📅`.",
+        "• Быстрое создание работает через `⚡ Быстрая задача` или `➕ Добавить`.",
+        "",
+        "<b>Основные разделы</b>",
+        "• 📅 Сегодня: план дня, напоминания и календарные события.",
+        "• 📋 Все задачи: общий список с фильтрами, включая просрочку.",
+        "• 📁 Проекты: структура и рабочие списки.",
+        "• 🔔 Напоминания: активные напоминания и snooze.",
+        "• ➕ Добавить: создать задачу, событие или напоминание.",
+    ]
+    if is_solo_mode(persona_mode):
+        help_lines.append("• ⚡ В работе: быстрый вход в активные задачи.")
+    else:
+        help_lines.append("• 👥 Команда: сотрудники и их загрузка.")
+    help_lines.extend(
+        [
+            "• /help: открыть эту справку в любой момент.",
+            "",
+            "<b>Пример свободного ввода</b>",
+            "<i>напомни купить хлеб завтра в 18:00</i>",
+        ]
     )
+    help_text = "\n".join(help_lines)
     if toast_line:
         help_text = f"{toast_line}\n\n{help_text}"
     return await ui_render(
@@ -1071,6 +1182,25 @@ async def ui_render_team(
 ) -> int:
     """Render Team dashboard (load by active tasks)."""
     chat_id = int(message.chat.id)
+    redirect_solo = False
+    async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, chat_id)
+        if is_solo_mode(persona_mode):
+            ui_state = await ui_get_state(conn, chat_id)
+            payload = ui_payload_with_toast(
+                _ui_payload_get(ui_state),
+                "👤 Режим Solo скрывает раздел Команда. Переключите режим через ⋯ Ещё.",
+                ttl_sec=25,
+            )
+            await ui_set_state(conn, chat_id, ui_payload=payload)
+            redirect_solo = True
+    if redirect_solo:
+        return await ui_render_home_more(
+            message,
+            db_pool,
+            preferred_message_id=preferred_message_id,
+            force_new=force_new,
+        )
     toast_line = await _pop_screen_toast(db_pool, chat_id)
     tz = resolve_tzinfo(_tz_name())
     now_utc = datetime.now(UTC)

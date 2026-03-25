@@ -13,11 +13,20 @@ from bot.handlers.wizards import (
 
 class AddTaskCaptureFlowTests(unittest.IsolatedAsyncioTestCase):
     def test_confirm_keyboard_keeps_edit_actions_on_single_confirm_screen(self) -> None:
-        kb = _task_confirm_kb()
+        kb = _task_confirm_kb("lead")
         rows = [[btn.text for btn in row] for row in kb.inline_keyboard]
 
         self.assertEqual(rows[0], ["✅ Создать"])
         self.assertEqual(rows[1], ["📁 Проект", "👤 Исполнитель"])
+        self.assertEqual(rows[2], ["🗓 Срок"])
+        self.assertEqual(rows[3], ["✖️ Отмена"])
+
+    def test_confirm_keyboard_hides_assignee_in_solo(self) -> None:
+        kb = _task_confirm_kb("solo")
+        rows = [[btn.text for btn in row] for row in kb.inline_keyboard]
+
+        self.assertEqual(rows[0], ["✅ Создать"])
+        self.assertEqual(rows[1], ["📁 Проект"])
         self.assertEqual(rows[2], ["🗓 Срок"])
         self.assertEqual(rows[3], ["✖️ Отмена"])
 

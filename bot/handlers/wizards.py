@@ -29,6 +29,7 @@ from bot.db import (
     db_add_event,
     db_log_error,
     get_current_project_id,
+    get_persona_mode,
     fetch_portfolio_rows,
     ensure_inbox_project_id,
 )
@@ -42,6 +43,7 @@ from bot.fsm import (
 )
 from bot.handlers.common import escape_hatch_menu_or_command
 from bot.keyboards import main_menu_kb, back_home_kb
+from bot.persona import is_solo_mode
 from bot.services.background import fire_and_forget
 from bot.services.gtasks_service import get_or_create_list_id, due_from_local_date
 from bot.services.vault_sync import background_project_sync, background_log_event
@@ -105,6 +107,11 @@ async def _guard(callback: CallbackQuery, deps: AppDeps) -> bool:
         await callback.answer("Недоступно", show_alert=True)
         return False
     return True
+
+
+async def _persona_mode_for_chat(db_pool: asyncpg.Pool, chat_id: int) -> str:
+    async with db_pool.acquire() as conn:
+        return await get_persona_mode(conn, int(chat_id))
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +261,7 @@ async def cb_add_super_create(callback: CallbackQuery, state: FSMContext, db_poo
                 f"🧩 Создана суперзадача | [{proj['code']}] #{int(task_id)} {title}",
             )
     except Exception as e:
+        persona_mode = await _persona_mode_for_chat(db_pool, int(callback.message.chat.id))
         await state.clear()
         return await wizard_render(
             bot=callback.bot,
@@ -261,7 +269,7 @@ async def cb_add_super_create(callback: CallbackQuery, state: FSMContext, db_poo
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
             text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
-            reply_markup=main_menu_kb(),
+            reply_markup=main_menu_kb(persona_mode),
             parse_mode="HTML",
         )
 
@@ -307,18 +315,20 @@ def deadline_kb(*, with_back: bool = True) -> InlineKeyboardMarkup:
     )
 
 
-def _task_confirm_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Создать", callback_data="add:create")],
+def _task_confirm_kb(persona_mode: str = "lead") -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [[InlineKeyboardButton(text="✅ Создать", callback_data="add:create")]]
+    if is_solo_mode(persona_mode):
+        rows.append([InlineKeyboardButton(text="📁 Проект", callback_data="add:edit_project")])
+    else:
+        rows.append(
             [
                 InlineKeyboardButton(text="📁 Проект", callback_data="add:edit_project"),
                 InlineKeyboardButton(text="👤 Исполнитель", callback_data="add:edit_assignee"),
-            ],
-            [InlineKeyboardButton(text="🗓 Срок", callback_data="add:edit_deadline")],
-            [InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")],
-        ]
-    )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="🗓 Срок", callback_data="add:edit_deadline")])
+    rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _task_render_confirm(msg: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -327,6 +337,7 @@ async def _task_render_confirm(msg: Message, state: FSMContext, db_pool: asyncpg
     project_id = data.get("project_id")
     assignee_id = data.get("assignee_id")
     deadline_iso = data.get("deadline_msk")
+    persona_mode = await _persona_mode_for_chat(db_pool, int(msg.chat.id))
 
     project_code = "—"
     assignee_name = "—"
@@ -353,20 +364,25 @@ async def _task_render_confirm(msg: Message, state: FSMContext, db_pool: asyncpg
     lines = [
         "📝 <b>Проверь задачу</b>",
         f"Проект: <b>{h(project_code)}</b>",
-        f"Исполнитель: <b>{h(assignee_name)}</b>",
-        f"Срок: <b>{h(dl_txt)}</b>",
-        "",
-        f"📝 {h(title)}",
-        "",
-        "Создать задачу?",
     ]
+    if not is_solo_mode(persona_mode):
+        lines.append(f"Исполнитель: <b>{h(assignee_name)}</b>")
+    lines.extend(
+        [
+            f"Срок: <b>{h(dl_txt)}</b>",
+            "",
+            f"📝 {h(title)}",
+            "",
+            "Создать задачу?",
+        ]
+    )
     await wizard_render(
         bot=msg.bot,
         state=state,
         chat_id=int(msg.chat.id),
         fallback_msg=msg,
         text="\n".join(lines),
-        reply_markup=_task_confirm_kb(),
+        reply_markup=_task_confirm_kb(persona_mode),
         parse_mode="HTML",
     )
 
@@ -501,10 +517,26 @@ async def cb_add_set_project(callback: CallbackQuery, state: FSMContext, db_pool
 
 
 async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
-    async with db_pool.acquire() as conn:
-        team = await conn.fetch("SELECT id, name FROM team ORDER BY name")
+    persona_mode = await _persona_mode_for_chat(db_pool, int(msg.chat.id))
     data = await state.get_data()
     has_title = bool((data.get("title") or "").strip())
+    if is_solo_mode(persona_mode):
+        await state.update_data(assignee_id=None)
+        if has_title:
+            await state.set_state(AddTaskWizard.confirming)
+            return await _task_render_confirm(msg, state, db_pool, deps)
+        await state.set_state(AddTaskWizard.entering_title)
+        return await wizard_render(
+            bot=msg.bot,
+            state=state,
+            chat_id=int(msg.chat.id),
+            fallback_msg=msg,
+            text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            parse_mode="HTML",
+        )
+    async with db_pool.acquire() as conn:
+        team = await conn.fetch("SELECT id, name FROM team ORDER BY name")
 
     if not team:
         await state.update_data(assignee_id=None)
@@ -519,7 +551,7 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
                 if has_title
                 else "Исполнителей пока нет, поэтому задачу создам без исполнителя.\n\nВведите текст задачи одной строкой."
             ),
-            reply_markup=_task_confirm_kb() if has_title else InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=_task_confirm_kb(persona_mode) if has_title else InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
         )
         return
 
@@ -529,7 +561,7 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
         await state.set_state(AddTaskWizard.confirming if has_title else AddTaskWizard.entering_title)
         reply_markup = InlineKeyboardMarkup(
             inline_keyboard=(
-                _task_confirm_kb().inline_keyboard
+                _task_confirm_kb(persona_mode).inline_keyboard
                 if has_title
                 else [
                     [InlineKeyboardButton(text="Без исполнителя", callback_data="add:as:none")],
@@ -565,6 +597,22 @@ async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_poo
     if not await _guard(callback, deps):
         return
     await callback.answer()
+    if is_solo_mode(await _persona_mode_for_chat(db_pool, int(callback.message.chat.id))):
+        await state.update_data(assignee_id=None)
+        data = await state.get_data()
+        if data.get("title"):
+            await state.set_state(AddTaskWizard.confirming)
+            return await _task_render_confirm(callback.message, state, db_pool, deps)
+        await state.set_state(AddTaskWizard.entering_title)
+        return await wizard_render(
+            bot=callback.bot,
+            state=state,
+            chat_id=int(callback.message.chat.id),
+            fallback_msg=callback.message,
+            text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            parse_mode="HTML",
+        )
     token = (callback.data or "").split(":")[2]
     assignee_id = None if token == "none" else int(token)
     await state.update_data(assignee_id=assignee_id)
@@ -720,6 +768,10 @@ async def cb_add_edit_assignee(callback: CallbackQuery, state: FSMContext, db_po
     if not await _guard(callback, deps):
         return
     await callback.answer()
+    if is_solo_mode(await _persona_mode_for_chat(db_pool, int(callback.message.chat.id))):
+        await state.update_data(assignee_id=None)
+        await state.set_state(AddTaskWizard.confirming)
+        return await _task_render_confirm(callback.message, state, db_pool, deps)
     await state.set_state(AddTaskWizard.choosing_assignee)
     return await show_assignee_picker(callback.message, state, db_pool, deps)
 
@@ -763,6 +815,9 @@ async def create_task_from_wizard(
         )
 
     assignee_id = data.get("assignee_id")
+    persona_mode = await _persona_mode_for_chat(db_pool, int(msg.chat.id))
+    if is_solo_mode(persona_mode):
+        assignee_id = None
     if wizard_mode == "subtask" and not parent_task_id:
         await state.clear()
         return await wizard_render(
@@ -803,7 +858,7 @@ async def create_task_from_wizard(
             chat_id=int(msg.chat.id),
             fallback_msg=msg,
             text=f"❌ Ошибка загрузки. Для фикса: {h(str(e))}",
-            reply_markup=main_menu_kb(),
+            reply_markup=main_menu_kb(persona_mode),
             parse_mode="HTML",
         )
 

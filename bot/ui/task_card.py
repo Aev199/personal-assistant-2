@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot.persona import is_solo_mode
+
 
 def task_deadline_kb(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -46,6 +48,7 @@ def task_card_kb(
     triage: bool = False,
     return_cb: str | None = None,
     return_label: str | None = None,
+    persona_mode: str = "lead",
 ) -> InlineKeyboardMarkup:
     """Task card keyboard (Drill-down + compact UI)."""
 
@@ -87,10 +90,13 @@ def task_card_kb(
                 InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress"),
             ])
         else:
-            rows.append([
-                InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress"),
-                InlineKeyboardButton(text="👤 Исп.", callback_data=f"task:{task_id}:assignee"),
-            ])
+            if is_solo_mode(persona_mode):
+                rows.append([InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress")])
+            else:
+                rows.append([
+                    InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress"),
+                    InlineKeyboardButton(text="👤 Исп.", callback_data=f"task:{task_id}:assignee"),
+                ])
 
         rows.append([InlineKeyboardButton(text="⋯ Ещё", callback_data=f"task:{task_id}:more")])
         rows.append([
@@ -112,10 +118,13 @@ def task_card_kb(
         InlineKeyboardButton(text="🧩 Связи…", callback_data=f"task:{task_id}:relations"),
         InlineKeyboardButton(text="↳ Подзадачи…", callback_data=f"task:{task_id}:subtasks"),
     ])
-    rows.append([
-        InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
-        InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
-    ])
+    if is_solo_mode(persona_mode):
+        rows.append([InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone")])
+    else:
+        rows.append([
+            InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
+            InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
+        ])
     rows.append([InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less")])
 
     rows.extend(_triage_row())

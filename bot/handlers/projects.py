@@ -18,10 +18,11 @@ from aiogram.fsm.context import FSMContext
 
 from bot.fsm import AddProjectWizard
 from bot.handlers.common import escape_hatch_menu_or_command
-from bot.db import db_add_event, get_current_project_id, set_current_project_id
+from bot.db import db_add_event, get_current_project_id, get_persona_mode, set_current_project_id
 from bot.services.background import fire_and_forget
 from bot.services.vault_sync import background_project_sync
 from bot.deps import AppDeps
+from bot.persona import is_solo_mode
 
 from bot.ui import ui_render, ui_render_projects_portfolio
 from bot.ui.render import ui_safe_edit as safe_edit
@@ -237,6 +238,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                 await safe_edit(callback.message, "❌ Проект не найден.", reply_markup=back_home_kb(), parse_mode="HTML")
                 return
 
+            persona_mode = await get_persona_mode(conn, int(callback.message.chat.id))
             current_id = await get_current_project_id(conn, int(callback.message.chat.id))
 
             if action == "toggle_current":
@@ -390,7 +392,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                         "id": r["id"],
                         "title": r["title"],
                         "kind": r.get("kind") or "task",
-                        "assignee": r["assignee"],
+                        "assignee": ("" if is_solo_mode(persona_mode) else r["assignee"]),
                         "deadline": r["deadline"],
                         "parent_task_id": r["parent_task_id"],
                         "status": r["status"] or "todo",
@@ -485,7 +487,7 @@ async def cb_project_open(callback: CallbackQuery, state: FSMContext, db_pool: a
                     dt_loc = to_local(r["deadline"], tz) if r.get("deadline") else None
                     assignee = str(r.get("assignee") or "—").strip()
                     meta: list[str] = []
-                    if assignee and assignee != "—":
+                    if not is_solo_mode(persona_mode) and assignee and assignee != "—":
                         meta.append(assignee)
                     if dt_loc:
                         meta.append(dt_loc.strftime("%d.%m %H:%M"))

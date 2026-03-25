@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
     ui_message_id BIGINT,
     ui_screen TEXT NOT NULL DEFAULT 'home',
     ui_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    persona_mode TEXT NOT NULL DEFAULT 'lead',
     menu_message_id BIGINT
 );
 

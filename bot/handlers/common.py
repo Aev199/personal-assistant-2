@@ -9,6 +9,7 @@ import asyncpg
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from bot.persona import get_persona_mode_from_pool, is_solo_mode
 from bot.ui.screens import (
     ui_render_add_menu,
     ui_render_all_tasks,
@@ -19,6 +20,7 @@ from bot.ui.screens import (
     ui_render_reminders,
     ui_render_team,
     ui_render_today,
+    ui_render_work,
     ensure_main_menu,
 )
 from bot.utils import canon, try_delete_user_message
@@ -32,6 +34,7 @@ MAIN_MENU_TOKENS = {
     "просрочки",
     "напоминания",
     "команда",
+    "в работе",
     "добавить",
     "help",
     "помощь",
@@ -175,6 +178,7 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
     await try_delete_user_message(message)
     recreate_anchor = token == "домой"
     anchor_sent = await ensure_main_menu(message, db_pool, recreate=recreate_anchor)
+    persona_mode = await get_persona_mode_from_pool(db_pool, int(message.chat.id))
 
     if token == "домой":
         final_id = await ui_render_home(
@@ -227,8 +231,22 @@ async def escape_hatch_menu_or_command(message: Message, state: FSMContext, db_p
             preferred_message_id=preferred_message_id,
             force_new=bool(anchor_sent),
         )
+    elif token == "в работе":
+        final_id = await ui_render_work(
+            message,
+            db_pool,
+            preferred_message_id=preferred_message_id,
+            force_new=bool(anchor_sent),
+        )
     elif token in {"help", "помощь"}:
         final_id = await ui_render_help(
+            message,
+            db_pool,
+            preferred_message_id=preferred_message_id,
+            force_new=bool(anchor_sent),
+        )
+    elif token == "команда" and is_solo_mode(persona_mode):
+        final_id = await ui_render_team(
             message,
             db_pool,
             preferred_message_id=preferred_message_id,

@@ -92,7 +92,10 @@ def render_task_tree(tasks: list[dict], tz: ZoneInfo) -> tuple[str, list[int]]:
         if kind == "super":
             lines.append(f"{prefix}🧩 {t['title']}{suffix}")
         else:
-            lines.append(f"{prefix}{assignee}: {t['title']}{dl_txt}{suffix}")
+            if assignee and assignee != "—":
+                lines.append(f"{prefix}{assignee}: {t['title']}{dl_txt}{suffix}")
+            else:
+                lines.append(f"{prefix}{t['title']}{dl_txt}{suffix}")
         order.append(tid)
         for cid in children.get(tid, []):
             walk(cid, depth + 1)

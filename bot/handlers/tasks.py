@@ -23,7 +23,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from aiogram.fsm.context import FSMContext
 
 from bot.deps import AppDeps
-from bot.db import db_add_event, db_log_error
+from bot.db import db_add_event, db_log_error, get_persona_mode
+from bot.persona import is_solo_mode
 from bot.services.background import fire_and_forget
 from bot.services.gtasks_service import get_or_create_list_id, due_from_local_date
 from bot.services.vault_sync import background_project_sync
@@ -207,6 +208,7 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
     page_size = 10
 
     async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, chat_id)
         row = await conn.fetchrow(
             """
             SELECT t.id, t.title, t.status, t.kind, p.id AS project_id, p.code AS project_code
@@ -292,7 +294,7 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
         assignee = (r.get("assignee") or "—").strip()
         dl_local = to_local(r.get("deadline"), tz)
         meta: list[str] = []
-        if assignee and assignee != "—":
+        if not is_solo_mode(persona_mode) and assignee and assignee != "—":
             meta.append(assignee)
         if dl_local:
             meta.append(dl_local.strftime("%d.%m %H:%M"))
@@ -377,6 +379,7 @@ async def build_task_card(
     inbox_left: int | None = None
 
     async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, chat_id)
         rec = await conn.fetchrow(
             """
             SELECT t.id, t.title, t.status, t.kind, t.deadline, t.parent_task_id,
@@ -457,10 +460,15 @@ async def build_task_card(
     lines = [
         f"📝 <b>ЗАДАЧА</b> #{int(row['id'])}",
         f"Проект: <b>{h(str(row.get('project_code') or ''))}</b>",
-        f"Исполнитель: <b>{h(str(row.get('assignee') or '—'))}</b>",
-        f"Статус: <b>{h(str(st))}</b>",
-        f"Дедлайн: <b>{h(str(dl))}</b>",
     ]
+    if not is_solo_mode(persona_mode):
+        lines.append(f"Исполнитель: <b>{h(str(row.get('assignee') or '—'))}</b>")
+    lines.extend(
+        [
+            f"Статус: <b>{h(str(st))}</b>",
+            f"Дедлайн: <b>{h(str(dl))}</b>",
+        ]
+    )
 
     if triage_active:
         left_txt = f"{int(inbox_left)}" if inbox_left is not None else "…"
@@ -501,6 +509,7 @@ async def build_task_card(
         triage=triage_active,
         return_cb=return_cb,
         return_label=return_label,
+        persona_mode=persona_mode,
     )
 
     if undo:
@@ -808,6 +817,8 @@ async def cb_task(
 
     task_id = int(parts[1])
     action = parts[2] if len(parts) >= 3 else "open"
+    async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, int(callback.message.chat.id))
 
     # -----------------
     # Card display
@@ -1203,6 +1214,8 @@ async def cb_task(
     # Assignee
     # -----------------
     if action == "assignee":
+        if is_solo_mode(persona_mode):
+            return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
         async with db_pool.acquire() as conn:
             pid = await conn.fetchval("SELECT project_id FROM tasks WHERE id=$1", task_id)
             if not pid:
@@ -1228,6 +1241,8 @@ async def cb_task(
         )
 
     if action == "assignee_set" and len(parts) >= 4:
+        if is_solo_mode(persona_mode):
+            return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
         token = parts[3]
         new_assignee = None if token == "none" else int(token)
         async with db_pool.acquire() as conn:

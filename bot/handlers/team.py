@@ -19,7 +19,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.deps import AppDeps
 
-from bot.db import db_log_error
+from bot.db import db_log_error, get_persona_mode
 from bot.fsm import AddTeamWizard, EditTeamNoteWizard
 from bot.handlers.common import (
     cleanup_stale_wizard_message,
@@ -33,6 +33,7 @@ from bot.ui.screens import ui_render_team
 from bot.ui.state import ui_get_state, ui_set_state, _ui_payload_get, ui_payload_with_toast
 from bot.utils import canon, h, try_delete_user_message
 from bot.keyboards import back_home_kb
+from bot.persona import is_solo_mode
 
 
 UTC = ZoneInfo("UTC")
@@ -49,6 +50,12 @@ def to_utc(dt: datetime | None) -> datetime | None:
 async def cmd_team_load(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
+    async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, int(message.chat.id))
+    if is_solo_mode(persona_mode):
+        await state.clear()
+        await try_delete_user_message(message)
+        return await ui_render_team(message, db_pool, force_new=False)
     wizard_chat_id, wizard_msg_id = await get_wizard_message_data(
         state,
         fallback_chat_id=int(message.chat.id),
@@ -357,6 +364,12 @@ async def ui_render_team_member_card(
 async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if not callback.from_user or callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
+    async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, int(callback.message.chat.id))
+    if is_solo_mode(persona_mode):
+        await callback.answer("Режим Solo", show_alert=False)
+        await state.clear()
+        return await ui_render_team(callback.message, db_pool, force_new=False)
 
     await callback.answer()
     await state.clear()
@@ -382,6 +395,12 @@ def _team_note_kb(emp_id: int, page: int, *, has_note: bool) -> InlineKeyboardMa
 async def cb_team_note_edit(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if not callback.from_user or callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
+    async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, int(callback.message.chat.id))
+    if is_solo_mode(persona_mode):
+        await callback.answer("Режим Solo", show_alert=False)
+        await state.clear()
+        return await ui_render_team(callback.message, db_pool, force_new=False)
     await callback.answer()
     await state.clear()
 
@@ -425,6 +444,12 @@ async def cb_team_note_edit(callback: CallbackQuery, state: FSMContext, db_pool:
 async def cb_team_note_clear(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if not callback.from_user or callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
+    async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, int(callback.message.chat.id))
+    if is_solo_mode(persona_mode):
+        await callback.answer("Режим Solo", show_alert=False)
+        await state.clear()
+        return await ui_render_team(callback.message, db_pool, force_new=False)
     await callback.answer()
     await state.clear()
 
@@ -508,4 +533,3 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(msg_team_note_save, StateFilter(EditTeamNoteWizard.entering), F.text)
 
     dp.callback_query.register(cb_team_member_details, F.data.startswith("team:"))
-

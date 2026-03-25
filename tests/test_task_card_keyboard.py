@@ -45,6 +45,30 @@ class TaskCardKeyboardTests(unittest.TestCase):
         self.assertNotIn("⛓ Отвязать", labels)
         self.assertNotIn("📤 В Google Tasks", labels)
 
+    def test_solo_card_hides_assignee_actions(self) -> None:
+        primary = task_card_kb(
+            10,
+            20,
+            None,
+            "todo",
+            expanded=False,
+            persona_mode="solo",
+        )
+        expanded = task_card_kb(
+            10,
+            20,
+            None,
+            "todo",
+            expanded=True,
+            persona_mode="solo",
+        )
+
+        primary_labels = [btn.text for row in primary.inline_keyboard for btn in row]
+        expanded_labels = [btn.text for row in expanded.inline_keyboard for btn in row]
+        self.assertNotIn("👤 Исп.", primary_labels)
+        self.assertNotIn("👤 Исполнитель", expanded_labels)
+        self.assertIn("⏸ Отложить", expanded_labels)
+
 
 if __name__ == "__main__":
     unittest.main()

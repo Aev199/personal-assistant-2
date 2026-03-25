@@ -154,10 +154,15 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
             ui_message_id BIGINT,
             ui_screen TEXT NOT NULL DEFAULT 'home',
             ui_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            persona_mode TEXT NOT NULL DEFAULT 'lead',
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
     )
+    try:
+        await conn.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS persona_mode TEXT NOT NULL DEFAULT 'lead'")
+    except Exception:
+        pass
 
     # reminders
     await conn.execute(

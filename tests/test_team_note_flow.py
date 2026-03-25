@@ -31,6 +31,8 @@ class _CardConn:
         raise AssertionError(f"Unexpected fetchrow query: {query}")
 
     async def fetchval(self, query, *_args):
+        if "SELECT persona_mode FROM user_settings" in query:
+            return "lead"
         if "COUNT(*) FROM tasks WHERE assignee_id = $1 AND status != 'done'" in query:
             return 0
         if "COUNT(*) FROM tasks WHERE assignee_id = $1 AND status != 'done' AND deadline IS NOT NULL" in query:
@@ -48,6 +50,11 @@ class _EditConn:
         if "SELECT name, note FROM team WHERE id=$1" in query:
             return {"name": "Ира", "note": "Любит короткие синки"}
         raise AssertionError(f"Unexpected fetchrow query: {query}")
+
+    async def fetchval(self, query, *_args):
+        if "SELECT persona_mode FROM user_settings" in query:
+            return "lead"
+        raise AssertionError(f"Unexpected fetchval query: {query}")
 
 
 class _SaveConn:
@@ -140,4 +147,3 @@ class TeamNoteFlowTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

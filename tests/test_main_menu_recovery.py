@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from bot.handlers.common import escape_hatch_menu_or_command
-from bot.handlers.system import msg_all_tasks_button, msg_home_button
+from bot.handlers.system import msg_all_tasks_button, msg_home_button, msg_work_button
 from bot.ui.screens import ensure_main_menu
 
 
@@ -35,6 +35,11 @@ class _Conn:
         if self.menu_message_id is None:
             return None
         return {"menu_message_id": self.menu_message_id}
+
+    async def fetchval(self, query, *_args):
+        if "SELECT persona_mode FROM user_settings" in query:
+            return "lead"
+        raise AssertionError(f"Unexpected fetchval query: {query}")
 
 
 class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -147,6 +152,29 @@ class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
             await msg_all_tasks_button(message, state, db_pool=object(), deps=deps)
 
         render_all_tasks.assert_awaited_once()
+        ensure_menu.assert_awaited_once()
+        state.clear.assert_awaited_once()
+
+    async def test_work_button_renders_work_screen(self) -> None:
+        message = SimpleNamespace(
+            text="⚡ В работе",
+            chat=SimpleNamespace(id=506),
+            from_user=SimpleNamespace(id=7),
+            bot=SimpleNamespace(),
+        )
+        state = AsyncMock()
+        deps = SimpleNamespace(admin_id=None, tz_name="Europe/Moscow")
+
+        with (
+            patch("bot.handlers.system._reply_wizard_context", AsyncMock(return_value=(None, None, None))),
+            patch("bot.handlers.system.try_delete_user_message", AsyncMock()),
+            patch("bot.handlers.system.ui_render_work", AsyncMock(return_value=92)) as render_work,
+            patch("bot.handlers.system.cleanup_stale_wizard_message", AsyncMock()),
+            patch("bot.handlers.system.ensure_main_menu", AsyncMock(return_value=True)) as ensure_menu,
+        ):
+            await msg_work_button(message, state, db_pool=object(), deps=deps)
+
+        render_work.assert_awaited_once()
         ensure_menu.assert_awaited_once()
         state.clear.assert_awaited_once()
 

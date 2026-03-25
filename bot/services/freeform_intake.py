@@ -17,7 +17,7 @@ import asyncpg
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from bot.db import db_add_event, ensure_inbox_project_id, get_current_project_id
+from bot.db import db_add_event, ensure_inbox_project_id, get_current_project_id, get_persona_mode
 from bot.db.runtime_state import (
     clear_conversation_state,
     find_recent_action,
@@ -31,11 +31,13 @@ from bot.services.gtasks_service import due_from_local_date, get_or_create_list_
 from bot.services.pending_actions import create_pending_preview
 from bot.services.vault_sync import background_project_sync
 from bot.tz import fmt_local, resolve_tz_name, to_db_utc
+from bot.persona import is_solo_mode
 from bot.ui.screens import (
     ui_render_add_menu,
     ui_render_all_tasks,
     ui_render_help,
     ui_render_home,
+    ui_render_home_more,
     ui_render_inbox,
     ui_render_overdue,
     ui_render_projects_portfolio,
@@ -424,6 +426,8 @@ async def _render_screen(
     payload: dict | None = None,
 ) -> int:
     tz_name = resolve_tz_name(deps.tz_name)
+    async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, int(message.chat.id))
     if screen == "home":
         return await ui_render_home(message, db_pool, tz_name=tz_name, force_new=False)
     if screen == "projects":
@@ -448,6 +452,8 @@ async def _render_screen(
     if screen == "add":
         return await ui_render_add_menu(message, db_pool, force_new=False)
     if screen == "team":
+        if is_solo_mode(persona_mode):
+            return await ui_render_home_more(message, db_pool, force_new=False)
         return await ui_render_team(message, db_pool, force_new=False)
     if screen == "stats":
         return await ui_render_stats(message, db_pool, tz_name=tz_name, force_new=False)
@@ -807,11 +813,15 @@ async def handle_freeform_text(
     current_project_code: str | None = None
     projects: list[ProjectOption] = []
     team: list[TeamOption] = []
+    persona_mode = "lead"
     async with db_pool.acquire() as conn:
+        persona_mode = await get_persona_mode(conn, int(message.chat.id))
         current_project_id, current_project_code, projects, team = await _load_freeform_context(
             conn,
             chat_id=int(message.chat.id),
         )
+    if is_solo_mode(persona_mode):
+        team = []
 
     try:
         base_text = _clean(followup_data.get("freeform_base_text") or prepend_text)
@@ -890,6 +900,8 @@ async def handle_freeform_text(
         )
 
     if intent.action == "task":
+        if is_solo_mode(persona_mode):
+            intent.assignee_name = None
         deadline_local = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
         if intent.deadline_local and deadline_local is None:
             return await _start_followup(
@@ -931,7 +943,7 @@ async def handle_freeform_text(
                     raw_text=text,
                     team=team,
                 )
-            if assignee_error:
+            if assignee_error and not is_solo_mode(persona_mode):
                 return await _start_followup(
                     message,
                     deps=deps,

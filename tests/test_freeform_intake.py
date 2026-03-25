@@ -383,6 +383,60 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(project_id, 2)
         self.assertEqual(project_code, "INBOX")
 
+    async def test_solo_mode_ignores_assignee_from_llm(self) -> None:
+        message = SimpleNamespace(chat=SimpleNamespace(id=212))
+        deps = SimpleNamespace(
+            llm=SimpleNamespace(
+                enabled=True,
+                classify_intake=AsyncMock(
+                    return_value={
+                        "action": "task",
+                        "title": "Send report",
+                        "assignee_name": "Alex",
+                        "reply": "",
+                    }
+                ),
+            ),
+            tz_name="Europe/Moscow",
+        )
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+
+        with (
+            patch("bot.services.freeform_intake.get_persona_mode", AsyncMock(return_value="solo")),
+            patch(
+                "bot.services.freeform_intake._load_freeform_context",
+                AsyncMock(
+                    return_value=(
+                        1,
+                        "OPS",
+                        [ProjectOption(id=1, code="OPS", name="Operations")],
+                        [TeamOption(id=1, name="Alex Ivanov")],
+                    )
+                ),
+            ),
+            patch("bot.services.freeform_intake._resolve_project", AsyncMock(return_value=(1, "OPS", None))),
+            patch("bot.services.freeform_intake._find_recent_duplicate", AsyncMock(return_value=None)),
+            patch("bot.services.freeform_intake._resolve_assignee", return_value=(None, None, None)) as resolve_assignee,
+            patch("bot.services.freeform_intake.create_pending_preview", AsyncMock(return_value=41)) as create_preview,
+            patch("bot.services.freeform_intake._rerender_with_toast", AsyncMock(return_value=1)),
+        ):
+            handled = await handle_freeform_text(
+                message,
+                deps=deps,
+                db_pool=_Pool(),
+                raw_text="Send report to Alex",
+                source="text",
+                state=state,
+            )
+
+        self.assertTrue(handled)
+        resolve_assignee.assert_called_once()
+        self.assertIsNone(resolve_assignee.call_args.kwargs["requested_name"])
+        self.assertEqual(resolve_assignee.call_args.kwargs["team"], [])
+        self.assertIsNone(create_preview.await_args.kwargs["payload"]["assignee_id"])
+        self.assertIsNone(create_preview.await_args.kwargs["payload"]["assignee_name"])
+
     async def test_personal_task_creation_builds_pending_preview(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
         deps = SimpleNamespace(

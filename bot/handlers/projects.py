@@ -176,7 +176,7 @@ async def msg_proj_add_data(message: Message, state: FSMContext, db_pool: asyncp
             background_project_sync(
                 int(project_id),
                 db_pool,
-                vault,
+                deps.vault,
                 error_logger=deps.db_log_error,
             ),
             label=f"sync:proj:{int(project_id)}",

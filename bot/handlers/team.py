@@ -372,12 +372,13 @@ async def cb_team_member_details(callback: CallbackQuery, state: FSMContext, db_
         return await ui_render_team(callback.message, db_pool, force_new=False)
 
     await callback.answer()
-    await state.clear()
-
+    
     parsed = _parse_team_member_callback(callback.data)
     if not parsed:
-        return
+        await state.clear()
+        return await ui_render_team(callback.message, db_pool, force_new=False)
 
+    await state.clear()
     emp_id, page = parsed
     await ui_render_team_member_card(callback.message, db_pool, emp_id=emp_id, page=page)
 

@@ -257,7 +257,7 @@ async def ui_render_team_member_card(
         lines.append("")
         if note:
             lines.append("<b>📝 Заметка</b>")
-            lines.append(h(note).replace("\n", "<br>"))
+            lines.append(h(note))
         else:
             lines.append("<i>Заметки пока нет.</i>")
 

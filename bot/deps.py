@@ -25,6 +25,7 @@ from bot.services.vault_manager import VaultManager
 if TYPE_CHECKING:  # pragma: no cover
     from bot.services.error_handler import ErrorHandler
     from bot.services.logger import StructuredLogger
+    from bot.config import Config
 
 DbLogErrorFn = Callable[[str, Exception, Optional[dict[str, Any]]], Any]
 
@@ -41,6 +42,7 @@ class AppDeps:
     gtasks: GoogleTasksAdapter
     icloud: ICloudCalDAVAdapter
     llm: GeminiAdapter | None = None
+    config: Optional["Config"] = None
 
     # Filled during startup
     db_pool: Optional[asyncpg.Pool] = None

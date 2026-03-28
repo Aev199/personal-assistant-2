@@ -14,6 +14,7 @@ import os
 from aiogram import Bot, Dispatcher
 
 from bot.adapters.webdav_adapter import WebDavAdapter
+from bot.config import load_config
 from bot.services.vault_manager import VaultManager
 from bot.adapters.google_tasks_adapter import GoogleTasksAdapter
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudCalDAVAuth
@@ -116,6 +117,7 @@ def build_core(
         gtasks=gtasks,
         icloud=icloud,
         llm=llm,
+        config=load_config(),
     )
 
     # Expose deps for DI in handler modules

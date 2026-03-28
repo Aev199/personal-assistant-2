@@ -119,6 +119,14 @@ async def _persona_mode_for_chat(db_pool: asyncpg.Pool, chat_id: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _wizard_cancel_row() -> list[InlineKeyboardButton]:
+    """Standard cancel+home row for all wizard screens."""
+    return [
+        InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel"),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="add:cancel"),
+    ]
+
+
 async def cb_add_cancel(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     await callback.answer()
     await state.clear()
@@ -134,7 +142,7 @@ def _super_confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Создать", callback_data="add:super:create")],
-            [InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")],
+            _wizard_cancel_row(),
         ]
     )
 
@@ -160,7 +168,7 @@ async def cb_add_super_start(callback: CallbackQuery, state: FSMContext, db_pool
     return await safe_edit(
         callback.message,
         "🧩 <b>Суперзадача</b>\n\nВведите название (это контейнер для задач внутри проекта).",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         parse_mode="HTML",
     )
 
@@ -177,7 +185,7 @@ async def msg_add_super_title(message: Message, state: FSMContext, db_pool: asyn
             fallback_msg=None,
             text="Введите название суперзадачи.",
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]
+                inline_keyboard=[_wizard_cancel_row()]
             ),
         )
 
@@ -327,7 +335,7 @@ def _task_confirm_kb(persona_mode: str = "lead") -> InlineKeyboardMarkup:
             ]
         )
     rows.append([InlineKeyboardButton(text="🗓 Срок", callback_data="add:edit_deadline")])
-    rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
+    rows.append(_wizard_cancel_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -426,7 +434,7 @@ async def _start_task_capture(
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
         text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         parse_mode="HTML",
     )
 
@@ -487,7 +495,7 @@ async def cb_add_choose_project(callback: CallbackQuery, state: FSMContext, db_p
         kb.append(row_btns)
     if has_title:
         kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm")])
-    kb.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
+    kb.append(_wizard_cancel_row())
     await safe_edit(callback.message, "Выберите проект:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
@@ -511,7 +519,7 @@ async def cb_add_set_project(callback: CallbackQuery, state: FSMContext, db_pool
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
         text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         parse_mode="HTML",
     )
 
@@ -532,7 +540,7 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
             chat_id=int(msg.chat.id),
             fallback_msg=msg,
             text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
             parse_mode="HTML",
         )
     async with db_pool.acquire() as conn:
@@ -551,7 +559,7 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
                 if has_title
                 else "Исполнителей пока нет, поэтому задачу создам без исполнителя.\n\nВведите текст задачи одной строкой."
             ),
-            reply_markup=_task_confirm_kb(persona_mode) if has_title else InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=_task_confirm_kb(persona_mode) if has_title else InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         )
         return
 
@@ -589,7 +597,7 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
     kb.extend(kb_columns(buttons, 2))
     if has_title:
         kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm")])
-    kb.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")])
+    kb.append(_wizard_cancel_row())
     await safe_edit(msg, "Выберите исполнителя:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
@@ -610,7 +618,7 @@ async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_poo
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
             text="📝 <b>Новая задача</b>\n\nОтправьте текст задачи одним сообщением. Дату можно указать прямо в тексте.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
             parse_mode="HTML",
         )
     token = (callback.data or "").split(":")[2]
@@ -629,7 +637,7 @@ async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_poo
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
         text="Введите текст задачи одной строкой (сообщением).",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
     )
 
 
@@ -649,7 +657,7 @@ async def msg_add_task_title(message: Message, state: FSMContext, db_pool: async
             chat_id=int(message.chat.id),
             fallback_msg=None,
             text="Текст пустой. Введите текст задачи.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         )
         return
 
@@ -1487,7 +1495,7 @@ async def cb_add_personal_start(callback: CallbackQuery, state: FSMContext, deps
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
         text="🏡 <b>Личное</b> (в Google Tasks): отправьте текст задачи одним сообщением.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         parse_mode="HTML",
     )
 
@@ -1506,7 +1514,7 @@ async def msg_personal_text(message: Message, state: FSMContext, db_pool: asyncp
             chat_id=int(message.chat.id),
             fallback_msg=None,
             text="Текст пустой. Пришлите текст личной задачи.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         )
     title, dt = quick_extract_datetime_ru(text, deps.tz_name, date_only_time=(18, 0))
     title = (title or "").strip() or text
@@ -1615,7 +1623,7 @@ async def cb_personal_deadline(callback: CallbackQuery, state: FSMContext, db_po
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
             text="Введите дату/время (например 26.02 или 26.02 14:00).",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         )
 
     return await _create_personal_in_gtasks(callback.message, state, db_pool, deps, due_local)
@@ -1636,7 +1644,7 @@ async def msg_personal_deadline(message: Message, state: FSMContext, db_pool: as
             chat_id=int(message.chat.id),
             fallback_msg=None,
             text="Не понял дату. Пример: 26.02 или 26.02 14:00",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="add:cancel")]]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         )
     tz = _tz_from_deps(deps)
     if parsed.tzinfo is None:

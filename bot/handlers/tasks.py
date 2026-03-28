@@ -101,6 +101,9 @@ def _as_int(value, default: int = 0) -> int:
 def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str | None]:
     p = payload if isinstance(payload, dict) else {}
 
+    if ui_screen == "home":
+        return "nav:home", "⬅ Домой"
+
     if ui_screen == "super_task":
         ctx = p.get("super_ctx") if isinstance(p.get("super_ctx"), dict) else {}
         super_id = _as_int(ctx.get("super_id"), 0)
@@ -824,7 +827,7 @@ async def cb_task(
     # Card display
     # -----------------
     if action == "open":
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=False)
     if action == "more":
         return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
     if action == "less":
@@ -914,7 +917,7 @@ async def cb_task(
         )
     if action == "dlcancel":
         await state.clear()
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     # Block unsupported actions on supertasks (old callbacks, direct links).
     async with db_pool.acquire() as conn:
@@ -973,7 +976,7 @@ async def cb_task(
                 return await _render_task_overlay(callback.message, db_pool, "❌ Задача не найдена.")
             old_pid = int(info["project_id"])
             if new_pid == old_pid:
-                return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+                return await show_task_card(callback.message, db_pool, task_id, deps=deps)
             new_code = await conn.fetchval("SELECT code FROM projects WHERE id=$1", new_pid)
             await conn.execute("UPDATE tasks SET project_id=$2 WHERE id=$1", task_id, new_pid)
             await db_add_event(conn, "task_move", new_pid, task_id, f"Перенесено из [{info['old_code']}] в [{new_code}]")
@@ -988,7 +991,7 @@ async def cb_task(
         )
         if await _advance_inbox_triage_after_action(callback.message, db_pool, deps, task_id=task_id):
             return
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     # -----------------
     # Export work task to Google Tasks (fallback)
@@ -996,7 +999,7 @@ async def cb_task(
     if action == "gtasks":
         if not gtasks.enabled():
             await callback.answer("❌ Google Tasks не настроен", show_alert=True)
-            return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+            return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
         tz = _tz_from_deps(deps)
 
@@ -1144,7 +1147,7 @@ async def cb_task(
         except Exception as e:
             await callback.answer("❌ Ошибка Google Tasks", show_alert=True)
             await db_log_error(db_pool, "cb_task_gtasks", e, {"task_id": task_id})
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
 
     # -----------------
@@ -1208,14 +1211,14 @@ async def cb_task(
             fire_and_forget(_mark_done(gtask_to_complete[0], gtask_to_complete[1]), label="gtasks_done")
         if await _advance_inbox_triage_after_action(callback.message, db_pool, deps, task_id=task_id):
             return
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     # -----------------
     # Assignee
     # -----------------
     if action == "assignee":
         if is_solo_mode(persona_mode):
-            return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+            return await show_task_card(callback.message, db_pool, task_id, deps=deps)
         async with db_pool.acquire() as conn:
             pid = await conn.fetchval("SELECT project_id FROM tasks WHERE id=$1", task_id)
             if not pid:
@@ -1242,7 +1245,7 @@ async def cb_task(
 
     if action == "assignee_set" and len(parts) >= 4:
         if is_solo_mode(persona_mode):
-            return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+            return await show_task_card(callback.message, db_pool, task_id, deps=deps)
         token = parts[3]
         new_assignee = None if token == "none" else int(token)
         async with db_pool.acquire() as conn:
@@ -1263,7 +1266,7 @@ async def cb_task(
             background_project_sync(pid, db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     # -----------------
     # Parent / subtask relations
@@ -1286,7 +1289,7 @@ async def cb_task(
             background_project_sync(pid, db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     if action == "parent":
         page = 0
@@ -1391,7 +1394,7 @@ async def cb_task(
             background_project_sync(int(cur["project_id"]), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps, expanded=True)
+        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
 
     # -----------------
     # Deadline controls

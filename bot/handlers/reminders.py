@@ -190,7 +190,10 @@ async def cb_cancel_reminder_ask(callback: CallbackQuery, db_pool: asyncpg.Pool,
 
     kb = [
         [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"rem:cancel:{rem_id}:{page}")],
-        [InlineKeyboardButton(text="⬅ К списку", callback_data=f"nav:reminders:{page}")],
+        [
+            InlineKeyboardButton(text="⬅ К списку", callback_data=f"nav:reminders:{page}"),
+            InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+        ],
     ]
     await ui_render(
         bot=callback.bot,

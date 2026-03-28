@@ -1,4 +1,4 @@
-﻿"""High-level SPA screens (renderers).
+"""High-level SPA screens (renderers).
 
 These functions render whole "screens" (Home/Projects/Today/Overdue/Help/Add),
 updating the single UI message for the chat via :func:`bot.ui.render.ui_render`.
@@ -726,10 +726,6 @@ async def ui_render_home_more(
         lines = [toast_line, ""] + lines
 
     kb_rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(text="📋 Все задачи", callback_data="nav:all"),
-            InlineKeyboardButton(text="🔔 Напоминания", callback_data="nav:reminders:0"),
-        ],
         [
             InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
             InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),

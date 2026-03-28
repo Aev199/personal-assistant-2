@@ -108,11 +108,8 @@ def task_card_kb(
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     # Expanded (⋯ Ещё): secondary actions
+    # Nav buttons (⬅ Назад / ⬅️ Домой) are always at the bottom — consistent with compact mode.
     rows: list[list[InlineKeyboardButton]] = []
-    rows.append([
-        InlineKeyboardButton(text=back_label, callback_data=back_cb),
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-    ])
 
     rows.append([
         InlineKeyboardButton(text="🧩 Связи…", callback_data=f"task:{task_id}:relations"),
@@ -126,6 +123,10 @@ def task_card_kb(
             InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
         ])
     rows.append([InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less")])
+    rows.append([
+        InlineKeyboardButton(text=back_label, callback_data=back_cb),
+        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
+    ])
 
     rows.extend(_triage_row())
 

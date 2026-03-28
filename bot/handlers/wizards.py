@@ -299,12 +299,12 @@ async def cb_add_super_create(callback: CallbackQuery, state: FSMContext, db_poo
     )
 
 
-def deadline_kb(*, with_back: bool = True) -> InlineKeyboardMarkup:
+def deadline_kb(deps: AppDeps, with_back: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Сегодня", callback_data="add:dl:today"),
-                InlineKeyboardButton(text="Завтра", callback_data="add:dl:tomorrow"),
+                InlineKeyboardButton(text=f"Сегодня {deps.config.bot.default_deadline_hour:02d}:00", callback_data="add:dl:today"),
+                InlineKeyboardButton(text="Завтра 09:00", callback_data="add:dl:tomorrow"),
             ],
             [
                 InlineKeyboardButton(text="+3 дня", callback_data="add:dl:+3"),
@@ -326,14 +326,16 @@ def deadline_kb(*, with_back: bool = True) -> InlineKeyboardMarkup:
 def _task_confirm_kb(persona_mode: str = "lead") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [[InlineKeyboardButton(text="✅ Создать", callback_data="add:create")]]
     if is_solo_mode(persona_mode):
-        rows.append([InlineKeyboardButton(text="📁 Проект", callback_data="add:edit_project")])
+        rows.append([
+            InlineKeyboardButton(text="✏️ Текст", callback_data="add:edit_title"),
+            InlineKeyboardButton(text="📁 Проект", callback_data="add:edit_project"),
+        ])
     else:
-        rows.append(
-            [
-                InlineKeyboardButton(text="📁 Проект", callback_data="add:edit_project"),
-                InlineKeyboardButton(text="👤 Исполнитель", callback_data="add:edit_assignee"),
-            ]
-        )
+        rows.append([
+            InlineKeyboardButton(text="✏️ Текст", callback_data="add:edit_title"),
+            InlineKeyboardButton(text="📁 Проект", callback_data="add:edit_project"),
+        ])
+        rows.append([InlineKeyboardButton(text="👤 Исполнитель", callback_data="add:edit_assignee")])
     rows.append([InlineKeyboardButton(text="🗓 Срок", callback_data="add:edit_deadline")])
     rows.append(_wizard_cancel_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -496,7 +498,7 @@ async def cb_add_choose_project(callback: CallbackQuery, state: FSMContext, db_p
     if has_title:
         kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm")])
     kb.append(_wizard_cancel_row())
-    await safe_edit(callback.message, "Выберите проект:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await safe_edit(callback.message, "📝 <b>Новая задача (Шаг 1/3)</b>\n\nВыберите проект:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
 
 
 async def cb_add_set_project(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -598,7 +600,7 @@ async def show_assignee_picker(msg: Message, state: FSMContext, db_pool: asyncpg
     if has_title:
         kb.append([InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm")])
     kb.append(_wizard_cancel_row())
-    await safe_edit(msg, "Выберите исполнителя:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await safe_edit(msg, "📝 <b>Новая задача (Шаг 2/3)</b>\n\nВыберите исполнителя:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
 
 
 async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -636,8 +638,9 @@ async def cb_add_set_assignee(callback: CallbackQuery, state: FSMContext, db_poo
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Введите текст задачи одной строкой (сообщением).",
+        text="📝 <b>Новая задача (Шаг 3/3)</b>\n\nВведите текст задачи одной строкой (сообщением).",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
+        parse_mode="HTML",
     )
 
 
@@ -656,12 +659,13 @@ async def msg_add_task_title(message: Message, state: FSMContext, db_pool: async
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Текст пустой. Введите текст задачи.",
+            text="📝 <b>Новая задача (Шаг 3/3)</b>\n\nТекст пустой. Введите текст задачи.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
+            parse_mode="HTML",
         )
         return
 
-    dt = quick_parse_datetime_ru(title_raw, deps.tz_name, date_only_time=(18, 0))
+    dt = quick_parse_datetime_ru(title_raw, deps.tz_name, date_only_time=(deps.config.bot.default_deadline_hour, 0))
     await state.update_data(title=title_raw)
 
     if dt is not None:
@@ -683,16 +687,16 @@ async def cb_add_deadline(callback: CallbackQuery, state: FSMContext, db_pool: a
     deadline_local: datetime | None = None
 
     if kind == "today":
-        deadline_local = now_local.replace(hour=18, minute=0, second=0, microsecond=0)
+        deadline_local = now_local.replace(hour=deps.config.bot.default_deadline_hour, minute=0, second=0, microsecond=0)
     elif kind == "tomorrow":
         dt = now_local + timedelta(days=1)
-        deadline_local = dt.replace(hour=18, minute=0, second=0, microsecond=0)
+        deadline_local = dt.replace(hour=deps.config.bot.default_deadline_hour, minute=0, second=0, microsecond=0)
     elif kind == "+3":
         dt = now_local + timedelta(days=3)
-        deadline_local = dt.replace(hour=18, minute=0, second=0, microsecond=0)
+        deadline_local = dt.replace(hour=deps.config.bot.default_deadline_hour, minute=0, second=0, microsecond=0)
     elif kind == "+7":
         dt = now_local + timedelta(days=7)
-        deadline_local = dt.replace(hour=18, minute=0, second=0, microsecond=0)
+        deadline_local = dt.replace(hour=deps.config.bot.default_deadline_hour, minute=0, second=0, microsecond=0)
     elif kind == "none":
         deadline_local = None
     elif kind == "manual":
@@ -760,8 +764,28 @@ async def cb_add_edit_deadline(callback: CallbackQuery, state: FSMContext, deps:
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
         text="Выберите срок задачи или отправьте дату/время сообщением:",
-        reply_markup=deadline_kb(),
+        reply_markup=deadline_kb(deps),
         parse_mode="HTML",
+    )
+
+
+async def cb_add_edit_title(callback: CallbackQuery, state: FSMContext, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await callback.answer()
+    await state.set_state(AddTaskWizard.entering_title)
+    await wizard_render(
+        bot=callback.bot,
+        state=state,
+        chat_id=int(callback.message.chat.id),
+        fallback_msg=callback.message,
+        text="Введите новый текст задачи одной строкой (сообщением):",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅ Назад", callback_data="add:back_confirm")],
+                _wizard_cancel_row(),
+            ]
+        ),
     )
 
 
@@ -952,7 +976,7 @@ async def cb_add_subtask(callback: CallbackQuery, state: FSMContext, db_pool: as
 # ---------------------------------------------------------------------------
 
 
-def reminder_time_kb() -> InlineKeyboardMarkup:
+def reminder_time_kb(deps: AppDeps) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -960,7 +984,7 @@ def reminder_time_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="+1 час", callback_data="add:rtime:+1h"),
             ],
             [
-                InlineKeyboardButton(text="Сегодня 18:00", callback_data="add:rtime:today18"),
+                InlineKeyboardButton(text=f"Сегодня {deps.config.bot.default_deadline_hour:02d}:00", callback_data="add:rtime:today18"),
                 InlineKeyboardButton(text="Завтра 09:00", callback_data="add:rtime:tomorrow9"),
             ],
             [
@@ -1516,7 +1540,7 @@ async def msg_personal_text(message: Message, state: FSMContext, db_pool: asyncp
             text="Текст пустой. Пришлите текст личной задачи.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         )
-    title, dt = quick_extract_datetime_ru(text, deps.tz_name, date_only_time=(18, 0))
+    title, dt = quick_extract_datetime_ru(text, deps.tz_name, date_only_time=(deps.config.bot.default_deadline_hour, 0))
     title = (title or "").strip() or text
     await state.update_data(personal_text=title)
     if dt is not None:
@@ -1769,6 +1793,7 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_add_set_project, F.data.regexp(r"^add:proj:\d+$"))
     dp.callback_query.register(cb_add_set_assignee, F.data.startswith("add:as:"))
     dp.message.register(msg_add_task_title, StateFilter(AddTaskWizard.entering_title), F.text)
+    dp.callback_query.register(cb_add_edit_title, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_title")
     dp.callback_query.register(cb_add_edit_project, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_project")
     dp.callback_query.register(cb_add_edit_assignee, StateFilter(AddTaskWizard.confirming), F.data == "add:edit_assignee")
     dp.callback_query.register(cb_add_deadline, StateFilter(AddTaskWizard.choosing_deadline), F.data.startswith("add:dl:"))

@@ -410,7 +410,7 @@ async def build_task_card(
         payload = _ui_payload_get(ui_state)
         ui_screen = str(ui_state.get("ui_screen") or "")
         return_cb, return_label = _task_return_context(ui_screen, payload)
-        undo = _undo_active(payload, task_id=int(task_id))
+        undo = _undo_active(payload)
 
         triage = payload.get("triage") if isinstance(payload, dict) else None
         triage_active = bool(
@@ -516,7 +516,9 @@ async def build_task_card(
     )
 
     if undo:
-        kb.inline_keyboard.insert(0, [InlineKeyboardButton(text="↩️ Undo", callback_data=f"undo:task:{task_id}")])
+        undo_tid = int(undo.get("task_id") or 0)
+        label = "↩️ Undo (prev)" if undo_tid != int(task_id) else "↩️ Undo"
+        kb.inline_keyboard.insert(0, [InlineKeyboardButton(text=label, callback_data=f"undo:task:{undo_tid}")])
 
     return "\n".join(lines), kb, kind
 

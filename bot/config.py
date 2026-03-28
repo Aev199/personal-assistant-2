@@ -24,6 +24,7 @@ class BotConfig:
     webhook_url: str = ""
     webhook_secret_token: str = ""
     timezone: str = "Europe/Moscow"
+    default_deadline_hour: int = 18
 
 
 @dataclass
@@ -190,6 +191,7 @@ def load_config() -> Config:
         webhook_secret_token=(os.getenv("TELEGRAM_WEBHOOK_SECRET") or os.getenv("WEBHOOK_SECRET_TOKEN") or internal_api_key),
         # Prefer explicit app timezone variables to avoid provider defaults (TZ=UTC).
         timezone=resolve_tz_name("Europe/Moscow"),
+        default_deadline_hour=int(os.getenv("DEFAULT_DEADLINE_HOUR", "18")),
     )
     
     # Database configuration

@@ -144,7 +144,7 @@ async def _event_render_confirm(msg: Message, state: FSMContext, deps: AppDeps) 
         chat_id=int(msg.chat.id),
         fallback_msg=msg,
         text="\n".join(lines),
-        reply_markup=event_confirm_kb(),
+        reply_markup=event_confirm_kb(kind),
         parse_mode="HTML",
     )
 
@@ -173,7 +173,7 @@ async def cb_add_event_start(callback: CallbackQuery, state: FSMContext, deps: A
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="📅 <b>Событие</b>: выберите календарь",
+        text="📅 <b>Событие (Шаг 1/5)</b>: выберите календарь",
         reply_markup=event_kind_kb(),
         parse_mode="HTML",
     )
@@ -212,7 +212,7 @@ async def cb_event_choose_kind(callback: CallbackQuery, state: FSMContext, db_po
     )
     await state.set_state(AddEventWizard.entering_title)
 
-    title_hint = "Введите название события одной строкой."
+    title_hint = "📅 <b>Событие (Шаг 2/5)</b>\n\nВведите название события одной строкой."
     if kind == "work" and project_code:
         title_hint += "\n\nМожно добавить текущий проект в название кнопкой ниже."
 
@@ -239,7 +239,7 @@ async def cb_event_toggle_project(callback: CallbackQuery, state: FSMContext, de
     include_project = not bool(data.get("include_project", False))
     await state.update_data(include_project=include_project)
 
-    title_hint = "Введите название события одной строкой."
+    title_hint = "📅 <b>Событие (Шаг 2/5)</b>\n\nВведите название события одной строкой."
     if kind == "work" and project_code:
         title_hint += f"\n\nТекущий проект: {project_code} ({'будет добавлен' if include_project else 'не будет добавлен'} в название)."
 
@@ -275,7 +275,7 @@ async def msg_event_title(message: Message, state: FSMContext, db_pool: asyncpg.
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Введите непустое название.",
+            text="📅 <b>Событие (Шаг 2/5)</b>\n\nВведите непустое название.",
             reply_markup=event_title_kb(kind, project_code, include_project),
             parse_mode="HTML",
         )
@@ -305,7 +305,7 @@ async def msg_event_title(message: Message, state: FSMContext, db_pool: asyncpg.
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Дата распознана. Укажите длительность события:",
+            text="📅 <b>Событие (Шаг 5/5)</b>\n\nДата распознана. Укажите длительность события:",
             reply_markup=event_duration_kb(),
             parse_mode="HTML",
         )
@@ -316,7 +316,7 @@ async def msg_event_title(message: Message, state: FSMContext, db_pool: asyncpg.
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text="Когда событие? Выберите дату или отправьте дату/время сообщением.",
+        text="📅 <b>Событие (Шаг 3/5)</b>\n\nКогда событие? Выберите дату или отправьте дату/время сообщением.",
         reply_markup=event_date_kb(),
         parse_mode="HTML",
     )
@@ -342,7 +342,7 @@ async def cb_event_choose_date(callback: CallbackQuery, state: FSMContext, deps:
             state=state,
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
-            text="Введите дату (например 24.02 или 24.02.2026).",
+            text="📅 <b>Событие (Шаг 3/5)</b>\n\nВведите дату (например 24.02 или 24.02.2026).",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -356,7 +356,7 @@ async def cb_event_choose_date(callback: CallbackQuery, state: FSMContext, deps:
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Выберите время или отправьте его сообщением.",
+        text="📅 <b>Событие (Шаг 4/5)</b>\n\nВыберите время или отправьте его сообщением.",
         reply_markup=event_time_kb(),
         parse_mode="HTML",
     )
@@ -391,7 +391,7 @@ async def msg_event_date_manual(message: Message, state: FSMContext, db_pool: as
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Не понял дату. Пример: 24.02 или 24.02.2026",
+            text="📅 <b>Событие (Шаг 3/5)</b>\n\nНе понял дату. Пример: 24.02 или 24.02.2026",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -411,7 +411,7 @@ async def msg_event_date_manual(message: Message, state: FSMContext, db_pool: as
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Длительность события:",
+            text="📅 <b>Событие (Шаг 5/5)</b>\n\nДлительность события:",
             reply_markup=event_duration_kb(),
             parse_mode="HTML",
         )
@@ -422,7 +422,7 @@ async def msg_event_date_manual(message: Message, state: FSMContext, db_pool: as
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text="Выберите время или отправьте его сообщением.",
+        text="📅 <b>Событие (Шаг 4/5)</b>\n\nВыберите время или отправьте его сообщением.",
         reply_markup=event_time_kb(),
         parse_mode="HTML",
     )
@@ -441,7 +441,7 @@ async def cb_event_choose_time(callback: CallbackQuery, state: FSMContext, deps:
             state=state,
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
-            text="Введите время (например 15:30).",
+            text="📅 <b>Событие (Шаг 4/5)</b>\n\nВведите время (например 15:30).",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -460,7 +460,7 @@ async def cb_event_choose_time(callback: CallbackQuery, state: FSMContext, deps:
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Длительность события:",
+        text="📅 <b>Событие (Шаг 5/5)</b>\n\nДлительность события:",
         reply_markup=event_duration_kb(),
         parse_mode="HTML",
     )
@@ -481,7 +481,7 @@ async def msg_event_time_manual(message: Message, state: FSMContext, db_pool: as
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Не понял время. Пример: 15:30",
+            text="📅 <b>Событие (Шаг 4/5)</b>\n\nНе понял время. Пример: 15:30",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -493,7 +493,7 @@ async def msg_event_time_manual(message: Message, state: FSMContext, db_pool: as
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Некорректное время. Пример: 15:30",
+            text="📅 <b>Событие (Шаг 4/5)</b>\n\nНекорректное время. Пример: 15:30",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -505,7 +505,7 @@ async def msg_event_time_manual(message: Message, state: FSMContext, db_pool: as
         state=state,
         chat_id=int(message.chat.id),
         fallback_msg=None,
-        text="Длительность события:",
+        text="📅 <b>Событие (Шаг 5/5)</b>\n\nДлительность события:",
         reply_markup=event_duration_kb(),
         parse_mode="HTML",
     )
@@ -524,7 +524,7 @@ async def cb_event_choose_duration(callback: CallbackQuery, state: FSMContext, d
             state=state,
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
-            text="Введите длительность в минутах (например 45).",
+            text="📅 <b>Событие (Шаг 5/5)</b>\n\nВведите длительность в минутах (например 45).",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -540,7 +540,7 @@ async def cb_event_choose_duration(callback: CallbackQuery, state: FSMContext, d
             state=state,
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
-            text="Некорректная длительность. Пример: 60",
+            text="📅 <b>Событие (Шаг 5/5)</b>\n\nНекорректная длительность. Пример: 60",
             reply_markup=event_duration_kb(),
             parse_mode="HTML",
         )
@@ -566,7 +566,7 @@ async def msg_event_duration_manual(message: Message, state: FSMContext, db_pool
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Введите число минут. Пример: 60",
+            text="📅 <b>Событие (Шаг 5/5)</b>\n\nВведите число минут. Пример: 60",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -577,7 +577,7 @@ async def msg_event_duration_manual(message: Message, state: FSMContext, db_pool
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text="Некорректная длительность. Пример: 60",
+            text="📅 <b>Событие (Шаг 5/5)</b>\n\nНекорректная длительность. Пример: 60",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel")]]),
             parse_mode="HTML",
         )
@@ -598,7 +598,7 @@ async def cb_event_edit_datetime(callback: CallbackQuery, state: FSMContext, dep
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Когда событие? Выберите дату или отправьте дату/время сообщением.",
+        text="📅 <b>Событие (Шаг 3/5)</b>\n\nКогда событие? Выберите дату или отправьте дату/время сообщением.",
         reply_markup=event_date_kb(),
         parse_mode="HTML",
     )
@@ -615,10 +615,23 @@ async def cb_event_edit_duration(callback: CallbackQuery, state: FSMContext, dep
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="Длительность события:",
+        text="📅 <b>Событие (Шаг 5/5)</b>\n\nДлительность события:",
         reply_markup=event_duration_kb(),
         parse_mode="HTML",
     )
+
+
+async def cb_event_toggle_kind(callback: CallbackQuery, state: FSMContext, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await callback.answer()
+
+    data = await state.get_data()
+    old_kind = data.get("kind") or "work"
+    new_kind = "personal" if old_kind == "work" else "work"
+    await state.update_data(kind=new_kind)
+
+    await _event_render_confirm(callback.message, state, deps=deps)
 
 
 async def _event_finalize_and_create(
@@ -875,6 +888,7 @@ def register(dp: Dispatcher) -> None:
 
     dp.callback_query.register(cb_event_edit_datetime, StateFilter(AddEventWizard.confirming), F.data == "ev:edit_datetime")
     dp.callback_query.register(cb_event_edit_duration, StateFilter(AddEventWizard.confirming), F.data == "ev:edit_duration")
+    dp.callback_query.register(cb_event_toggle_kind, StateFilter(AddEventWizard.confirming), F.data == "ev:toggle_kind")
     dp.callback_query.register(cb_event_create, StateFilter(AddEventWizard.confirming), F.data == "ev:create")
 
     dp.callback_query.register(cb_event_cancel, F.data == "ev:cancel")

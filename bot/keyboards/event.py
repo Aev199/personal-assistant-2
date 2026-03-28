@@ -75,10 +75,12 @@ def event_duration_kb() -> InlineKeyboardMarkup:
     )
 
 
-def event_confirm_kb() -> InlineKeyboardMarkup:
+def event_confirm_kb(kind: str = "work") -> InlineKeyboardMarkup:
+    toggle_txt = "🏡 Сделать личным" if kind == "work" else "💼 Сделать рабочим"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Создать", callback_data="ev:create")],
+            [InlineKeyboardButton(text=toggle_txt, callback_data="ev:toggle_kind")],
             [InlineKeyboardButton(text="🕒 Изменить дату/время", callback_data="ev:edit_datetime")],
             [InlineKeyboardButton(text="⏱ Изменить длительность", callback_data="ev:edit_duration")],
             [InlineKeyboardButton(text="✖️ Отмена", callback_data="ev:cancel"), InlineKeyboardButton(text="⬅️ Домой", callback_data="ev:cancel")],

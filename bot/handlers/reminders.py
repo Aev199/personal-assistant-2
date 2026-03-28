@@ -11,7 +11,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.db.runtime_state import record_action_journal
 from bot.deps import AppDeps
-from bot.tz import to_db_utc
+from bot.tz import to_db_utc, resolve_tz_name
+from zoneinfo import ZoneInfo
 from bot.ui.state import ui_get_state, _ui_payload_get, ui_payload_with_toast, ui_set_state
 from bot.utils import try_delete_user_message
 
@@ -57,21 +58,21 @@ async def cb_rem_close(callback: CallbackQuery, deps: AppDeps) -> None:
 async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     try:
         parts = (callback.data or "").split(":")
-        mins = int(parts[2])
+        val = parts[2]
         rem_id = int(parts[3])
         page = max(0, int(parts[4])) if len(parts) >= 5 and parts[4].isdigit() else 0
         action_token = parts[5] if len(parts) >= 6 else f"page-{page}"
     except Exception:
         return await callback.answer("Ошибка", show_alert=True)
 
-    action_key = f"snooze:{rem_id}:{mins}:{action_token or 'no-token'}"
+    action_key = f"snooze:{rem_id}:{val}:{action_token or 'no-token'}"
     async with db_pool.acquire() as conn:
         journal_id = await record_action_journal(
             conn,
             chat_id=int(callback.message.chat.id),
             source="callback",
             action_type="reminder_snooze",
-            summary=f"reminder {rem_id} +{mins}m",
+            summary=f"reminder {rem_id} snooze {val}",
             action_key=action_key,
         )
         if journal_id is None:
@@ -84,7 +85,14 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
         if not row:
             return await callback.answer("Напоминание не найдено", show_alert=True)
 
-        new_time = datetime.now(timezone.utc) + timedelta(minutes=mins)
+        now_utc = datetime.now(timezone.utc)
+        if val == "tom":
+            tz = ZoneInfo(resolve_tz_name(deps.tz_name or "Europe/Moscow"))
+            dt = now_utc.astimezone(tz) + timedelta(days=1)
+            new_time_local = dt.replace(hour=deps.config.bot.default_deadline_hour, minute=0, second=0, microsecond=0)
+            new_time = new_time_local.astimezone(timezone.utc)
+        else:
+            new_time = now_utc + timedelta(minutes=int(val))
         new_time_db = to_db_utc(
             new_time,
             tz_name=deps.tz_name,

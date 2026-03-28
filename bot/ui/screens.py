@@ -964,9 +964,13 @@ async def ui_render_reminders(
             if selected == rid:
                 kb.append([
                     InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{rid}"),
-                    InlineKeyboardButton(text="⏸ 1ч", callback_data=f"rem:snooze:60:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="🗑 Удалить…", callback_data=f"rem:cancel_ask:{rid}:{int(page or 0)}")
                 ])
-                kb.append([InlineKeyboardButton(text="🗑 Удалить…", callback_data=f"rem:cancel_ask:{rid}:{int(page or 0)}")])
+                kb.append([
+                    InlineKeyboardButton(text="⏸ 15м", callback_data=f"rem:snooze:15:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="⏸ 3ч", callback_data=f"rem:snooze:180:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="⏳ Завтра", callback_data=f"rem:snooze:tom:{rid}:{int(page or 0)}"),
+                ])
 
     if max_page > 0:
         nav_row: list[InlineKeyboardButton] = []
@@ -2093,7 +2097,6 @@ async def ui_render_inbox(
         kb.append(nav_row)
 
     kb.append([
-        InlineKeyboardButton(text="🔄 Обновить", callback_data=f"nav:inbox:{page}"),
         InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
     ])
 

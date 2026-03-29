@@ -112,10 +112,6 @@ def task_card_kb(
     rows: list[list[InlineKeyboardButton]] = []
 
     rows.append([
-        InlineKeyboardButton(text="✅ Готово", callback_data=f"task:{task_id}:done"),
-        InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
-    ])
-    rows.append([
         InlineKeyboardButton(text="↳ Подзадачи…", callback_data=f"task:{task_id}:subtasks"),
         InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less"),
     ])

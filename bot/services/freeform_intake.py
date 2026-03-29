@@ -227,19 +227,27 @@ def _action_hint_from_text(raw_text: str) -> str | None:
     marker_map = {
         "идея:": "idea",
         "идея ": "idea",
+        "idea:": "idea",
+        "idea ": "idea",
         "личное:": "personal_task",
         "личная задача:": "personal_task",
         "личное дело:": "personal_task",
+        "personal:": "personal_task",
+        "personal task:": "personal_task",
         "рабочее:": "task",
         "рабочая задача:": "task",
         "рабочая задача ": "task",
         "событие:": "event",
         "в календарь:": "event",
+        "event:": "event",
+        "to calendar:": "event",
     }
     for marker, action in marker_map.items():
         if lowered.startswith(marker):
             return action
     if lowered.startswith("напомни"):
+        return "reminder"
+    if lowered.startswith("remind"):
         return "reminder"
     return None
 
@@ -985,7 +993,6 @@ async def handle_freeform_text(
                 summary=intent.title,
                 source=source,
             )
-            await _rerender_with_toast(message, db_pool, deps, "Черновик задачи готов. Подтвердите действие в сообщении ниже.")
             return True
         except Exception:
             logger.exception("freeform task draft failed", extra={"source": source})
@@ -1038,7 +1045,6 @@ async def handle_freeform_text(
                 summary=intent.title,
                 source=source,
             )
-            await _rerender_with_toast(message, db_pool, deps, "Черновик личной задачи готов. Подтвердите действие в сообщении ниже.")
             return True
         except Exception as exc:
             logger.exception("freeform personal task draft failed", extra={"source": source})
@@ -1185,7 +1191,6 @@ async def handle_freeform_text(
                 summary=summary,
                 source=source,
             )
-            await _rerender_with_toast(message, db_pool, deps, "Черновик события готов. Подтвердите действие в сообщении ниже.")
             return True
         except Exception:
             logger.exception("freeform event draft failed", extra={"source": source})
@@ -1222,7 +1227,6 @@ async def handle_freeform_text(
                 summary=intent.idea_text,
                 source=source,
             )
-            await _rerender_with_toast(message, db_pool, deps, "Черновик идеи готов. Подтвердите действие в сообщении ниже.")
             return True
         except Exception as exc:
             logger.exception("freeform idea draft failed", extra={"source": source})
@@ -1277,7 +1281,6 @@ async def handle_freeform_text(
                 summary=intent.reminder_text,
                 source=source,
             )
-            await _rerender_with_toast(message, db_pool, deps, "Черновик напоминания готов. Подтвердите действие в сообщении ниже.")
             return True
         except Exception:
             logger.exception("freeform reminder draft failed", extra={"source": source})

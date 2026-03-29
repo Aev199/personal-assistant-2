@@ -243,6 +243,7 @@ def _single_column_task_buttons(
     deadline_key: str | None = "deadline",
     status_key: str | None = None,
     tz: ZoneInfo | None = None,
+    quick_done: bool = False,
 ) -> list[list[InlineKeyboardButton]]:
     buttons: list[list[InlineKeyboardButton]] = []
     for row in rows:
@@ -261,21 +262,21 @@ def _single_column_task_buttons(
                 status_hint = "в работе"
             elif raw_status == "done":
                 status_hint = "готово"
+        caption = _task_button_caption(
+            title=str(row.get(title_key) or ""),
+            project=project,
+            deadline_local=deadline_local,
+            status_hint=status_hint,
+            icon=icon,
+        )
+        if quick_done:
+            caption = f"✅ {caption}"
+        callback_data = f"task:{int(row['id'])}:done_quick" if quick_done else f"task:{int(row['id'])}"
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text="✅",
-                    callback_data=f"task:{int(row['id'])}:done_quick",
-                ),
-                InlineKeyboardButton(
-                    text=_task_button_caption(
-                        title=str(row.get(title_key) or ""),
-                        project=project,
-                        deadline_local=deadline_local,
-                        status_hint=status_hint,
-                        icon=icon,
-                    ),
-                    callback_data=f"task:{int(row['id'])}",
+                    text=caption,
+                    callback_data=callback_data,
                 ),
             ]
         )
@@ -1595,6 +1596,7 @@ async def ui_render_all_tasks(
     tz_name: str | None = None,
     page: int = 0,
     filter_key: str = "all",
+    quick_done: bool = False,
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
@@ -1788,22 +1790,27 @@ async def ui_render_all_tasks(
         lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
 
     kb: list[list[InlineKeyboardButton]] = []
+    qd_suffix = ":qd1" if quick_done else ""
 
     filter_buttons: list[InlineKeyboardButton] = []
     filter_order = ("all", "overdue", "today", "nodate")
     for key in filter_order:
         title = filter_titles[key]
         text = f"• {title}" if key == filter_key else title
-        filter_buttons.append(InlineKeyboardButton(text=text, callback_data=f"nav:all:{key}"))
+        filter_buttons.append(InlineKeyboardButton(text=text, callback_data=f"nav:all:{key}{qd_suffix}"))
     kb.append(filter_buttons)
 
-    kb.extend(_single_column_task_buttons(rows, icon="📋", tz=tz))
+    toggle_text = "👁 Карточки" if quick_done else "✅ Quick-Done"
+    toggle_qd_suffix = "" if quick_done else ":qd1"
+    kb.append([InlineKeyboardButton(text=toggle_text, callback_data=f"nav:all:{filter_key}:{page}{toggle_qd_suffix}")])
+
+    kb.extend(_single_column_task_buttons(rows, icon="📋", tz=tz, quick_done=quick_done))
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:all:{filter_key}:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:all:{filter_key}:{page-1}{qd_suffix}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:all:{filter_key}:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:all:{filter_key}:{page+1}{qd_suffix}"))
     if nav_row:
         kb.append(nav_row)
 
@@ -1819,7 +1826,7 @@ async def ui_render_all_tasks(
         text="\n".join(lines).strip(),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         screen="all_tasks",
-        payload={"page": page, "filter": filter_key},
+        payload={"page": page, "filter": filter_key, "quick_done": quick_done},
         fallback_message=message,
         preferred_message_id=preferred_message_id,
         force_new=force_new,

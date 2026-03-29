@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 from bot.deps import AppDeps
-from bot.db.user_settings import set_persona_mode
+from bot.db.user_settings import get_persona_mode, set_persona_mode
 from bot.persona import is_solo_mode, normalize_persona_mode, persona_switch_toast
 from bot.handlers.common import (
     cleanup_stale_wizard_message,
@@ -79,16 +79,20 @@ async def _rerender_current_screen(
     db_pool: asyncpg.Pool,
     deps: AppDeps,
     *,
-    persona_mode: str,
-    toast: str,
+    persona_mode: str | None = None,
+    toast: str | None = None,
     preferred_message_id: int | None = None,
 ) -> int:
     chat_id = int(message.chat.id)
     async with db_pool.acquire() as conn:
         ui_state = await ui_get_state(conn, chat_id)
         screen = str(ui_state.get("ui_screen") or "home").lower()
-        payload = ui_payload_with_toast(_ui_payload_get(ui_state), toast, ttl_sec=20)
+        payload = _ui_payload_get(ui_state)
+        if toast:
+            payload = ui_payload_with_toast(payload, toast, ttl_sec=20)
         await ui_set_state(conn, chat_id, ui_payload=payload)
+        if persona_mode is None:
+            persona_mode = await get_persona_mode(conn, chat_id)
 
     tz_name = deps.tz_name
     if screen == "secondary":
@@ -113,12 +117,14 @@ async def _rerender_current_screen(
     if screen == "all_tasks":
         page = max(0, int(payload.get("page") or 0))
         filter_key = str(payload.get("filter") or "all").strip().lower() or "all"
+        quick_done = bool(payload.get("quick_done"))
         return await ui_render_all_tasks(
             message,
             db_pool,
             tz_name=tz_name,
             page=page,
             filter_key=filter_key,
+            quick_done=quick_done,
             preferred_message_id=preferred_message_id,
             force_new=False,
         )
@@ -293,13 +299,21 @@ async def cb_nav_all(callback: CallbackQuery, state: FSMContext, db_pool: asyncp
     await callback.answer()
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
-    filter_key, page = _parse_nav_all_callback(callback.data)
+    raw_data = str(callback.data or "")
+    quick_done = False
+    if raw_data.endswith(":qd1"):
+        quick_done = True
+        raw_data = raw_data[:-4]
+    elif raw_data.endswith(":qd0"):
+        raw_data = raw_data[:-4]
+    filter_key, page = _parse_nav_all_callback(raw_data)
     final_id = await ui_render_all_tasks(
         callback.message,
         db_pool,
         tz_name=deps.tz_name,
         page=page,
         filter_key=filter_key,
+        quick_done=quick_done,
         preferred_message_id=preferred_message_id,
     )
     await cleanup_stale_wizard_message(

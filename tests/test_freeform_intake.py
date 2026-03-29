@@ -671,7 +671,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         # Simulate followup state
         state.get_data = AsyncMock(return_value={
             "freeform_pending_action": "task",
-            "freeform_base_text": "создать задачу",
+            "freeform_base_text": "create task",
             "freeform_missing_fields": ["title"],
         })
         state.get_state = AsyncMock(return_value=FreeformFollowup.awaiting_text.state)
@@ -696,7 +696,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
                 message,
                 deps=deps,
                 db_pool=_Pool(),
-                raw_text="идея: добавить чат-бот в проект",
+                raw_text="idea: add chatbot to project",
                 source="text",
                 state=state,
             )
@@ -737,7 +737,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(handled)
         self.assertEqual(create_preview.await_count, 1)
         gtasks.create_task.assert_not_awaited()
-        self.assertIn("Черновик", rerender.await_args.args[3])
+        rerender.assert_not_awaited()
 
     async def test_idea_builds_pending_preview_even_if_gtasks_would_fail_later(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(side_effect=RuntimeError("boom")))
@@ -771,7 +771,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(handled)
         self.assertEqual(create_preview.await_count, 1)
         gtasks.create_task.assert_not_awaited()
-        self.assertIn("Черновик", rerender.await_args.args[3])
+        rerender.assert_not_awaited()
 
     async def test_duplicate_personal_task_is_blocked_with_recent_fingerprint(self) -> None:
         gtasks = SimpleNamespace(enabled=lambda: True, create_task=AsyncMock(return_value={"id": "p1"}))
@@ -820,7 +820,7 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(first)
         self.assertTrue(second)
         gtasks.create_task.assert_not_awaited()
-        self.assertGreaterEqual(rerender.await_count, 2)
+        self.assertEqual(rerender.await_count, 1)
 
 
 if __name__ == "__main__":

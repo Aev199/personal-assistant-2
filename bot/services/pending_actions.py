@@ -21,6 +21,7 @@ from bot.deps import AppDeps
 from bot.services.gtasks_service import due_from_local_date, get_or_create_list_id
 from bot.services.vault_sync import background_project_sync
 from bot.tz import fmt_local, to_db_utc
+from bot.ui.render import ui_render
 from bot.utils import h
 from bot.services.background import fire_and_forget
 
@@ -146,8 +147,17 @@ async def create_pending_preview(
         )
 
     kb = _preview_keyboard(kind, int(pending_action_id), payload)
-    if hasattr(message, "answer"):
-        await message.answer(_preview_text(kind, payload, tz_name=deps.tz_name), reply_markup=kb)
+    await ui_render(
+        bot=message.bot,
+        db_pool=db_pool,
+        chat_id=int(message.chat.id),
+        text=_preview_text(kind, payload, tz_name=deps.tz_name),
+        reply_markup=kb,
+        screen="llm_draft",
+        payload={"pending_action_id": int(pending_action_id), "kind": kind},
+        fallback_message=message,
+        parse_mode=None,
+    )
     return int(pending_action_id)
 
 

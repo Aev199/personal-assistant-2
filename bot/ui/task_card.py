@@ -112,8 +112,15 @@ def task_card_kb(
     rows: list[list[InlineKeyboardButton]] = []
 
     rows.append([
-        InlineKeyboardButton(text="🧩 Связи…", callback_data=f"task:{task_id}:relations"),
+        InlineKeyboardButton(text="✅ Готово", callback_data=f"task:{task_id}:done"),
+        InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
+    ])
+    rows.append([
         InlineKeyboardButton(text="↳ Подзадачи…", callback_data=f"task:{task_id}:subtasks"),
+        InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less"),
+    ])
+    rows.append([
+        InlineKeyboardButton(text="🧩 Связи…", callback_data=f"task:{task_id}:relations"),
     ])
     if is_solo_mode(persona_mode):
         rows.append([InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone")])
@@ -122,7 +129,6 @@ def task_card_kb(
             InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
             InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
         ])
-    rows.append([InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less")])
     rows.append([
         InlineKeyboardButton(text=back_label, callback_data=back_cb),
         InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),

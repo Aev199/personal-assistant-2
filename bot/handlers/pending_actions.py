@@ -22,6 +22,7 @@ from bot.services.pending_actions import (
     execute_pending_action,
 )
 from bot.ui import ui_render_home
+from bot.ui.render import ui_render
 from bot.ui.state import _ui_payload_get, ui_get_state, ui_payload_with_toast, ui_set_state
 from bot.utils import try_delete_user_message
 
@@ -63,7 +64,6 @@ async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: A
                 await _toast_home(callback, db_pool, deps, "✅ Действие уже выполнено")
             else:
                 await _toast_home(callback, db_pool, deps, "⏰ Черновик истёк. Отправьте запрос заново.")
-            await try_delete_user_message(callback.message)
             return
         pending = await get_pending_action(
             conn,
@@ -87,11 +87,9 @@ async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: A
                 last_error=str(exc),
             )
         await _toast_home(callback, db_pool, deps, f"Не удалось выполнить действие: {exc}")
-        await try_delete_user_message(callback.message)
         return
 
     await _toast_home(callback, db_pool, deps, toast)
-    await try_delete_user_message(callback.message)
 
 
 async def cb_llm_cancel(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -103,7 +101,6 @@ async def cb_llm_cancel(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
     async with db_pool.acquire() as conn:
         await mark_pending_action_status(conn, pending_action_id=int(pending_action_id), status="cancelled")
     await _toast_home(callback, db_pool, deps, "✖ Черновик отменён")
-    await try_delete_user_message(callback.message)
 
 
 async def cb_llm_toggle_event_kind(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -163,9 +160,16 @@ async def cb_llm_toggle_event_kind(callback: CallbackQuery, db_pool: asyncpg.Poo
         await update_pending_action_payload(conn, pending_action_id=int(pending_action_id), payload=payload)
 
     try:
-        await message.edit_text(
-            _preview_text("event", payload, tz_name=deps.tz_name),
+        await ui_render(
+            bot=message.bot,
+            db_pool=db_pool,
+            chat_id=int(message.chat.id),
+            text=_preview_text("event", payload, tz_name=deps.tz_name),
             reply_markup=_preview_keyboard("event", int(pending_action_id), payload),
+            screen="llm_draft",
+            payload={"pending_action_id": int(pending_action_id), "kind": "event"},
+            fallback_message=message,
+            parse_mode=None,
         )
     except Exception:
         await _toast_home(callback, db_pool, deps, "Переключил тип события, но не смог обновить черновик.")

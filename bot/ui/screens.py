@@ -264,6 +264,10 @@ def _single_column_task_buttons(
         buttons.append(
             [
                 InlineKeyboardButton(
+                    text="✅",
+                    callback_data=f"task:{int(row['id'])}:done_quick",
+                ),
+                InlineKeyboardButton(
                     text=_task_button_caption(
                         title=str(row.get(title_key) or ""),
                         project=project,
@@ -272,7 +276,7 @@ def _single_column_task_buttons(
                         icon=icon,
                     ),
                     callback_data=f"task:{int(row['id'])}",
-                )
+                ),
             ]
         )
     return buttons
@@ -2085,6 +2089,8 @@ async def ui_render_inbox(
             InlineKeyboardButton(text="⚡️ Быстрая задача", callback_data="quick:task"),
         ]
     )
+    if total > 0:
+        kb.append([InlineKeyboardButton(text="📁 В проект (все)", callback_data="inbox:batch:project")])
 
     kb.extend(_single_column_task_buttons(rows, icon="📥", project_key=None, tz=tz))
 

@@ -142,6 +142,9 @@ def _task_return_context(ui_screen: str, payload: dict) -> tuple[str | None, str
     if ui_screen == "projects":
         return "nav:projects", "⬅ Проекты"
 
+    if ui_screen == "home":
+        return "nav:home", "⬅ Домой"
+
     if ui_screen == "project_card":
         project_id = _as_int(p.get("project_id"), 0)
         if project_id > 0:
@@ -474,8 +477,13 @@ async def build_task_card(
     )
 
     if triage_active:
-        left_txt = f"{int(inbox_left)}" if inbox_left is not None else "…"
-        lines.insert(0, f"📥 <b>Разбор Inbox</b> • осталось: <b>{left_txt}</b>")
+        total = triage.get("total") if isinstance(triage, dict) else None
+        if total is not None and inbox_left is not None:
+            done = max(1, int(total) - int(inbox_left) + 1)
+            left_txt = f"{done} из {int(total)}"
+        else:
+            left_txt = f"осталось: {int(inbox_left)}" if inbox_left is not None else "осталось: …"
+        lines.insert(0, f"📥 <b>Разбор Inbox</b> • <b>{left_txt}</b>")
 
     if undo:
         left = max(0, int(undo.get("exp", 0)) - _now_ts())
@@ -732,6 +740,61 @@ async def _advance_inbox_triage_after_action(msg: Message, db_pool: asyncpg.Pool
 
     await show_task_card(msg, db_pool, next_task_id, deps=deps)
     return True
+
+
+async def cb_task_done_quick(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if not await _guard(callback, deps):
+        return
+    await state.clear()
+    
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3 or not parts[1].isdigit():
+        return
+    task_id = int(parts[1])
+    chat_id = int(callback.message.chat.id)
+
+    async with db_pool.acquire() as conn:
+        info = await conn.fetchrow(
+            "SELECT t.project_id, p.code as project_code, t.title, t.status FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=$1",
+            task_id,
+        )
+        if not info:
+            await callback.answer("❌ Задача не найдена.")
+            return
+
+        prev_st = info["status"] or "todo"
+        if prev_st == "done":
+            await callback.answer("Задача уже закрыта.")
+            return
+
+        await conn.execute("UPDATE tasks SET status='done' WHERE id=$1", task_id)
+        await db_add_event(
+            conn,
+            "task_done",
+            int(info["project_id"]),
+            task_id,
+            f"✅ Готово (quick) | [{info['project_code']}] #{task_id} {info['title']}",
+        )
+        
+        undo_payload = {
+            "exp": _now_ts() + 30,
+            "task_id": task_id,
+            "prev_status": prev_st,
+            "new_status": "done",
+        }
+        ui_state = await ui_get_state(conn, chat_id)
+        payload = _ui_payload_get(ui_state)
+        payload["undo"] = undo_payload
+        await ui_set_state(conn, chat_id, ui_payload=payload)
+
+    fire_and_forget(
+        background_project_sync(int(info["project_id"]), db_pool, deps.vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
+        label="vault_sync",
+    )
+    
+    await callback.answer("Готово!")
+    from bot.handlers.nav import _rerender_current_screen
+    await _rerender_current_screen(callback.message, db_pool, deps=deps)
 
 
 async def cb_undo_task(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -1573,6 +1636,7 @@ async def asyncio_to_thread_parse(text: str, tz_name: str) -> datetime | None:
 
 def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_undo_task, F.data.startswith("undo:task:"))
+    dp.callback_query.register(cb_task_done_quick, F.data.endswith(":done_quick"))
     dp.callback_query.register(cb_task, F.data.startswith("task:"))
     from bot.fsm import EditTaskDeadline
 

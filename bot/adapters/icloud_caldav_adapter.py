@@ -279,9 +279,13 @@ def _parse_caldav_multistatus(calendar_url: str, xml_text: str) -> list[ICloudVi
         if not data.strip():
             continue
         events.extend(_parse_ics_events(calendar_url, data))
-    deduped: dict[tuple[str, str, datetime, datetime], ICloudVisibleEvent] = {}
+    
+    # Дедупликация: используем uid если есть, иначе создаем уникальный ключ
+    deduped: dict[tuple[str, str], ICloudVisibleEvent] = {}
     for event in events:
-        key = (event.uid or event.summary, event.calendar_url, event.dtstart_utc, event.dtend_utc)
+        # Если есть uid - используем его, иначе комбинация summary+время
+        uid_key = event.uid if event.uid else f"{event.summary}|{event.dtstart_utc.isoformat()}|{event.dtend_utc.isoformat()}"
+        key = (event.calendar_url, uid_key)
         deduped[key] = event
     return sorted(deduped.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower()))
 

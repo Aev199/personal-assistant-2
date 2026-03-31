@@ -1423,11 +1423,11 @@ async def ui_render_today(
     page_size = 8
     work_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_WORK") or "").strip()
     personal_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_PERSONAL") or "").strip()
-    family_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_FAMILY") or "").strip()
+    bitrix_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_BITRIX") or "").strip()
     try:
         calendar_block = await _fetch_today_calendar_block(
             tz=tz,
-            calendar_urls=[work_calendar_url, personal_calendar_url, family_calendar_url],
+            calendar_urls=[work_calendar_url, personal_calendar_url, bitrix_calendar_url],
             icloud=icloud,
         )
         async with db_pool.acquire() as conn:

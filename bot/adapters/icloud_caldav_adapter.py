@@ -275,14 +275,20 @@ def _parse_caldav_multistatus(calendar_url: str, xml_text: str) -> list[ICloudVi
     except ET.ParseError:
         return []
 
+    calendar_data_blocks = root.findall(".//c:calendar-data", ns)
+    logger.info(f"Found {len(calendar_data_blocks)} calendar-data blocks in response for {calendar_url}")
+    
     events: list[ICloudVisibleEvent] = []
-    for calendar_data in root.findall(".//c:calendar-data", ns):
+    for idx, calendar_data in enumerate(calendar_data_blocks):
         data = calendar_data.text or ""
         if not data.strip():
+            logger.warning(f"calendar-data block {idx} is empty")
             continue
-        events.extend(_parse_ics_events(calendar_url, data))
+        parsed = _parse_ics_events(calendar_url, data)
+        logger.info(f"calendar-data block {idx}: parsed {len(parsed)} events")
+        events.extend(parsed)
     
-    logger.info(f"Parsed {len(events)} events from calendar {calendar_url}")
+    logger.info(f"Parsed {len(events)} total events from calendar {calendar_url}")
     
     # Дедупликация: по uid (или summary) + время, но БЕЗ calendar_url
     # Это позволяет показывать разные события из одного календаря с одинаковым временем

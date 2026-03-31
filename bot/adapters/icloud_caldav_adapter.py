@@ -294,6 +294,14 @@ def _parse_caldav_multistatus(calendar_url: str, xml_text: str) -> list[ICloudVi
         if not data.strip():
             logger.warning(f"calendar-data block {idx} is empty")
             continue
+        
+        # Log ICS data for Bitrix calendar
+        if "BDFECF73-FFC1-4ADE-AD3B-FB7467C2CA36" in calendar_url:
+            logger.info(f"ICS data block {idx} length: {len(data)} chars")
+            # Count VEVENT blocks
+            vevent_count = data.count("BEGIN:VEVENT")
+            logger.info(f"ICS data block {idx} contains {vevent_count} VEVENT blocks")
+        
         parsed = _parse_ics_events(calendar_url, data)
         logger.info(f"calendar-data block {idx}: parsed {len(parsed)} events")
         events.extend(parsed)

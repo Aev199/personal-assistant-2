@@ -1366,11 +1366,10 @@ class _TodayCalendarBlock:
 async def _fetch_today_calendar_block(
     *,
     tz: ZoneInfo,
-    work_calendar_url: str,
-    personal_calendar_url: str,
+    calendar_urls: list[str],
     icloud: ICloudCalDAVAdapter | None,
 ) -> _TodayCalendarBlock:
-    calendar_urls = [url for url in (work_calendar_url, personal_calendar_url) if url]
+    calendar_urls = [url for url in calendar_urls if url]
     if not calendar_urls:
         return _TodayCalendarBlock(events=())
     if icloud is None:
@@ -1424,11 +1423,11 @@ async def ui_render_today(
     page_size = 8
     work_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_WORK") or "").strip()
     personal_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_PERSONAL") or "").strip()
+    family_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_FAMILY") or "").strip()
     try:
         calendar_block = await _fetch_today_calendar_block(
             tz=tz,
-            work_calendar_url=work_calendar_url,
-            personal_calendar_url=personal_calendar_url,
+            calendar_urls=[work_calendar_url, personal_calendar_url, family_calendar_url],
             icloud=icloud,
         )
         async with db_pool.acquire() as conn:

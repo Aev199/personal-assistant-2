@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ICloudCalDAVAuth:

@@ -218,6 +218,10 @@ class ICloudCalDAVAdapter:
                 ) as resp:
                     txt = await resp.text()
                     if resp.status in (200, 207):
+                        # Log XML response for Bitrix calendar only
+                        if "BDFECF73-FFC1-4ADE-AD3B-FB7467C2CA36" in calendar_url:
+                            logger.info(f"CalDAV XML response length: {len(txt)} chars")
+                            logger.info(f"CalDAV XML response (first 2000 chars): {txt[:2000]}")
                         return _parse_caldav_multistatus(calendar_url, txt)
                     if resp.status in (409, 423) and attempt < 3:
                         await asyncio.sleep(0.2 * (attempt + 1))

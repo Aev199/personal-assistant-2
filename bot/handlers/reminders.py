@@ -91,8 +91,15 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
             dt = now_utc.astimezone(tz) + timedelta(days=1)
             new_time_local = dt.replace(hour=deps.config.bot.default_deadline_hour, minute=0, second=0, microsecond=0)
             new_time = new_time_local.astimezone(timezone.utc)
+            snooze_text = "завтра"
         else:
-            new_time = now_utc + timedelta(minutes=int(val))
+            mins = int(val)
+            new_time = now_utc + timedelta(minutes=mins)
+            if mins >= 60:
+                hours = mins // 60
+                snooze_text = f"{hours} ч" if mins % 60 == 0 else f"{hours} ч {mins % 60} мин"
+            else:
+                snooze_text = f"{mins} мин"
         new_time_db = to_db_utc(
             new_time,
             tz_name=deps.tz_name,
@@ -131,11 +138,11 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
 
         ui_state = await ui_get_state(conn, int(callback.message.chat.id))
         payload = _ui_payload_get(ui_state)
-        payload = ui_payload_with_toast(payload, f"⏸ Отложено на {mins} мин.", ttl_sec=5)
+        payload = ui_payload_with_toast(payload, f"⏸ Отложено на {snooze_text}", ttl_sec=5)
         payload.pop("selected_reminder_id", None)
         await ui_set_state(conn, int(callback.message.chat.id), ui_payload=payload)
 
-    await callback.answer(f"⏸ Отложено на {mins} мин.")
+    await callback.answer(f"⏸ Отложено на {snooze_text}")
     from bot.ui.screens import ui_render_reminders
 
     await ui_render_reminders(

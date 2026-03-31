@@ -944,7 +944,7 @@ async def cb_add_subtask(callback: CallbackQuery, state: FSMContext, db_pool: as
 # ---------------------------------------------------------------------------
 
 
-def reminder_time_kb() -> InlineKeyboardMarkup:
+def reminder_time_kb(deps: AppDeps) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1039,7 +1039,7 @@ async def cb_add_reminder_start(callback: CallbackQuery, state: FSMContext, deps
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
         text="⏰ <b>Добавить напоминание</b>: выберите время или отправьте дату/время сообщением",
-        reply_markup=reminder_time_kb(),
+        reply_markup=reminder_time_kb(deps),
         parse_mode="HTML",
     )
 
@@ -1088,7 +1088,7 @@ async def cb_add_reminder_time(callback: CallbackQuery, state: FSMContext, deps:
             chat_id=int(callback.message.chat.id),
             fallback_msg=callback.message,
             text="⚠️ Не удалось распознать время. Попробуйте снова.",
-            reply_markup=reminder_time_kb(),
+            reply_markup=reminder_time_kb(deps),
         )
 
     remind_utc = remind_local.astimezone(UTC)
@@ -1228,7 +1228,7 @@ async def cb_add_reminder_back(callback: CallbackQuery, state: FSMContext, deps:
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
         text="⏰ <b>Добавить напоминание</b>: выберите время или отправьте дату/время сообщением",
-        reply_markup=reminder_time_kb(),
+        reply_markup=reminder_time_kb(deps),
         parse_mode="HTML",
     )
 

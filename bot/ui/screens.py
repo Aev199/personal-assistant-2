@@ -1391,7 +1391,7 @@ async def _fetch_today_calendar_block(
 
     unavailable = False
     merged: dict[str, ICloudVisibleEvent] = {}
-    for result in results:
+    for idx, result in enumerate(results):
         if isinstance(result, Exception):
             unavailable = True
             logger.warning(
@@ -1400,13 +1400,18 @@ async def _fetch_today_calendar_block(
                 exc_info=(type(result), result, result.__traceback__),
             )
             continue
+        logger.info(f"Calendar {idx}: received {len(result)} events from {calendar_urls[idx] if idx < len(calendar_urls) else 'unknown'}")
         for event in result:
             # Дедупликация только по uid (или уникальной комбинации)
             # Если uid нет, используем summary+время для уникальности
             # Убрали calendar_url из ключа, чтобы из одного календаря могли показываться все события
             uid_key = event.uid if event.uid else f"{event.summary}|{event.dtstart_utc.isoformat()}|{event.dtend_utc.isoformat()}"
             key = uid_key
+            logger.info(f"Event: summary='{event.summary}', uid='{event.uid}', key='{key}', calendar='{event.calendar_url}'")
+            if key in merged:
+                logger.warning(f"Duplicate key '{key}' - replacing event '{merged[key].summary}' with '{event.summary}'")
             merged[key] = event
+    logger.info(f"After deduplication: {len(merged)} unique events")
     events = tuple(sorted(merged.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower())))
     return _TodayCalendarBlock(events=events, unavailable=unavailable)
 

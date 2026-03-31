@@ -258,7 +258,7 @@ def _calendar_query_body(start_utc: datetime, end_utc: datetime) -> str:
         '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
         "<d:prop>"
         "<d:getetag/>"
-        f'<c:calendar-data><c:expand start="{_fmt_ical_utc(start_utc)}" end="{_fmt_ical_utc(end_utc)}"/></c:calendar-data>'
+        "<c:calendar-data/>"
         "</d:prop>"
         "<c:filter>"
         '<c:comp-filter name="VCALENDAR">'

@@ -280,12 +280,11 @@ def _parse_caldav_multistatus(calendar_url: str, xml_text: str) -> list[ICloudVi
             continue
         events.extend(_parse_ics_events(calendar_url, data))
     
-    # Дедупликация: используем uid если есть, иначе создаем уникальный ключ
-    deduped: dict[tuple[str, str], ICloudVisibleEvent] = {}
+    # Дедупликация: по uid (или summary) + время, но БЕЗ calendar_url
+    # Это позволяет показывать разные события из одного календаря с одинаковым временем
+    deduped: dict[tuple[str, datetime, datetime], ICloudVisibleEvent] = {}
     for event in events:
-        # Если есть uid - используем его, иначе комбинация summary+время
-        uid_key = event.uid if event.uid else f"{event.summary}|{event.dtstart_utc.isoformat()}|{event.dtend_utc.isoformat()}"
-        key = (event.calendar_url, uid_key)
+        key = (event.uid or event.summary, event.dtstart_utc, event.dtend_utc)
         deduped[key] = event
     return sorted(deduped.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower()))
 

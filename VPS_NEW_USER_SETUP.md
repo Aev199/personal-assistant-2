@@ -250,13 +250,11 @@ ICLOUD_CALENDAR_URL_WORK=https://caldav.icloud.com/...
 ICLOUD_CALENDAR_URL_PERSONAL=https://caldav.icloud.com/...
 ```
 
-Если у тебя этих URL пока нет:
+#### Способ 1: Через PowerShell на Windows (рекомендуется)
 
-1. не блокируй запуск бота
-2. оставь эти две переменные пустыми
-3. бот всё равно будет работать без iCloud
+Открой PowerShell и выполни:
 
-Если хочешь, потом можно отдельно сделать discovery этих URL.
+ python .\caldav.py --apple-id "" --app-password ""
 
 ## 8. Настрой WebDAV / Yandex Disk / Obsidian
 

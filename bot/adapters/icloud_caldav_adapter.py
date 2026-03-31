@@ -197,6 +197,8 @@ class ICloudCalDAVAdapter:
 
         start_utc = _to_utc(start_utc)
         end_utc = _to_utc(end_utc)
+        
+        logger.info(f"Requesting events from {calendar_url} for range {start_utc} to {end_utc}")
 
         body = _calendar_query_body(start_utc, end_utc)
         headers = {

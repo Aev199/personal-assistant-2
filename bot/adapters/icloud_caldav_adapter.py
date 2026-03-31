@@ -349,6 +349,7 @@ def _build_visible_event(
     dtstart_utc = _parse_ical_datetime(dtstart_raw, dtstart_params)
     dtend_utc = _parse_ical_datetime(dtend_raw, dtend_params)
     if dtstart_utc is None:
+        logging.warning(f"Skipping event '{summary}' - no valid DTSTART: {dtstart_raw}")
         return None
     if dtend_utc is None or dtend_utc <= dtstart_utc:
         dtend_utc = dtstart_utc

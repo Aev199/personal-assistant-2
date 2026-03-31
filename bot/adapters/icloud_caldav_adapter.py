@@ -275,6 +275,10 @@ def _parse_caldav_multistatus(calendar_url: str, xml_text: str) -> list[ICloudVi
     except ET.ParseError:
         return []
 
+    # Log response blocks for debugging
+    response_blocks = root.findall(".//d:response", ns)
+    logger.info(f"Found {len(response_blocks)} response blocks in XML for {calendar_url}")
+    
     calendar_data_blocks = root.findall(".//c:calendar-data", ns)
     logger.info(f"Found {len(calendar_data_blocks)} calendar-data blocks in response for {calendar_url}")
     

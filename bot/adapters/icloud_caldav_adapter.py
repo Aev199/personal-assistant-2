@@ -1,7 +1,8 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
@@ -294,30 +295,30 @@ def _parse_caldav_multistatus(calendar_url: str, xml_text: str) -> list[ICloudVi
         if not data.strip():
             logger.warning(f"calendar-data block {idx} is empty")
             continue
-        
         # Log ICS data for Bitrix calendar
         if "BDFECF73-FFC1-4ADE-AD3B-FB7467C2CA36" in calendar_url:
             logger.info(f"ICS data block {idx} length: {len(data)} chars")
-            # Count VEVENT blocks
             vevent_count = data.count("BEGIN:VEVENT")
             logger.info(f"ICS data block {idx} contains {vevent_count} VEVENT blocks")
-        
+
         parsed = _parse_ics_events(calendar_url, data)
         logger.info(f"calendar-data block {idx}: parsed {len(parsed)} events")
         events.extend(parsed)
-    
+
     logger.info(f"Parsed {len(events)} total events from calendar {calendar_url}")
-    
-    # Дедупликация: по uid (или summary) + время, но БЕЗ calendar_url
-    # Это позволяет показывать разные события из одного календаря с одинаковым временем
-    deduped: dict[tuple[str, datetime, datetime], ICloudVisibleEvent] = {}
+
+    deduped: dict[tuple[str, str, datetime], ICloudVisibleEvent] = {}
     for event in events:
-        key = (event.uid or event.summary, event.dtstart_utc, event.dtend_utc)
-        logger.info(f"Adapter event: summary='{event.summary}', uid='{event.uid}', start={event.dtstart_utc}, end={event.dtend_utc}, key={key}")
-        if key in deduped:
-            logger.warning(f"Adapter: duplicate key {key} - replacing '{deduped[key].summary}' with '{event.summary}'")
-        deduped[key] = event
-    
+        identity = (event.uid or event.summary or "").strip().lower() or "no-id"
+        key = (event.calendar_url, identity, event.dtstart_utc)
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = event
+            continue
+        existing_duration = existing.dtend_utc - existing.dtstart_utc
+        candidate_duration = event.dtend_utc - event.dtstart_utc
+        if candidate_duration > existing_duration:
+            deduped[key] = event
     logger.info(f"After adapter deduplication: {len(deduped)} unique events")
     return sorted(deduped.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower()))
 
@@ -370,7 +371,8 @@ def _parse_ical_property(key_part: str) -> tuple[str, dict[str, str]]:
         if "=" not in chunk:
             continue
         param_key, param_value = chunk.split("=", 1)
-        params[param_key.upper()] = param_value
+        clean_value = param_value.strip().strip('"').strip("'")
+        params[param_key.upper()] = clean_value
     return name, params
 
 
@@ -380,6 +382,7 @@ def _build_visible_event(
 ) -> ICloudVisibleEvent | None:
     dtstart_raw, dtstart_params = fields.get("DTSTART", ("", {}))
     dtend_raw, dtend_params = fields.get("DTEND", ("", {}))
+    duration_raw = str(fields.get("DURATION", ("", {}))[0] or "").strip()
     summary = str(fields.get("SUMMARY", ("", {}))[0] or "").strip() or "Без названия"
     uid = str(fields.get("UID", ("", {}))[0] or "").strip()
     dtstart_utc = _parse_ical_datetime(dtstart_raw, dtstart_params)
@@ -387,6 +390,10 @@ def _build_visible_event(
     if dtstart_utc is None:
         logging.warning(f"Skipping event '{summary}' - no valid DTSTART: {dtstart_raw}")
         return None
+    if dtend_utc is None:
+        duration = _parse_ical_duration(duration_raw)
+        if duration is not None and duration.total_seconds() > 0:
+            dtend_utc = dtstart_utc + duration
     if dtend_utc is None or dtend_utc <= dtstart_utc:
         dtend_utc = dtstart_utc
     return ICloudVisibleEvent(
@@ -404,7 +411,7 @@ def _parse_ical_datetime(value: str, params: dict[str, str]) -> datetime | None:
         return None
 
     value_kind = str(params.get("VALUE") or "").upper()
-    tzid = str(params.get("TZID") or "").strip()
+    tzid = str(params.get("TZID") or "").strip().strip('"').strip("'")
 
     if value_kind == "DATE" or (len(raw) == 8 and raw.isdigit()):
         try:
@@ -415,7 +422,10 @@ def _parse_ical_datetime(value: str, params: dict[str, str]) -> datetime | None:
             try:
                 return local_dt.replace(tzinfo=ZoneInfo(tzid)).astimezone(timezone.utc)
             except Exception:
-                return local_dt.replace(tzinfo=timezone.utc)
+                try:
+                    return local_dt.replace(tzinfo=ZoneInfo(tzid.lstrip("/"))).astimezone(timezone.utc)
+                except Exception:
+                    return local_dt.replace(tzinfo=timezone.utc)
         return local_dt.replace(tzinfo=timezone.utc)
 
     if raw.endswith("Z"):
@@ -433,7 +443,63 @@ def _parse_ical_datetime(value: str, params: dict[str, str]) -> datetime | None:
             try:
                 return local_dt.replace(tzinfo=ZoneInfo(tzid)).astimezone(timezone.utc)
             except Exception:
-                return local_dt.replace(tzinfo=timezone.utc)
+                try:
+                    return local_dt.replace(tzinfo=ZoneInfo(tzid.lstrip("/"))).astimezone(timezone.utc)
+                except Exception:
+                    return local_dt.replace(tzinfo=timezone.utc)
         return local_dt.replace(tzinfo=timezone.utc)
 
     return None
+
+
+def _parse_ical_duration(raw_value: str) -> timedelta | None:
+    raw = (raw_value or "").strip().upper()
+    if not raw:
+        return None
+    sign = 1
+    if raw.startswith("-"):
+        sign = -1
+        raw = raw[1:]
+    elif raw.startswith("+"):
+        raw = raw[1:]
+    if not raw.startswith("P"):
+        return None
+    raw = raw[1:]
+
+    if "T" in raw:
+        date_part, time_part = raw.split("T", 1)
+    else:
+        date_part, time_part = raw, ""
+
+    def _extract(part: str, allowed: set[str]) -> dict[str, int] | None:
+        if not part:
+            return {}
+        pos = 0
+        out: dict[str, int] = {}
+        for match in re.finditer(r"(\d+)([A-Z])", part):
+            if match.start() != pos:
+                return None
+            token = match.group(2)
+            if token not in allowed:
+                return None
+            out[token] = out.get(token, 0) + int(match.group(1))
+            pos = match.end()
+        if pos != len(part):
+            return None
+        return out
+
+    date_values = _extract(date_part, {"W", "D"})
+    if date_values is None:
+        return None
+    time_values = _extract(time_part, {"H", "M", "S"})
+    if time_values is None:
+        return None
+
+    duration = timedelta(
+        weeks=int(date_values.get("W", 0)),
+        days=int(date_values.get("D", 0)),
+        hours=int(time_values.get("H", 0)),
+        minutes=int(time_values.get("M", 0)),
+        seconds=int(time_values.get("S", 0)),
+    )
+    return duration * sign

@@ -120,7 +120,8 @@ class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("💼 <b>10:00–10:30</b> • Дейли", text)
         self.assertIn("🏡 <b>19:00–20:00</b> • Спортзал", text)
         self.assertIn("📅 <b>21:00–22:00</b> • Созвон", text)
-        self.assertIn("… ещё 1", text)
+        self.assertIn("🏡 <b>23:00–00:00</b> • Ужин", text)
+        self.assertNotIn("… ещё", text)
 
     async def test_today_screen_shows_calendar_unavailable_fallback(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=103), bot=SimpleNamespace())
@@ -137,6 +138,38 @@ class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
         text = render.await_args.kwargs["text"]
         self.assertIn("Событий: 0", text)
         self.assertIn("События временно недоступны", text)
+
+    async def test_today_screen_shows_partial_calendar_warning_with_events(self) -> None:
+        message = SimpleNamespace(chat=SimpleNamespace(id=104), bot=SimpleNamespace())
+        pool = _Pool(_Conn())
+        icloud = SimpleNamespace(
+            list_events=AsyncMock(
+                side_effect=[
+                    [
+                        SimpleNamespace(
+                            calendar_url="work://calendar",
+                            summary="Планерка",
+                            dtstart_utc=datetime(2026, 3, 18, 8, 0, tzinfo=timezone.utc),
+                            dtend_utc=datetime(2026, 3, 18, 8, 30, tzinfo=timezone.utc),
+                            uid="w1",
+                        )
+                    ],
+                    RuntimeError("calendar offline"),
+                ]
+            )
+        )
+
+        with (
+            patch("bot.ui.screens._pop_screen_toast", AsyncMock(return_value=None)),
+            patch("bot.ui.screens.os.getenv", side_effect=lambda key: {"ICLOUD_CALENDAR_URL_WORK": "work://calendar", "ICLOUD_CALENDAR_URL_PERSONAL": "personal://calendar"}.get(key, "")),
+            patch("bot.ui.screens.ui_render", AsyncMock(return_value=1)) as render,
+        ):
+            await ui_render_today(message, pool, tz_name="Europe/Moscow", page=0, icloud=icloud)
+
+        text = render.await_args.kwargs["text"]
+        self.assertIn("Событий: 1", text)
+        self.assertIn("💼 <b>11:00–11:30</b> • Планерка", text)
+        self.assertIn("Часть календарей временно недоступна. Показаны не все события.", text)
 
 
 if __name__ == "__main__":

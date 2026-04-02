@@ -1390,7 +1390,7 @@ async def _fetch_today_calendar_block(
     )
 
     unavailable = False
-    merged: dict[str, ICloudVisibleEvent] = {}
+    merged: dict[tuple[str, str, datetime], ICloudVisibleEvent] = {}
     for idx, result in enumerate(results):
         if isinstance(result, Exception):
             unavailable = True
@@ -1402,15 +1402,16 @@ async def _fetch_today_calendar_block(
             continue
         logger.info(f"Calendar {idx}: received {len(result)} events from {calendar_urls[idx] if idx < len(calendar_urls) else 'unknown'}")
         for event in result:
-            # Дедупликация только по uid (или уникальной комбинации)
-            # Если uid нет, используем summary+время для уникальности
-            # Убрали calendar_url из ключа, чтобы из одного календаря могли показываться все события
-            uid_key = event.uid if event.uid else f"{event.summary}|{event.dtstart_utc.isoformat()}|{event.dtend_utc.isoformat()}"
-            key = uid_key
-            logger.info(f"Event: summary='{event.summary}', uid='{event.uid}', key='{key}', calendar='{event.calendar_url}'")
-            if key in merged:
-                logger.warning(f"Duplicate key '{key}' - replacing event '{merged[key].summary}' with '{event.summary}'")
-            merged[key] = event
+            identity = (event.uid or event.summary or "").strip().lower() or "no-id"
+            key = (event.calendar_url, identity, event.dtstart_utc)
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = event
+                continue
+            existing_duration = existing.dtend_utc - existing.dtstart_utc
+            candidate_duration = event.dtend_utc - event.dtstart_utc
+            if candidate_duration > existing_duration:
+                merged[key] = event
     logger.info(f"After deduplication: {len(merged)} unique events")
     events = tuple(sorted(merged.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower())))
     return _TodayCalendarBlock(events=events, unavailable=unavailable)
@@ -1521,7 +1522,7 @@ async def ui_render_today(
 
         if events:
             parts.extend(["", "<b>📅 События</b>"])
-            for event_row in events[:3]:
+            for event_row in events:
                 icon = _event_calendar_icon(
                     str(event_row.get("calendar_url") or ""),
                     work_calendar_url=work_calendar_url,
@@ -1536,10 +1537,11 @@ async def ui_render_today(
                 else:
                     time_range = "—"
                 parts.append(f"{icon} <b>{h(time_range)}</b> • {h(str(event_row.get('summary') or 'Без названия'))}")
-            if total_events > 3:
-                parts.append(f"… ещё {total_events - 3}")
-        elif calendar_block.unavailable:
-            parts.extend(["", "<b>📅 События</b>", "<i>События временно недоступны.</i>"])
+        if calendar_block.unavailable:
+            if events:
+                parts.append("<i>⚠️ Часть календарей временно недоступна. Показаны не все события.</i>")
+            else:
+                parts.extend(["", "<b>📅 События</b>", "<i>События временно недоступны.</i>"])
 
         if tasks:
             parts.extend(["", "<i>Нажмите на задачу ниже, чтобы открыть карточку.</i>"])

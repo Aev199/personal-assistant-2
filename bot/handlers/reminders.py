@@ -60,8 +60,19 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
         parts = (callback.data or "").split(":")
         val = parts[2]
         rem_id = int(parts[3])
-        page = max(0, int(parts[4])) if len(parts) >= 5 and parts[4].isdigit() else 0
-        action_token = parts[5] if len(parts) >= 6 else f"page-{page}"
+        from_alert_message = False
+        page = 0
+        action_token = ""
+        if len(parts) >= 5:
+            slot = str(parts[4] or "").strip()
+            if slot.isdigit():
+                page = max(0, int(slot))
+                action_token = parts[5] if len(parts) >= 6 else f"page-{page}"
+            else:
+                from_alert_message = True
+                action_token = slot
+        if not action_token:
+            action_token = "alert" if from_alert_message else f"page-{page}"
     except Exception:
         return await callback.answer("Ошибка", show_alert=True)
 
@@ -143,16 +154,20 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
         await ui_set_state(conn, int(callback.message.chat.id), ui_payload=payload)
 
     await callback.answer(f"⏸ Отложено на {snooze_text}")
-    from bot.ui.screens import ui_render_reminders
+    from bot.handlers.nav import _rerender_current_screen
 
-    await ui_render_reminders(
+    final_id = await _rerender_current_screen(
         callback.message,
         db_pool,
-        tz_name=deps.tz_name,
-        page=page,
-        selected_reminder_id=None,
-        preferred_message_id=callback.message.message_id,
+        deps=deps,
+        preferred_message_id=None,
     )
+
+    # Reminder popup should not become the primary SPA surface.
+    if from_alert_message:
+        callback_msg_id = int(getattr(callback.message, "message_id", 0) or 0)
+        if callback_msg_id and callback_msg_id != int(final_id or 0):
+            await try_delete_user_message(callback.message)
 
 
 async def cb_cancel_reminder(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:

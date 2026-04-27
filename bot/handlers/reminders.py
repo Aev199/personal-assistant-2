@@ -97,14 +97,26 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
             return await callback.answer("Напоминание не найдено", show_alert=True)
 
         now_utc = datetime.now(timezone.utc)
+        tz = ZoneInfo(resolve_tz_name(deps.tz_name or "Europe/Moscow"))
+        now_local = now_utc.astimezone(tz)
         if val == "tom":
-            tz = ZoneInfo(resolve_tz_name(deps.tz_name or "Europe/Moscow"))
-            dt = now_utc.astimezone(tz) + timedelta(days=1)
-            new_time_local = dt.replace(hour=deps.config.bot.default_deadline_hour, minute=0, second=0, microsecond=0)
+            dt = now_local + timedelta(days=1)
+            new_time_local = dt.replace(hour=9, minute=0, second=0, microsecond=0)
             new_time = new_time_local.astimezone(timezone.utc)
-            snooze_text = "завтра"
+            snooze_text = "завтра 09:00"
+        elif val == "at18":
+            new_time_local = now_local.replace(hour=18, minute=0, second=0, microsecond=0)
+            if new_time_local <= now_local:
+                new_time_local = new_time_local + timedelta(days=1)
+                snooze_text = "завтра 18:00"
+            else:
+                snooze_text = "сегодня 18:00"
+            new_time = new_time_local.astimezone(timezone.utc)
         else:
-            mins = int(val)
+            try:
+                mins = int(val)
+            except Exception:
+                return await callback.answer("Неверный вариант отложки", show_alert=True)
             new_time = now_utc + timedelta(minutes=mins)
             if mins >= 60:
                 hours = mins // 60

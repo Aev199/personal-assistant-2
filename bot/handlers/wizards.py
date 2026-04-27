@@ -912,7 +912,15 @@ async def create_task_from_wizard(
     await safe_edit(
         msg,
         f"✅ Задача создана: <b>{h(proj['code'])}</b> | <b>{h(tm_name)}</b>\n<i>[ID:{task_id}]</i> {h(title)}",
-        reply_markup=back_home_kb(),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="↻ Ещё задача", callback_data=f"add:task:{int(project_id)}"),
+                    InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"),
+                ],
+                [InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")],
+            ]
+        ),
         parse_mode="HTML",
     )
 

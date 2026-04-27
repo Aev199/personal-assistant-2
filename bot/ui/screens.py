@@ -973,8 +973,9 @@ async def ui_render_reminders(
                 ])
                 kb.append([
                     InlineKeyboardButton(text="⏸ 15м", callback_data=f"rem:snooze:15:{rid}:{int(page or 0)}"),
-                    InlineKeyboardButton(text="⏸ 3ч", callback_data=f"rem:snooze:180:{rid}:{int(page or 0)}"),
-                    InlineKeyboardButton(text="⏳ Завтра", callback_data=f"rem:snooze:tom:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="⏸ 1ч", callback_data=f"rem:snooze:60:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="🕕 18:00", callback_data=f"rem:snooze:at18:{rid}:{int(page or 0)}"),
+                    InlineKeyboardButton(text="⏳ Завтра 9:00", callback_data=f"rem:snooze:tom:{rid}:{int(page or 0)}"),
                 ])
 
     if max_page > 0:

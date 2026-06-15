@@ -249,7 +249,7 @@ async def cmd_start(message: Message, state: FSMContext, db_pool: asyncpg.Pool, 
         await state.clear()
         
     await try_delete_user_message(message)
-    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
+    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True, llm_online=getattr(deps, 'llm_online', True))
     
     if recovered:
         from bot.ui.render import ui_safe_wizard_render
@@ -299,7 +299,7 @@ async def cmd_menu(message: Message, state: FSMContext, db_pool: asyncpg.Pool, d
         await state.clear()
         
     await try_delete_user_message(message)
-    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
+    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True, llm_online=getattr(deps, 'llm_online', True))
     
     if recovered:
         from bot.ui.render import ui_safe_wizard_render
@@ -785,7 +785,7 @@ async def msg_home_button(message: Message, state: FSMContext, db_pool: asyncpg.
     )
     await state.clear()
     await try_delete_user_message(message)
-    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True)
+    anchor_sent = await ensure_main_menu(message, db_pool, recreate=True, llm_online=getattr(deps, 'llm_online', True))
     final_id = await ui_render_home(
         message,
         db_pool,
@@ -1143,9 +1143,9 @@ def register(dp: Dispatcher) -> None:
     dp.message.register(cmd_menu, Command("menu"))
     dp.message.register(cmd_tz, Command("tz"))
     dp.message.register(cmd_help, Command("help"))
-    dp.message.register(msg_undo_last, StateFilter(None), lambda m: m.text and canon(m.text) in {"undo", "отмени", "отмени последнее"})
+    dp.message.register(msg_undo_last, StateFilter(None), lambda m: m.text and canon(m.text) in {"undo", "отмени", "отмени последнее", "↩️ отмена"})
     dp.message.register(cmd_add_menu, lambda m: m.text and canon(m.text) in {"добавить", "➕ добавить"})
-    dp.message.register(cmd_help_button_router, lambda m: m.text and canon(m.text) in {"help", "помощь"})
+    dp.message.register(cmd_help_button_router, lambda m: m.text and canon(m.text) in {"help", "помощь", "⚠️ ии офлайн"})
 
     dp.callback_query.register(cb_sync_status, F.data == "sync:status")
     dp.callback_query.register(cb_sync_retry, F.data == "sync:retry")

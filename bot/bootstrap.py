@@ -102,11 +102,6 @@ def build_core(
         llm_model=os.getenv("GEMINI_LLM_MODEL", "gemini-3.1-flash-lite-preview"),
         transcribe_model=os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.1-flash-lite-preview"),
         timeout_sec=int(os.getenv("GEMINI_TIMEOUT_SEC", "45")),
-	fallback_models=[
-           os.getenv("GEMINI_FALLBACK_1", "gemini-3-flash-preview"),
-           os.getenv("GEMINI_FALLBACK_2", "gemini-2.5-flash"),
-           os.getenv("GEMINI_FALLBACK_3", "gemini-2.5-flash-lite"),
-	],
     )
 
     deps = AppDeps(

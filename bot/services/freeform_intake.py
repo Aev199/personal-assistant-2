@@ -10,7 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TypeVar
+from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
 
 import asyncpg
@@ -796,6 +796,536 @@ def _intake_system_prompt(
     )
 
 
+def _intake_system_prompt_batch(
+    *,
+    now_local: datetime,
+    tz_name: str,
+    current_project_code: str | None,
+    projects: list[ProjectOption],
+    team: list[TeamOption],
+) -> str:
+    project = current_project_code or "INBOX"
+    project_lines = "\n".join(f"- {item.code}: {item.name}" for item in projects[:80]) or "- INBOX: Inbox"
+    team_lines = "\n".join(f"- {item.name}" for item in team[:80]) or "- none"
+    return (
+        "You are a personal task assistant router. "
+        "The user sent a message that may contain MULTIPLE independent items "
+        "(tasks, events, reminders, ideas, personal tasks). "
+        "Break each item into a separate entry in the 'actions' array. "
+        "If the message contains only one actionable item, return an array with one element. "
+        "If nothing is actionable, return an empty actions array and a short reply explaining why.\n\n"
+        "Return JSON only, without markdown.\n"
+        f"User local time: {now_local.strftime('%Y-%m-%d %H:%M')} ({tz_name}). "
+        f"Current project: {project}.\n\n"
+        "Each action object must have:\n"
+        "- action: one of task, personal_task, reminder, event, idea\n"
+        "- title: concise title (for tasks/events/personal tasks; for reminders use reminder_text; for ideas use idea_text)\n\n"
+        "For action=task include:\n"
+        "- deadline_local: YYYY-MM-DD HH:MM or null\n"
+        "- project_code: exact code from AVAILABLE_PROJECTS or null\n"
+        "- project_name: name if uncertain about code; else null\n"
+        "- assignee_name: person name from AVAILABLE_TEAM or null\n\n"
+        "For action=personal_task include:\n"
+        "- deadline_local: YYYY-MM-DD HH:MM or null\n\n"
+        "For action=reminder include:\n"
+        "- title (used as reminder_text)\n"
+        "- remind_at_local: YYYY-MM-DD HH:MM\n\n"
+        "For action=event include:\n"
+        "- calendar_kind: work or personal\n"
+        "- start_at_local: YYYY-MM-DD HH:MM\n"
+        "- duration_min: integer minutes\n"
+        "- project_code/project_name only for work events\n\n"
+        "For action=idea include:\n"
+        "- title (used as idea_text)\n\n"
+        "Rules:\n"
+        "- Prefer reminder when the user explicitly asks to remind.\n"
+        "- Prefer event for meetings, calls, appointments, calendar bookings.\n"
+        "- Prefer idea for thoughts, concepts, brainstorm items without a deadline.\n"
+        "- Prefer personal_task for personal todos, errands, purchases, household tasks.\n"
+        "- Prefer task for actionable work items.\n"
+        "- Never invent project codes or team members outside the provided lists.\n"
+        "- If a field is not applicable, omit it or set to null.\n"
+        "- Keep the 'reply' field under 200 characters, summarizing what was created.\n\n"
+        "AVAILABLE_PROJECTS:\n"
+        f"{project_lines}\n\n"
+        "AVAILABLE_TEAM:\n"
+        f"{team_lines}"
+    )
+
+
+def _is_complex_message(text: str) -> bool:
+    """Detect if a message likely contains multiple independent intents.
+
+    Heuristics:
+    - Numbered list (1. 2. 3.) with at least 2 items
+    - Multiple substantial sentences (split by ., ;, \\n) AND
+      at least 2 different action-type keywords across sentences
+    - OR 3+ substantial sentences (likely a list)
+    """
+    t = _clean(text)
+    if len(t) < 50:
+        return False
+
+    # Check for numbered list pattern (at least 2 items)
+    if len(re.findall(r"(?:^|\n)\s*\d+[\.\)]\s+", t)) >= 2:
+        return True
+
+    # Split into substantial sentences (min 15 chars)
+    sentences = [s.strip() for s in re.split(r"[.;\n]+", t) if len(s.strip()) > 15]
+    if len(sentences) < 2:
+        return False
+
+    if len(sentences) >= 3:
+        return True
+
+    # Exactly 2 sentences — check for different action types
+    action_keywords: dict[str, str] = {
+        "напомни": "reminder", "remind": "reminder",
+        "задача": "task", "task": "task", "сделай": "task", "поставь": "task",
+        "встреча": "event", "meeting": "event", "созвон": "event", "звонок": "event",
+        "идея": "idea", "idea": "idea",
+        "личное": "personal_task", "personal": "personal_task",
+        "купи": "personal_task", "buy": "personal_task", "купить": "personal_task",
+    }
+    found_actions: set[str] = set()
+    for sentence in sentences:
+        lower = canon(sentence)
+        for kw, act in action_keywords.items():
+            if kw in lower:
+                found_actions.add(act)
+    if len(found_actions) >= 2:
+        return True
+
+    # Same action type but different entities (projects, people) → complex
+    # Match project-like codes: K-17, OPS, PRJ-42, INBOX
+    project_code_re = re.compile(r"\b[A-Z]{1,6}[-_]?\d+\b|\b[A-Z]{2,6}\b")
+    codes_per_sentence = [
+        set(project_code_re.findall(s)) for s in sentences
+    ]
+    if codes_per_sentence[0] and codes_per_sentence[1] and codes_per_sentence[0] != codes_per_sentence[1]:
+        return True
+
+    return False
+
+
+def _normalize_batch_payloads(raw_response: dict[str, Any]) -> tuple[list[IntakeIntent], str]:
+    """Convert batch classification response into a list of IntakeIntent + reply."""
+    actions_data = raw_response.get("actions") or []
+    if not isinstance(actions_data, list):
+        actions_data = []
+    reply = _clean(raw_response.get("reply") or "")
+    intents: list[IntakeIntent] = []
+    for item in actions_data:
+        if not isinstance(item, dict):
+            continue
+        # Add dummy reply for normalize compatibility; batch items don't have individual reply
+        item = dict(item)
+        item.setdefault("reply", "")
+        intent = _normalize_intake_payload(item)
+        if intent.action != "reply":
+            intents.append(intent)
+    return intents, reply
+
+
+def _plural(count: int, one: str, few: str, many: str) -> str:
+    n = count % 100
+    if 11 <= n <= 19:
+        return many
+    n = n % 10
+    if n == 1:
+        return one
+    if 2 <= n <= 4:
+        return few
+    return many
+
+
+async def _send_batch_summary(message: Message, count: int) -> None:
+    """Send a one-tap 'Confirm All' card after a batch of individual drafts."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    word = _plural(count, "черновик", "черновика", "черновиков")
+    text = f"📋 {count} {word} выше — всё верно?"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"✅ Подтвердить всё ({count})", callback_data="llm:batch_confirm"),
+    ]])
+    try:
+        await message.answer(text, reply_markup=kb)
+    except Exception:
+        pass
+
+
+async def _handle_batch_intents(
+    message: Message,
+    *,
+    deps: AppDeps,
+    db_pool: asyncpg.Pool,
+    state: FSMContext | None,
+    text: str,
+    source: str,
+    prepend_text: str | None,
+    tz: ZoneInfo,
+    tz_name: str,
+    current_project_id: int | None,
+    current_project_code: str | None,
+    projects: list[ProjectOption],
+    team: list[TeamOption],
+    persona_mode: str,
+    followup_data: dict[str, object],
+    action_hint: str | None,
+) -> bool:
+    """Handle a complex message by batch-classifying into multiple intents."""
+    llm = deps.llm
+    if llm is None:
+        return False
+
+    try:
+        user_prompt = _build_classification_user_prompt(
+            raw_text=text,
+            prepend_text=prepend_text,
+            followup_data=followup_data,
+        )
+        response = await llm.classify_intake_batch(
+            system_prompt=_intake_system_prompt_batch(
+                now_local=datetime.now(tz),
+                tz_name=tz_name,
+                current_project_code=current_project_code,
+                projects=projects,
+                team=team,
+            ),
+            user_prompt=user_prompt,
+        )
+        intents, batch_reply = _normalize_batch_payloads(response)
+    except Exception:
+        logger.exception("batch classify failed, falling back to single classify")
+        return False  # fallback to single-intent handler will retry
+
+    if not intents:
+        # Nothing actionable found — show reply as toast
+        toast = batch_reply or "Не смог выделить конкретные действия. Уточните запрос."
+        await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+        await _rerender_with_toast(message, db_pool, deps, toast)
+        return True
+
+    # Process each intent sequentially through the same pending-preview pipeline
+    processed_count = 0
+    errors: list[str] = []
+
+    for idx, intent in enumerate(intents):
+        try:
+            ok = await _execute_pending_intent(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                intent=intent,
+                text=text,
+                source=f"{source}.batch{idx}",
+                prepend_text=prepend_text,
+                tz=tz,
+                tz_name=tz_name,
+                current_project_id=current_project_id,
+                current_project_code=current_project_code,
+                projects=projects,
+                team=team,
+                persona_mode=persona_mode,
+                followup_data=followup_data,
+                action_hint=action_hint,
+            )
+            if ok:
+                processed_count += 1
+        except Exception:
+            logger.exception("batch intent %d failed", idx)
+            errors.append(intent.title or intent.reminder_text or intent.idea_text or f"#{idx + 1}")
+
+    # ── Tidy up ──
+    await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+
+    # Summary card: one-tap confirm for the whole batch
+    if processed_count > 0:
+        await _send_batch_summary(message, processed_count)
+
+    # Only signal errors that the user needs to know about.
+
+    if processed_count > 0 and errors:
+        await _rerender_with_toast(
+            message, db_pool, deps,
+            f"⚠️ {processed_count} черновиков создано, {len(errors)} не удалось: {', '.join(errors[:3])}",
+        )
+        return True
+
+    if not processed_count and errors:
+        await _rerender_with_toast(
+            message, db_pool, deps,
+            f"❌ Не удалось обработать: {', '.join(errors[:5])}",
+        )
+        return True
+
+    if not processed_count and not errors:
+        await _rerender_with_toast(
+            message, db_pool, deps,
+            batch_reply or "Не удалось создать черновики.",
+        )
+        return True
+
+    return True
+
+
+async def _execute_pending_intent(
+    message: Message,
+    *,
+    deps: AppDeps,
+    db_pool: asyncpg.Pool,
+    state: FSMContext | None,
+    intent: IntakeIntent,
+    text: str,
+    source: str,
+    prepend_text: str | None,
+    tz: ZoneInfo,
+    tz_name: str,
+    current_project_id: int | None,
+    current_project_code: str | None,
+    projects: list[ProjectOption],
+    team: list[TeamOption],
+    persona_mode: str,
+    followup_data: dict[str, object],
+    action_hint: str | None,
+) -> bool:
+    """Execute a single intake intent: validate, resolve references, create pending preview.
+
+    Returns True if a draft was successfully created or handled.
+    Returns False if the intent is incomplete (needs followup — skipped in batch mode).
+    """
+    if intent.needs_followup:
+        return False
+
+    action = intent.action
+
+    if action == "task":
+        if is_solo_mode(persona_mode):
+            intent.assignee_name = None
+        deadline_local = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
+
+        async with db_pool.acquire() as conn:
+            project_id, project_code, project_error = await _resolve_project(
+                conn,
+                requested_code=intent.project_code,
+                requested_name=intent.project_name,
+                raw_text=text,
+                current_project_id=current_project_id,
+                projects=projects,
+            )
+        if project_error or project_id is None:
+            return False
+
+        assignee_id, assignee_name, assignee_error = _resolve_assignee(
+            requested_name=intent.assignee_name,
+            raw_text=text,
+            team=team,
+        )
+        if assignee_error and not is_solo_mode(persona_mode):
+            return False
+
+        task_fingerprint = _llm_fingerprint(
+            "task", title=intent.title, project_id=int(project_id),
+            assignee_id=assignee_id, deadline=deadline_local,
+        )
+        duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), task_fingerprint)
+        if duplicate:
+            return False
+
+        await create_pending_preview(
+            message, db_pool=db_pool, deps=deps, kind="task",
+            payload={
+                "title": intent.title,
+                "project_id": int(project_id),
+                "project_code": project_code,
+                "assignee_id": assignee_id,
+                "assignee_name": assignee_name,
+                "deadline_local": deadline_local.isoformat() if deadline_local else "",
+            },
+            fingerprint=task_fingerprint, summary=intent.title, source=source,
+        )
+        return True
+
+    if action == "personal_task":
+        gtasks = getattr(deps, "gtasks", None)
+        if gtasks is None or not gtasks.enabled():
+            return False
+        due_local = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
+
+        personal_fingerprint = _llm_fingerprint("personal_task", title=intent.title, due=due_local)
+        duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), personal_fingerprint)
+        if duplicate:
+            return False
+
+        await create_pending_preview(
+            message, db_pool=db_pool, deps=deps, kind="personal_task",
+            payload={"title": intent.title, "deadline_local": due_local.isoformat() if due_local else ""},
+            fingerprint=personal_fingerprint, summary=intent.title, source=source,
+        )
+        return True
+
+    if action == "event":
+        start_local = _parse_local_dt(intent.start_at_local, tz_name)
+        if start_local is None:
+            return False
+        duration_min = _parse_duration_min(intent.duration_min)
+        if duration_min is None:
+            return False
+        if start_local <= datetime.now(tz):
+            return False
+        if not (os.getenv("ICLOUD_APPLE_ID", "").strip() and os.getenv("ICLOUD_APP_PASSWORD", "").strip()):
+            return False
+
+        kind = intent.calendar_kind or "personal"
+        if kind == "work":
+            cal_url = os.getenv("ICLOUD_CALENDAR_URL_WORK", "").strip()
+        else:
+            cal_url = os.getenv("ICLOUD_CALENDAR_URL_PERSONAL", "").strip()
+        if not cal_url:
+            return False
+
+        project_id: int | None = None
+        project_code: str | None = None
+        if kind == "work":
+            async with db_pool.acquire() as conn:
+                project_id, project_code, project_error = await _resolve_project(
+                    conn,
+                    requested_code=intent.project_code,
+                    requested_name=intent.project_name,
+                    raw_text=text,
+                    current_project_id=current_project_id,
+                    projects=projects,
+                )
+            if project_error or project_id is None:
+                return False
+
+        summary = _event_summary(kind, intent.title, project_code)
+        dtstart_utc = start_local.astimezone(timezone.utc)
+        event_fingerprint = _llm_fingerprint(
+            "event", kind=kind, title=intent.title,
+            project_id=project_id, start=dtstart_utc, duration_min=duration_min,
+        )
+        duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), event_fingerprint)
+        if duplicate:
+            return False
+
+        await create_pending_preview(
+            message, db_pool=db_pool, deps=deps, kind="event",
+            payload={
+                "title": intent.title, "calendar_kind": kind,
+                "calendar_url": cal_url, "summary": summary,
+                "start_local": start_local.isoformat(),
+                "duration_min": int(duration_min),
+                "project_id": int(project_id) if project_id else None,
+                "project_code": project_code,
+            },
+            fingerprint=event_fingerprint, summary=summary, source=source,
+        )
+        return True
+
+    if action == "idea":
+        gtasks = getattr(deps, "gtasks", None)
+        if gtasks is None or not gtasks.enabled():
+            return False
+        idea_fingerprint = _llm_fingerprint("idea", idea_text=intent.idea_text)
+        duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), idea_fingerprint)
+        if duplicate:
+            return False
+        await create_pending_preview(
+            message, db_pool=db_pool, deps=deps, kind="idea",
+            payload={"idea_text": intent.idea_text},
+            fingerprint=idea_fingerprint, summary=intent.idea_text, source=source,
+        )
+        return True
+
+    if action == "reminder":
+        remind_local = _parse_local_dt(intent.remind_at_local, tz_name)
+        if remind_local is None:
+            return False
+        if remind_local <= datetime.now(tz):
+            return False
+        reminder_fingerprint = _llm_fingerprint("reminder", text=intent.reminder_text, remind_at=remind_local)
+        duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), reminder_fingerprint)
+        if duplicate:
+            return False
+        await create_pending_preview(
+            message, db_pool=db_pool, deps=deps, kind="reminder",
+            payload={"reminder_text": intent.reminder_text, "remind_at_local": remind_local.isoformat()},
+            fingerprint=reminder_fingerprint, summary=intent.reminder_text, source=source,
+        )
+        return True
+
+    return False
+
+
+def _quick_capture_eligible(intent: IntakeIntent, text: str, *, action_hint: str | None) -> bool:
+    """Check if intent qualifies for instant execution (no draft).
+
+    Requirements:
+    - Explicit marker prefix in the original message (идея:, личное:, idea:, personal:)
+    - No deadline present
+    - No missing fields
+    """
+    if intent.needs_followup:
+        return False
+    action = intent.action
+    if action not in {"idea", "personal_task"}:
+        return False
+    # Must have explicit marker (user explicitly opted in)
+    if action_hint not in {"idea", "personal_task"}:
+        return False
+    # No deadline in text
+    lowered = canon(text)
+    deadline_markers = (
+        "сегодня", "завтра", "послезавтра", "через", "к ", "в ",
+        "today", "tomorrow", "next", "by ", "due ",
+    )
+    for marker in deadline_markers:
+        if marker in lowered:
+            return False
+    return True
+
+
+async def _execute_quick_capture(
+    message: Message,
+    *,
+    deps: AppDeps,
+    db_pool: asyncpg.Pool,
+    intent: IntakeIntent,
+    source: str,
+) -> bool:
+    """Execute an idea or personal_task immediately, skipping the draft stage."""
+    gtasks = getattr(deps, "gtasks", None)
+    if gtasks is None or not gtasks.enabled():
+        return False
+
+    try:
+        if intent.action == "idea":
+            ideas_list = os.getenv("GTASKS_IDEAS_LIST", "Идеи")
+            list_id = await get_or_create_list_id(db_pool, gtasks, ideas_list)
+            await gtasks.create_task(list_id, title=intent.idea_text or intent.title)
+            await _rerender_with_toast(
+                message, db_pool, deps,
+                f"💡 Идея сохранена: {intent.idea_text or intent.title}",
+            )
+            return True
+
+        if intent.action == "personal_task":
+            personal_list = os.getenv("GTASKS_PERSONAL_LIST", "Личное")
+            list_id = await get_or_create_list_id(db_pool, gtasks, personal_list)
+            await gtasks.create_task(list_id, title=intent.title)
+            await _rerender_with_toast(
+                message, db_pool, deps,
+                f"✅ Личная задача: {intent.title}",
+            )
+            return True
+    except Exception as exc:
+        logger.exception("quick capture failed")
+        return False  # fall through to normal draft flow
+
+    return False
+
+
 async def handle_freeform_text(
     message: Message,
     *,
@@ -807,8 +1337,7 @@ async def handle_freeform_text(
     prepend_text: str | None = None,
 ) -> bool:
     llm = getattr(deps, "llm", None)
-    if llm is None or not getattr(llm, "enabled", False):
-        return False
+    llm_available = llm is not None and getattr(llm, "enabled", False)
 
     followup_data = await _followup_context(state, db_pool=db_pool, chat_id=int(message.chat.id))
     text = _clean(raw_text)
@@ -838,6 +1367,37 @@ async def handle_freeform_text(
             or _clean(followup_data.get("freeform_action_hint")).lower()
             or _clean(_action_hint_from_text(base_text)).lower()
         )
+
+        # ── Batch routing for complex messages ──
+        if (
+            llm_available
+            and not action_hint
+            and not followup_data
+            and _is_complex_message(text)
+            and hasattr(llm, "classify_intake_batch")
+        ):
+            batch_ok = await _handle_batch_intents(
+                message,
+                deps=deps,
+                db_pool=db_pool,
+                state=state,
+                text=text,
+                source=source,
+                prepend_text=prepend_text,
+                tz=tz,
+                tz_name=tz_name,
+                current_project_id=current_project_id,
+                current_project_code=current_project_code,
+                projects=projects,
+                team=team,
+                persona_mode=persona_mode,
+                followup_data=followup_data,
+                action_hint=action_hint,
+            )
+            if batch_ok:
+                return True
+            # Fall through to single-intent classification
+
         if action_hint == "idea":
             intent = _normalize_intake_payload(
                 {
@@ -857,6 +1417,12 @@ async def handle_freeform_text(
         elif action_hint == "reminder":
             intent = _local_explicit_reminder_intent(text, tz_name)
             if intent is None:
+                if not llm_available:
+                    await _rerender_with_toast(
+                        message, db_pool, deps,
+                        "Не смог разобрать дату напоминания. Укажите явно: напомни завтра в 10:00 позвонить.",
+                    )
+                    return True
                 user_prompt = _build_classification_user_prompt(
                     raw_text=text,
                     prepend_text=prepend_text,
@@ -874,6 +1440,13 @@ async def handle_freeform_text(
                 )
                 intent = _normalize_intake_payload(payload)
         else:
+            if not llm_available:
+                await _rerender_with_toast(
+                    message, db_pool, deps,
+                    "🤖 ИИ временно недоступен. Используйте явные маркеры:\n"
+                    "• идея: ...\n• личное: ...\n• напомни ... в ...\n• задача: ...",
+                )
+                return True
             user_prompt = _build_classification_user_prompt(
                 raw_text=text,
                 prepend_text=prepend_text,
@@ -906,6 +1479,15 @@ async def handle_freeform_text(
             pending_action=intent.followup_action,
             missing_fields=intent.missing_fields,
         )
+
+    # ── Quick capture: idea / personal_task without deadline → execute immediately ──
+    if _quick_capture_eligible(intent, text, action_hint=action_hint):
+        quick_ok = await _execute_quick_capture(
+            message, deps=deps, db_pool=db_pool, intent=intent, source=source,
+        )
+        if quick_ok:
+            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
+            return True
 
     if intent.action == "task":
         if is_solo_mode(persona_mode):
@@ -1319,6 +1901,7 @@ async def handle_freeform_voice(
         return True
 
     try:
+        progress_msg = await message.answer("🎙 Распознаю речь…")
         buf = io.BytesIO()
         await message.bot.download(file_id, destination=buf)
         transcript = await llm.transcribe_audio(
@@ -1326,6 +1909,10 @@ async def handle_freeform_voice(
             filename=filename,
             mime_type=mime_type,
         )
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=progress_msg.message_id)
+        except Exception:
+            pass
     except Exception:
         logger.exception("voice transcription failed")
         return False

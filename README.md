@@ -35,6 +35,7 @@ This repo is now wired for a safer `Render Free` deployment model:
 - `GEMINI_LLM_MODEL`
 - `GEMINI_TRANSCRIBE_MODEL`
 - `GEMINI_TIMEOUT_SEC`
+- `GEMINI_FALLBACK_MODELS` (comma-separated, e.g. `gemini-1.5-flash,gemini-2.0-flash-exp`)
 - `GTASKS_PERSONAL_LIST`
 - `GTASKS_IDEAS_LIST`
 - `ICLOUD_APPLE_ID`

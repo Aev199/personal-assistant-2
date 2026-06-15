@@ -61,3 +61,10 @@ class AppDeps:
     # Error handler policy (filled from config/env)
     error_notify_user: bool = True
     error_notify_admin: bool = True
+
+    @property
+    def llm_online(self) -> bool:
+        """True when LLM is configured and circuit breaker is NOT open."""
+        if self.llm is None:
+            return True
+        return not getattr(self.llm, "circuit_open", False)

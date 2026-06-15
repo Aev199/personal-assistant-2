@@ -75,6 +75,7 @@ async def ensure_main_menu(
     *,
     refresh: bool = False,
     recreate: bool = False,
+    llm_online: bool = True,
 ) -> bool:
     """Ensure the persistent bottom reply-keyboard is visible.
 
@@ -114,7 +115,7 @@ async def ensure_main_menu(
                 chat_id=chat_id,
                 message_id=stale_menu_mid,
                 text=_ANCHOR_TEXT_A,
-                reply_markup=main_menu_kb(persona_mode),
+                reply_markup=main_menu_kb(persona_mode, llm_online=llm_online),
             )
             return False
         except TelegramBadRequest as e:
@@ -124,7 +125,7 @@ async def ensure_main_menu(
                         chat_id=chat_id,
                         message_id=stale_menu_mid,
                         text=_ANCHOR_TEXT_B,
-                        reply_markup=main_menu_kb(persona_mode),
+                        reply_markup=main_menu_kb(persona_mode, llm_online=llm_online),
                     )
                     return False
                 except TelegramBadRequest as retry_error:
@@ -138,7 +139,7 @@ async def ensure_main_menu(
             pass
 
     try:
-        anchor = await message.answer(_ANCHOR_TEXT_A, reply_markup=main_menu_kb(persona_mode))
+        anchor = await message.answer(_ANCHOR_TEXT_A, reply_markup=main_menu_kb(persona_mode, llm_online=llm_online))
         async with db_pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO user_settings(chat_id, menu_message_id, updated_at) VALUES($1,$2,NOW()) "

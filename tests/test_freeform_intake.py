@@ -8,8 +8,10 @@ from bot.services.freeform_intake import (
     TeamOption,
     _action_hint_from_text,
     _build_classification_user_prompt,
+    _is_complex_message,
     _match_assignee_option,
     _match_project_option,
+    _normalize_batch_payloads,
     _normalize_intake_payload,
     _resolve_project,
     _start_followup,
@@ -821,6 +823,108 @@ class FreeformIntakeAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(second)
         gtasks.create_task.assert_not_awaited()
         self.assertEqual(rerender.await_count, 1)
+
+
+class BatchIntakeTests(unittest.TestCase):
+    """Tests for multi-intent batch classification and helpers."""
+
+    def test_is_complex_detects_multi_action_message(self) -> None:
+        text = (
+            "Поставь задачу подготовить отчёт к пятнице. "
+            "И ещё напомни завтра в 10 утра позвонить клиенту."
+        )
+        self.assertTrue(_is_complex_message(text))
+
+    def test_is_complex_detects_numbered_list(self) -> None:
+        text = "1. Купить молоко\n2. Позвонить врачу\n3. Подготовить презентацию к среде"
+        self.assertTrue(_is_complex_message(text))
+
+    def test_is_complex_rejects_short_message(self) -> None:
+        self.assertFalse(_is_complex_message("Купить молоко"))
+
+    def test_is_complex_rejects_single_topic_long_message(self) -> None:
+        text = (
+            "Подготовить отчёт по проекту K-17 к пятнице в 18:00 "
+            "с детальным анализом метрик и графиками по всем кварталам"
+        )
+        # Long but single topic — should be False (no different action keywords)
+        self.assertFalse(_is_complex_message(text))
+
+    def test_is_complex_detects_same_action_different_projects(self) -> None:
+        text = (
+            "Поставь задачу подготовить отчёт по K-17 к пятнице. "
+            "И ещё задачу обновить сайт по OPS к среде."
+        )
+        self.assertTrue(_is_complex_message(text))
+
+    def test_is_complex_rejects_same_action_same_project(self) -> None:
+        text = (
+            "Поставь задачу подготовить отчёт по K-17 к пятнице. "
+            "И ещё диаграммы к нему же сделать."
+        )
+        self.assertFalse(_is_complex_message(text))
+
+    def test_is_complex_detects_semicolons(self) -> None:
+        text = "Купить хлеб; напомни завтра в 9 про встречу; идея: автоматизировать деплой"
+        self.assertTrue(_is_complex_message(text))
+
+    def test_is_complex_detects_newlines(self) -> None:
+        text = "Задача: обновить документацию\nВстреча: созвон с командой в 15:00\nИдея: добавить CI/CD"
+        self.assertTrue(_is_complex_message(text))
+
+    def test_normalize_batch_payloads_single_action(self) -> None:
+        raw = {
+            "actions": [
+                {"action": "task", "title": "Send report", "project_code": "OPS"}
+            ],
+            "reply": "Created 1 draft",
+        }
+        intents, reply = _normalize_batch_payloads(raw)
+        self.assertEqual(len(intents), 1)
+        self.assertEqual(intents[0].action, "task")
+        self.assertEqual(intents[0].title, "Send report")
+        self.assertEqual(reply, "Created 1 draft")
+
+    def test_normalize_batch_payloads_multi_action(self) -> None:
+        raw = {
+            "actions": [
+                {"action": "task", "title": "Send report", "project_code": "K-17"},
+                {"action": "event", "title": "1:1 with Alex", "calendar_kind": "work", "start_at_local": "2026-03-12 14:00", "duration_min": 30},
+                {"action": "reminder", "reminder_text": "Call client", "remind_at_local": "2026-03-12 10:00"},
+            ],
+            "reply": "3 items created",
+        }
+        intents, reply = _normalize_batch_payloads(raw)
+        self.assertEqual(len(intents), 3)
+        self.assertEqual(intents[0].action, "task")
+        self.assertEqual(intents[1].action, "event")
+        self.assertEqual(intents[2].action, "reminder")
+        self.assertEqual(reply, "3 items created")
+
+    def test_normalize_batch_payloads_filters_reply_actions(self) -> None:
+        raw = {
+            "actions": [
+                {"action": "task", "title": "Valid task"},
+                {"action": "reply", "reply": "cannot process this"},
+                {"action": "idea", "idea_text": "Valid idea"},
+            ],
+            "reply": "",
+        }
+        intents, _ = _normalize_batch_payloads(raw)
+        self.assertEqual(len(intents), 2)
+        self.assertNotIn("reply", [i.action for i in intents])
+
+    def test_normalize_batch_payloads_empty_actions(self) -> None:
+        raw = {"actions": [], "reply": "Nothing found"}
+        intents, reply = _normalize_batch_payloads(raw)
+        self.assertEqual(len(intents), 0)
+        self.assertEqual(reply, "Nothing found")
+
+    def test_normalize_batch_payloads_missing_actions_key(self) -> None:
+        raw = {"reply": "No actions"}
+        intents, reply = _normalize_batch_payloads(raw)
+        self.assertEqual(len(intents), 0)
+        self.assertEqual(reply, "No actions")
 
 
 if __name__ == "__main__":

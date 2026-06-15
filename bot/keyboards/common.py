@@ -7,14 +7,16 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeybo
 from bot.persona import is_solo_mode
 
 
-def main_menu_kb(persona_mode: str = "lead") -> ReplyKeyboardMarkup:
+def main_menu_kb(persona_mode: str = "lead", *, llm_online: bool = True) -> ReplyKeyboardMarkup:
     """Persistent bottom keyboard: replaces typing commands."""
     last_button = "⚡ В работе" if is_solo_mode(persona_mode) else "👥 Команда"
+    add_button = "➕ Добавить" if llm_online else "⚠️ ИИ офлайн"
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📋 Все задачи")],
             [KeyboardButton(text="📁 Проекты"), KeyboardButton(text="🔔 Напоминания")],
-            [KeyboardButton(text="➕ Добавить"), KeyboardButton(text=last_button)],
+            [KeyboardButton(text=add_button), KeyboardButton(text=last_button)],
+            [KeyboardButton(text="↩️ Отмена")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,

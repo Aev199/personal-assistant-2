@@ -21,6 +21,30 @@ from bot.utils.telegram import fit_telegram_text
 
 logger = logging.getLogger(__name__)
 
+_BREADCRUMBS: dict[str, str] = {
+    "projects": "🏠 › 📁 Проекты",
+    "today": "🏠 › 📅 Сегодня",
+    "overdue": "🏠 › ⚠️ Просрочено",
+    "all_tasks": "🏠 › 📋 Все задачи",
+    "work": "🏠 › 💼 Работа",
+    "inbox": "🏠 › 📥 Inbox",
+    "inbox_triage": "🏠 › 📥 Inbox › 🔄 Разбор",
+    "add": "🏠 › ➕ Добавить",
+    "team": "🏠 › 👥 Команда",
+    "stats": "🏠 › 📊 Статистика",
+    "help": "🏠 › 🛠 Справка",
+    "reminders": "🏠 › 🔔 Напоминания",
+    "secondary": "🏠 › ⋯ Ещё",
+    "global_tails": "🏠 › 🧺 Хвосты",
+    "tails_pick": "🏠 › 🧺 Хвосты",
+    "sync_status": "🏠 › 🔄 Синхронизация",
+    "today_done": "🏠 › ✅ Сделано сегодня",
+}
+
+
+def _screen_breadcrumb(screen: str) -> str:
+    return _BREADCRUMBS.get(screen, "")
+
 
 def _is_editable_fallback(msg: Message | None) -> bool:
     if msg is None:
@@ -76,6 +100,13 @@ async def ui_render(
     - payload can be {} to explicitly clear payload; do not use `payload or ...`
     """
     text = fit_telegram_text(text, parse_mode=parse_mode)
+
+    # ── Breadcrumb ──
+    if screen and screen != "home":
+        crumb = _screen_breadcrumb(screen)
+        if crumb:
+            text = crumb + "\n\n" + text
+
     # Load current UI state once.
     async with db_pool.acquire() as conn:
         state = await ui_get_state(conn, chat_id)

@@ -179,7 +179,61 @@ async def cb_llm_toggle_event_kind(callback: CallbackQuery, db_pool: asyncpg.Poo
     await callback.answer("Тип события переключён")
 
 
+async def cb_llm_confirm_all(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    """Confirm all pending drafts for this chat in one tap."""
+    chat_id = int(callback.message.chat.id)
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id FROM pending_actions
+            WHERE chat_id=$1 AND status='pending'
+            ORDER BY id
+            """,
+            chat_id,
+        )
+        if not rows:
+            await callback.answer("Нет активных черновиков", show_alert=True)
+            return
+
+        # Mark all as confirmed
+        ids = [int(r["id"]) for r in rows]
+        await conn.execute(
+            "UPDATE pending_actions SET status='confirmed', confirmed_at=NOW() WHERE id = ANY($1::bigint[])",
+            ids,
+        )
+
+    # Execute each one
+    ok_count = 0
+    fail_count = 0
+    for pa_id in ids:
+        async with db_pool.acquire() as conn:
+            pending = await get_pending_action(conn, chat_id=chat_id, pending_action_id=pa_id)
+        if not pending:
+            fail_count += 1
+            continue
+        try:
+            await execute_pending_action(pending, db_pool=db_pool, deps=deps, chat_id=chat_id)
+            ok_count += 1
+        except Exception:
+            fail_count += 1
+            async with db_pool.acquire() as conn:
+                await mark_pending_action_status(conn, pending_action_id=pa_id, status="failed", last_error="batch confirm failed")
+
+    await callback.answer()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    toast = f"✅ Выполнено: {ok_count}"
+    if fail_count:
+        toast += f", не удалось: {fail_count}"
+    await _toast_home(callback, db_pool, deps, toast)
+
+
 def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_llm_confirm, F.data.startswith("llm:confirm:"))
     dp.callback_query.register(cb_llm_cancel, F.data.startswith("llm:cancel:"))
     dp.callback_query.register(cb_llm_toggle_event_kind, F.data.startswith("llm:toggle_event_kind:"))
+    dp.callback_query.register(cb_llm_confirm_all, F.data == "llm:batch_confirm")

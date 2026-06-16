@@ -862,7 +862,8 @@ class BatchIntakeTests(unittest.TestCase):
             "Поставь задачу подготовить отчёт по K-17 к пятнице. "
             "И ещё диаграммы к нему же сделать."
         )
-        self.assertFalse(_is_complex_message(text))
+        # Overlap is low (anaphoric reference), but LLM handles it — returns 1 action.
+        self.assertTrue(_is_complex_message(text))
 
     def test_is_complex_detects_semicolons(self) -> None:
         text = "Купить хлеб; напомни завтра в 9 про встречу; идея: автоматизировать деплой"
@@ -871,6 +872,18 @@ class BatchIntakeTests(unittest.TestCase):
     def test_is_complex_detects_newlines(self) -> None:
         text = "Задача: обновить документацию\nВстреча: созвон с командой в 15:00\nИдея: добавить CI/CD"
         self.assertTrue(_is_complex_message(text))
+
+    def test_is_complex_detects_comma_separated_tasks(self) -> None:
+        text = "нужно отсканить свидетельство о рождении для матпомощи, зайти за сметаной"
+        self.assertTrue(_is_complex_message(text))
+
+    def test_is_complex_detects_two_personal_tasks_no_keywords(self) -> None:
+        text = "надо забрать посылку с почты, потом зайти в банк"
+        self.assertTrue(_is_complex_message(text))
+
+    def test_is_complex_rejects_short_comma_list(self) -> None:
+        text = "молоко, хлеб"
+        self.assertFalse(_is_complex_message(text))
 
     def test_normalize_batch_payloads_single_action(self) -> None:
         raw = {

@@ -858,20 +858,21 @@ def _is_complex_message(text: str) -> bool:
 
     Heuristics:
     - Numbered list (1. 2. 3.) with at least 2 items
-    - Multiple substantial sentences (split by ., ;, \\n) AND
-      at least 2 different action-type keywords across sentences
-    - OR 3+ substantial sentences (likely a list)
+    - 3+ substantial sentences (split by .,;\\n) → complex
+    - 2 sentences with different action keywords → complex
+    - 2 sentences with different project codes → complex
+    - 2 sentences with low word overlap (distinct topics) → complex
     """
     t = _clean(text)
-    if len(t) < 50:
+    if len(t) < 30:
         return False
 
     # Check for numbered list pattern (at least 2 items)
     if len(re.findall(r"(?:^|\n)\s*\d+[\.\)]\s+", t)) >= 2:
         return True
 
-    # Split into substantial sentences (min 15 chars)
-    sentences = [s.strip() for s in re.split(r"[.;\n]+", t) if len(s.strip()) > 15]
+    # Split into substantial sentences (min 10 chars — catches short clauses like "зайти за сметаной")
+    sentences = [s.strip() for s in re.split(r"[.,;\n]+", t) if len(s.strip()) > 10]
     if len(sentences) < 2:
         return False
 
@@ -886,6 +887,9 @@ def _is_complex_message(text: str) -> bool:
         "идея": "idea", "idea": "idea",
         "личное": "personal_task", "personal": "personal_task",
         "купи": "personal_task", "buy": "personal_task", "купить": "personal_task",
+        "зайти": "personal_task", "заехать": "personal_task", "забрать": "personal_task",
+        "сходить": "personal_task", "отсканить": "personal_task", "распечатать": "personal_task",
+        "оплатить": "personal_task", "позвонить": "task", "отправить": "task",
     }
     found_actions: set[str] = set()
     for sentence in sentences:
@@ -897,13 +901,24 @@ def _is_complex_message(text: str) -> bool:
         return True
 
     # Same action type but different entities (projects, people) → complex
-    # Match project-like codes: K-17, OPS, PRJ-42, INBOX
     project_code_re = re.compile(r"\b[A-Z]{1,6}[-_]?\d+\b|\b[A-Z]{2,6}\b")
     codes_per_sentence = [
         set(project_code_re.findall(s)) for s in sentences
     ]
     if codes_per_sentence[0] and codes_per_sentence[1] and codes_per_sentence[0] != codes_per_sentence[1]:
         return True
+
+    # Two sentences with low word overlap → distinct topics (last resort)
+    # Only when we have 0-1 action types (otherwise keyword signals are enough).
+    if len(found_actions) <= 1:
+        words0 = set(canon(sentences[0]).split())
+        words1 = set(canon(sentences[1]).split())
+        if words0 and words1:
+            intersection = words0 & words1
+            union = words0 | words1
+            overlap = len(intersection) / len(union) if union else 0
+            if overlap < 0.30:
+                return True
 
     return False
 

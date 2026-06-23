@@ -764,7 +764,9 @@ def _intake_system_prompt(
         f"Current project: {project}.\n"
         "Allowed actions: task, personal_task, reminder, event, idea, reply.\n"
         "For action=task return:\n"
-        "- title: concise actionable task title without assignee/project/deadline boilerplate;\n"
+        "- title: concise actionable task title. "
+        "Do NOT include project name/code in title (it is set via project_code). "
+        "Strip phrases like 'по проекту X', 'для проекта Y', 'в проекте Z' from the title;\n"
         "- deadline_local: YYYY-MM-DD HH:MM or null;\n"
         "- project_code: exact code from AVAILABLE_PROJECTS or null;\n"
         "- project_name: mentioned project name if the user referenced a project but exact code is uncertain; else null;\n"
@@ -821,6 +823,9 @@ def _intake_system_prompt_batch(
         "- action: one of task, personal_task, reminder, event, idea\n"
         "- title: concise title (for tasks/events/personal tasks; for reminders use reminder_text; for ideas use idea_text)\n\n"
         "For action=task include:\n"
+        "- title: concise actionable task title. "
+        "Do NOT include project name/code in the title (it is set via project_code). "
+        "Strip phrases like 'по проекту X', 'для проекта Y' from the title;\n"
         "- deadline_local: YYYY-MM-DD HH:MM or null\n"
         "- project_code: exact code from AVAILABLE_PROJECTS or null\n"
         "- project_name: name if uncertain about code; else null\n"
@@ -1158,6 +1163,7 @@ async def _execute_pending_intent(
                 "deadline_local": deadline_local.isoformat() if deadline_local else "",
             },
             fingerprint=task_fingerprint, summary=intent.title, source=source,
+            force_new=True,
         )
         return True
 
@@ -1176,6 +1182,7 @@ async def _execute_pending_intent(
             message, db_pool=db_pool, deps=deps, kind="personal_task",
             payload={"title": intent.title, "deadline_local": due_local.isoformat() if due_local else ""},
             fingerprint=personal_fingerprint, summary=intent.title, source=source,
+            force_new=True,
         )
         return True
 
@@ -1235,6 +1242,7 @@ async def _execute_pending_intent(
                 "project_code": project_code,
             },
             fingerprint=event_fingerprint, summary=summary, source=source,
+            force_new=True,
         )
         return True
 
@@ -1250,6 +1258,7 @@ async def _execute_pending_intent(
             message, db_pool=db_pool, deps=deps, kind="idea",
             payload={"idea_text": intent.idea_text},
             fingerprint=idea_fingerprint, summary=intent.idea_text, source=source,
+            force_new=True,
         )
         return True
 
@@ -1267,6 +1276,7 @@ async def _execute_pending_intent(
             message, db_pool=db_pool, deps=deps, kind="reminder",
             payload={"reminder_text": intent.reminder_text, "remind_at_local": remind_local.isoformat()},
             fingerprint=reminder_fingerprint, summary=intent.reminder_text, source=source,
+            force_new=True,
         )
         return True
 

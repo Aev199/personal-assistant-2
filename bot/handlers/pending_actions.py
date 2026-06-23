@@ -78,6 +78,11 @@ async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: A
             deps=deps,
             chat_id=int(callback.message.chat.id),
         )
+        # Try to delete the draft message (clean up batch cards)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
     except Exception as exc:
         async with db_pool.acquire() as conn:
             await mark_pending_action_status(

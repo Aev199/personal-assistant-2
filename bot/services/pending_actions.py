@@ -124,6 +124,7 @@ async def create_pending_preview(
     fingerprint: str,
     summary: str,
     source: str,
+    force_new: bool = False,
 ) -> int:
     ttl_sec = max(60, int(os.getenv("PENDING_ACTION_TTL_SEC", "900")))
     async with db_pool.acquire() as conn:
@@ -147,17 +148,22 @@ async def create_pending_preview(
         )
 
     kb = _preview_keyboard(kind, int(pending_action_id), payload)
-    await ui_render(
-        bot=message.bot,
-        db_pool=db_pool,
-        chat_id=int(message.chat.id),
-        text=_preview_text(kind, payload, tz_name=deps.tz_name),
-        reply_markup=kb,
-        screen="llm_draft",
-        payload={"pending_action_id": int(pending_action_id), "kind": kind},
-        fallback_message=message,
-        parse_mode=None,
-    )
+    text = _preview_text(kind, payload, tz_name=deps.tz_name)
+
+    if force_new:
+        await message.answer(text, reply_markup=kb, parse_mode=None)
+    else:
+        await ui_render(
+            bot=message.bot,
+            db_pool=db_pool,
+            chat_id=int(message.chat.id),
+            text=text,
+            reply_markup=kb,
+            screen="llm_draft",
+            payload={"pending_action_id": int(pending_action_id), "kind": kind},
+            fallback_message=message,
+            parse_mode=None,
+        )
     return int(pending_action_id)
 
 

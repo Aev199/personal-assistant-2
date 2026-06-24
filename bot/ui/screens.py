@@ -1428,16 +1428,22 @@ async def _fetch_today_calendar_block(
         key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower()),
     ))
 
-    # Final dedup: if UID and (url+summary+start) didn't catch it,
-    # merge by (summary, dtstart) alone — catches same event with different UIDs
+    # Final dedup: merge by (summary, dtstart) — catches same event with different UIDs
     seen: dict[tuple[str, datetime], ICloudVisibleEvent] = {}
     for event in events:
-        dedup_key = (event.summary.strip().lower(), event.dtstart_utc)
+        summary_norm = (event.summary or "").strip().lower()[:80]
+        dedup_key = (summary_norm, event.dtstart_utc)
         existing = seen.get(dedup_key)
         if existing is None:
             seen[dedup_key] = event
-        elif (event.dtend_utc - event.dtstart_utc) > (existing.dtend_utc - existing.dtstart_utc):
-            seen[dedup_key] = event
+        else:
+            # Keep the one with longer duration
+            logger.info(
+                "dedup-by-summary SKIPPED duplicate | summary=%s dtstart=%s uid=%s",
+                summary_norm, event.dtstart_utc.isoformat(), event.uid,
+            )
+            if (event.dtend_utc - event.dtstart_utc) > (existing.dtend_utc - existing.dtstart_utc):
+                seen[dedup_key] = event
     events = tuple(sorted(seen.values(), key=lambda item: (item.dtstart_utc, item.dtend_utc, item.summary.lower())))
     return _TodayCalendarBlock(events=events, unavailable=unavailable)
 

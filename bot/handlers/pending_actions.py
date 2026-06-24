@@ -36,6 +36,30 @@ async def _toast_home(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppD
     await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name, force_new=False)
 
 
+async def _cleanup_batch_summary_if_done(
+    chat_id: int, bot, db_pool: asyncpg.Pool,
+) -> None:
+    """If no pending drafts remain, delete the batch summary message."""
+    async with db_pool.acquire() as conn:
+        remaining = await conn.fetchval(
+            "SELECT COUNT(*) FROM pending_actions WHERE chat_id=$1 AND status='pending'",
+            chat_id,
+        )
+        if remaining and int(remaining) > 0:
+            return
+        # All done — find and delete batch summary
+        ui_state = await ui_get_state(conn, chat_id)
+        payload = _ui_payload_get(ui_state)
+        summary_msg_id = payload.pop("batch_summary_msg_id", None)
+        if summary_msg_id:
+            await ui_set_state(conn, chat_id, ui_payload=payload)
+    if summary_msg_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=int(summary_msg_id))
+        except Exception:
+            pass
+
+
 async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     await callback.answer()
     try:
@@ -95,6 +119,9 @@ async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: A
         return
 
     await _toast_home(callback, db_pool, deps, toast)
+    await _cleanup_batch_summary_if_done(
+        int(callback.message.chat.id), callback.message.bot, db_pool,
+    )
 
 
 async def cb_llm_cancel(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -105,7 +132,14 @@ async def cb_llm_cancel(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
         return
     async with db_pool.acquire() as conn:
         await mark_pending_action_status(conn, pending_action_id=int(pending_action_id), status="cancelled")
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await _toast_home(callback, db_pool, deps, "✖ Черновик отменён")
+    await _cleanup_batch_summary_if_done(
+        int(callback.message.chat.id), callback.message.bot, db_pool,
+    )
 
 
 async def cb_llm_toggle_event_kind(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -191,7 +225,7 @@ async def cb_llm_confirm_all(callback: CallbackQuery, db_pool: asyncpg.Pool, dep
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id FROM pending_actions
+            SELECT id, source_message_id FROM pending_actions
             WHERE chat_id=$1 AND status='pending'
             ORDER BY id
             """,
@@ -203,10 +237,18 @@ async def cb_llm_confirm_all(callback: CallbackQuery, db_pool: asyncpg.Pool, dep
 
         # Mark all as confirmed
         ids = [int(r["id"]) for r in rows]
+        draft_msg_ids = [int(r["source_message_id"]) for r in rows if r["source_message_id"]]
         await conn.execute(
             "UPDATE pending_actions SET status='confirmed', confirmed_at=NOW() WHERE id = ANY($1::bigint[])",
             ids,
         )
+
+    # Delete individual draft messages
+    for mid in draft_msg_ids:
+        try:
+            await callback.message.bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass
 
     # Execute each one
     ok_count = 0

@@ -869,18 +869,18 @@ def _is_complex_message(text: str) -> bool:
     - 2 sentences with low word overlap (distinct topics) → complex
     """
     t = _clean(text)
-    if len(t) < 30:
-        return False
 
     # Check for numbered list pattern (at least 2 items)
     if len(re.findall(r"(?:^|\n)\s*\d+[\.\)]\s+", t)) >= 2:
         return True
 
-    # Split into substantial sentences (min 10 chars — catches short clauses like "зайти за сметаной")
-    sentences = [s.strip() for s in re.split(r"[.,;\n]+", t) if len(s.strip()) > 10]
+    # Split into substantial sentences (min 8 chars — catches short clauses like "купить хлеб")
+    sentences = [s.strip() for s in re.split(r"[.,;\n]+", t) if len(s.strip()) > 8]
     if len(sentences) < 2:
         return False
 
+    # Short message with multiple substantial sentences → complex regardless of length
+    # (e.g. "купить хлеб, зайти в аптеку" = 26 chars)
     if len(sentences) >= 3:
         return True
 
@@ -959,8 +959,9 @@ def _plural(count: int, one: str, few: str, many: str) -> str:
     return many
 
 
-async def _send_batch_summary(message: Message, count: int) -> None:
-    """Send a one-tap 'Confirm All' card after a batch of individual drafts."""
+async def _send_batch_summary(message: Message, count: int) -> int | None:
+    """Send a one-tap 'Confirm All' card after a batch of individual drafts.
+    Returns the sent message_id, or None on failure."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     word = _plural(count, "черновик", "черновика", "черновиков")
     text = f"📋 {count} {word} выше — всё верно?"
@@ -968,9 +969,10 @@ async def _send_batch_summary(message: Message, count: int) -> None:
         InlineKeyboardButton(text=f"✅ Подтвердить всё ({count})", callback_data="llm:batch_confirm"),
     ]])
     try:
-        await message.answer(text, reply_markup=kb)
+        sent = await message.answer(text, reply_markup=kb)
+        return sent.message_id
     except Exception:
-        pass
+        return None
 
 
 async def _handle_batch_intents(
@@ -1061,7 +1063,13 @@ async def _handle_batch_intents(
 
     # Summary card: one-tap confirm for the whole batch
     if processed_count > 0:
-        await _send_batch_summary(message, processed_count)
+        summary_msg_id = await _send_batch_summary(message, processed_count)
+        if summary_msg_id:
+            async with db_pool.acquire() as conn:
+                ui_state = await ui_get_state(conn, int(message.chat.id))
+                payload = _ui_payload_get(ui_state)
+                payload["batch_summary_msg_id"] = int(summary_msg_id)
+                await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
 
     # Only signal errors that the user needs to know about.
 

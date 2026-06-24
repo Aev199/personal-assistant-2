@@ -151,7 +151,14 @@ async def create_pending_preview(
     text = _preview_text(kind, payload, tz_name=deps.tz_name)
 
     if force_new:
-        await message.answer(text, reply_markup=kb, parse_mode=None)
+        draft_msg = await message.answer(text, reply_markup=kb, parse_mode=None)
+        # Store draft message_id so cleanup handlers can delete it later
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE pending_actions SET source_message_id=$1 WHERE id=$2",
+                int(draft_msg.message_id),
+                int(pending_action_id),
+            )
     else:
         await ui_render(
             bot=message.bot,

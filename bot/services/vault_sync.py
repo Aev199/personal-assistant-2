@@ -44,9 +44,10 @@ async def background_project_sync(
             if not p:
                 return
             tasks = await conn.fetch(
-                "SELECT t.*, COALESCE(tm.name,'—') as assignee "
+                "SELECT t.*, COALESCE(tm.name,'—') as assignee, p.code "
                 "FROM tasks t "
                 "LEFT JOIN team tm ON t.assignee_id = tm.id "
+                "JOIN projects p ON t.project_id = p.id "
                 "WHERE t.project_id = $1 AND t.status != 'done'",
                 project_id,
             )

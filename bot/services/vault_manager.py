@@ -201,6 +201,7 @@ class VaultManager:
             assignee = t.get("assignee") or "—"
             dl = t.get("deadline")
             due = ""
+            priority = ""
             if dl is not None:
                 if getattr(dl, "tzinfo", None) is None:
                     dl = dl.replace(tzinfo=ZoneInfo("UTC"))
@@ -210,9 +211,26 @@ class VaultManager:
                     due = f" 📅 {dl_local.date().isoformat()}"
                     if dl_local.hour != 0 or dl_local.minute != 0:
                         due += f" ⏰ {dl_local.strftime('%H:%M')}"
+                    # Overdue marker
+                    if status == " " and dl_local < datetime.datetime.now(self.tz):
+                        priority = " ⏫"
                 except Exception:
                     due = ""
-            lines.append(f"{indent}- [{status}] {assignee}: {title}{due} (ID: {tid})")
+
+            # Creation date (Obsidian Tasks: ➕ YYYY-MM-DD)
+            created = t.get("created_at")
+            created_str = ""
+            if created is not None:
+                if getattr(created, "tzinfo", None) is None:
+                    created = created.replace(tzinfo=ZoneInfo("UTC"))
+                try:
+                    created_str = f" ➕ {created.astimezone(self.tz).date().isoformat()}"
+                except Exception:
+                    pass
+
+            lines.append(
+                f"{indent}- [{status}] {assignee}: {title}{due}{priority}{created_str} (ID: {tid})"
+            )
             for cid in children.get(tid, []):
                 walk(cid, depth + 1)
 

@@ -367,23 +367,38 @@ async def execute_pending_action(
                 payload["project_id"] = int(inbox_project_id)
                 payload["project_code"] = "INBOX"
                 payload["project_name"] = "INBOX"
-            event_id = int(
-                await conn.fetchval(
-                    """
-                    INSERT INTO icloud_events (
-                        calendar_url, summary, dtstart_utc, dtend_utc,
-                        description, location, sync_status, pending_action_id
-                    )
-                    VALUES ($1, $2, $3, $4, '', '', 'pending', $5)
-                    RETURNING id
-                    """,
-                    str(payload["calendar_url"]),
-                    str(payload["summary"]),
-                    dtstart_utc,
-                    dtend_utc,
-                    int(pending_action_id),
-                )
+
+            # Guard against duplicate event creation
+            existing_event = await conn.fetchval(
+                """
+                SELECT id FROM icloud_events
+                WHERE calendar_url=$1 AND summary=$2 AND dtstart_utc=$3
+                LIMIT 1
+                """,
+                str(payload["calendar_url"]),
+                str(payload["summary"]),
+                dtstart_utc,
             )
+            if existing_event:
+                event_id = int(existing_event)
+            else:
+                event_id = int(
+                    await conn.fetchval(
+                        """
+                        INSERT INTO icloud_events (
+                            calendar_url, summary, dtstart_utc, dtend_utc,
+                            description, location, sync_status, pending_action_id
+                        )
+                        VALUES ($1, $2, $3, $4, '', '', 'pending', $5)
+                        RETURNING id
+                        """,
+                        str(payload["calendar_url"]),
+                        str(payload["summary"]),
+                        dtstart_utc,
+                        dtend_utc,
+                        int(pending_action_id),
+                    )
+                )
             external_uid = f"assistant-event-{event_id}@local"
             ics_url, success = await icloud.create_event(
                 calendar_url=str(payload["calendar_url"]),

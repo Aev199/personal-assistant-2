@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 
 from aiogram import Bot, Dispatcher
-
 from bot.adapters.webdav_adapter import WebDavAdapter
 from bot.config import load_config
 from bot.services.vault_manager import VaultManager
@@ -22,6 +21,7 @@ from bot.adapters.gemini_adapter import GeminiAdapter
 from bot.deps import AppDeps
 from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
 from bot.middlewares.fsm_persistence import FsmPersistenceMiddleware
+from bot.services.product_mode import install_product_mode
 
 from bot.handlers import (
     register_nav,
@@ -58,6 +58,9 @@ def build_core(
     Side effects:
         Stores a single dependency container under ``dp.workflow_data['deps']``.
     """
+    # Install the low-friction runtime behavior after all runtime modules have
+    # been imported, but before the bot starts accepting updates or cron ticks.
+    install_product_mode()
 
     bot = Bot(token=bot_token)
 

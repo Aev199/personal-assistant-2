@@ -8,15 +8,30 @@ This repo is now wired for a safer `Render Free` deployment model:
 - `ADMIN_ID` is mandatory
 - all internal HTTP jobs use `X-Internal-Key`
 - reminders are DB-backed and claimed via a state machine
-- LLM actions are saved as drafts and require explicit confirmation
+- LLM actions are restart-safe and auditable
+- everyday captures use a low-friction execute-first flow with undo
 
 ## Runtime contract
 
 - Single-user only. The bot rejects updates from users other than `ADMIN_ID`.
 - Postgres is the source of truth.
 - Reminders must survive restarts and cold starts.
-- Gemini may propose actions, but it must not execute them directly.
+- Safe free-form actions (`task`, `personal_task`, `reminder`, `idea`) execute immediately.
+- Calendar events still require explicit confirmation.
+- Unknown project references fall back to `INBOX`; unknown assignees become unassigned.
 - `Render Free` is still a compromise platform. Expect delayed delivery under cold starts.
+
+## Low-friction assistant mode
+
+The default runtime is optimized for capture speed rather than form filling:
+
+- send a text or voice message;
+- tasks, ideas, personal tasks, and reminders are saved immediately;
+- use the persistent `↩️ Отмена` button or send `отмени` to undo the latest action;
+- ambiguous or unknown projects are routed to `INBOX` instead of starting another clarification loop;
+- one morning brief and one evening Inbox nudge are delivered through the regular `/tick` cron.
+
+The morning brief summarizes today's tasks, reminders, overdue work, Inbox size, and the nearest focus item. The evening message is sent only when Inbox is not empty.
 
 ## Required environment variables
 
@@ -44,6 +59,12 @@ This repo is now wired for a safer `Render Free` deployment model:
 - `ICLOUD_CALENDAR_URL_PERSONAL`
 - `BACKUP_STORAGE_BACKEND`
 - `BACKUP_RETENTION_DAYS`
+- `ASSISTANT_INSTANT_CAPTURE` (`1` by default)
+- `ASSISTANT_HABIT_MESSAGES` (`1` by default)
+- `ASSISTANT_MORNING_BRIEF_HOUR` (local hour, `8` by default)
+- `ASSISTANT_EVENING_NUDGE_HOUR` (local hour, `19` by default)
+
+Set `ASSISTANT_INSTANT_CAPTURE=0` to restore confirmation cards for all LLM-originated actions. Set `ASSISTANT_HABIT_MESSAGES=0` to disable proactive daily messages.
 
 ## Local run
 
@@ -70,7 +91,7 @@ The app starts an HTTP server. Runtime mode is selected by `BOT_RUNTIME_MODE`.
 - `GET /keepalive`
   - lightweight endpoint for Render keep-warm cron
 - `GET /tick`
-  - protected cron endpoint for reminders and retries
+  - protected cron endpoint for reminders, retries, and habit messages
 - `GET /internal/status`
   - protected operational status
 - `POST /backup`
@@ -102,20 +123,21 @@ Notes:
 - `keepalive` is a workaround, not a guarantee.
 - reminders are effectively-once at application level, not real-time guaranteed
 - delayed cron execution will produce overdue delivery instead of silent loss
+- morning/evening messages are at-most-once per local calendar day
 
 ## LLM behavior
 
-- Gemini output is treated as a draft
-- the bot sends a preview with `Confirm` / `Cancel`
-- malformed or ambiguous output should fall back to clarification
-- destructive or state-changing actions should not execute without confirmation
+- safe captures execute immediately and write undo metadata to `action_journal`
+- events remain drafts with `Confirm` / `Cancel`
+- malformed or genuinely incomplete output falls back to clarification
+- destructive actions do not execute without confirmation
 
 ## Data model highlights
 
 - `reminders`
   - queue state, claim token, retries, delivery timestamps
 - `pending_actions`
-  - persisted LLM drafts awaiting confirmation
+  - persisted execution records and event drafts
 - `conversation_state`
   - restart-safe follow-up and bulk flow state
 - `processed_updates`
@@ -123,7 +145,9 @@ Notes:
 - `action_journal`
   - executed actions and undo metadata
 - `llm_recent_actions`
-  - short-lived duplicate suppression
+  - short-lived duplicate suppression for unresolved drafts
+- `assistant_habit_state`
+  - last morning/evening proactive message dates
 
 ## Verification
 
@@ -133,4 +157,4 @@ Run tests with:
 pytest -q
 ```
 
-Current target is functional safety and restart resilience for a single-user MVP, not strict production SLA.
+Current target is functional safety, low-friction daily use, and restart resilience for a single-user MVP, not strict production SLA.

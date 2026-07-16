@@ -22,6 +22,7 @@ from bot.deps import AppDeps
 from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
 from bot.middlewares.fsm_persistence import FsmPersistenceMiddleware
 from bot.services.product_mode import install_product_mode
+from bot.services.product_mode_overrides import install_product_mode_overrides
 
 from bot.handlers import (
     register_nav,
@@ -61,6 +62,7 @@ def build_core(
     # Install the low-friction runtime behavior after all runtime modules have
     # been imported, but before the bot starts accepting updates or cron ticks.
     install_product_mode()
+    install_product_mode_overrides()
 
     bot = Bot(token=bot_token)
 

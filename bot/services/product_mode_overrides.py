@@ -14,7 +14,22 @@ from bot.utils import h
 
 _original_preview = None
 _original_focus_line = None
+_original_rerender = None
 _installed = False
+
+
+async def _safe_rerender_with_toast(message: Message, db_pool: asyncpg.Pool, deps, toast: str) -> int:
+    """Do not reinterpret a successful write as failed when only SPA refresh fails."""
+    if _original_rerender is None:
+        return 0
+    try:
+        return int(await _original_rerender(message, db_pool, deps, toast))
+    except Exception:
+        try:
+            sent = await message.answer(toast)
+            return int(sent.message_id)
+        except Exception:
+            return 0
 
 
 async def _preview_without_stale_draft_fingerprint(
@@ -113,7 +128,7 @@ def _escaped_focus_line(focus: dict[str, Any] | None, tz) -> str | None:
 
 
 def install_product_mode_overrides() -> None:
-    global _installed, _original_preview, _original_focus_line
+    global _installed, _original_preview, _original_focus_line, _original_rerender
     if _installed:
         return
 
@@ -121,7 +136,9 @@ def install_product_mode_overrides() -> None:
 
     _original_preview = freeform_intake.create_pending_preview
     _original_focus_line = product_mode._focus_line
+    _original_rerender = freeform_intake._rerender_with_toast
 
+    freeform_intake._rerender_with_toast = _safe_rerender_with_toast
     freeform_intake.create_pending_preview = _preview_without_stale_draft_fingerprint
     freeform_intake._send_batch_summary = _send_accurate_batch_summary
     product_mode._focus_line = _escaped_focus_line

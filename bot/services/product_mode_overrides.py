@@ -68,19 +68,32 @@ async def _preview_without_stale_draft_fingerprint(
 
 
 async def _send_accurate_batch_summary(message: Message, count: int) -> int | None:
-    text = (
-        f"✅ Обработал действий: {int(count)}. "
-        "Задачи, идеи и напоминания сохранены сразу; "
-        "события подтвердите в карточках выше."
-    )
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📅 Открыть сегодня", callback_data="nav:today"),
-                InlineKeyboardButton(text="📥 Inbox", callback_data="nav:inbox:0"),
+    if not product_mode._env_enabled("ASSISTANT_INSTANT_CAPTURE", True):
+        text = f"📋 Создано черновиков: {int(count)}. Всё верно?"
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"✅ Подтвердить всё ({int(count)})",
+                        callback_data="llm:batch_confirm",
+                    )
+                ]
             ]
-        ]
-    )
+        )
+    else:
+        text = (
+            f"✅ Обработал действий: {int(count)}. "
+            "Задачи, идеи и напоминания сохранены сразу; "
+            "события подтвердите в карточках выше."
+        )
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="📅 Открыть сегодня", callback_data="nav:today"),
+                    InlineKeyboardButton(text="📥 Inbox", callback_data="nav:inbox:0"),
+                ]
+            ]
+        )
     try:
         sent = await message.answer(text, reply_markup=keyboard)
         return int(sent.message_id)

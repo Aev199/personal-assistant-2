@@ -32,6 +32,7 @@ jobs:
         run: |
           pytest -q \
             tests/test_product_mode.py \
+            tests/test_product_mode_spa.py \
             tests/test_main_menu_keyboard.py \
             tests/test_freeform_intake.py \
             tests/test_system_freeform_route.py \

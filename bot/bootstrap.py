@@ -23,6 +23,7 @@ from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMid
 from bot.middlewares.fsm_persistence import FsmPersistenceMiddleware
 from bot.services.product_mode import install_product_mode
 from bot.services.product_mode_overrides import install_product_mode_overrides
+from bot.services.product_mode_spa import install_product_mode_spa
 
 from bot.handlers import (
     register_nav,
@@ -63,6 +64,7 @@ def build_core(
     # been imported, but before the bot starts accepting updates or cron ticks.
     install_product_mode()
     install_product_mode_overrides()
+    install_product_mode_spa()
 
     bot = Bot(token=bot_token)
 

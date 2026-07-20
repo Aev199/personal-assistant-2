@@ -1433,14 +1433,21 @@ async def _fetch_today_calendar_block(
     for event in events:
         summary_norm = (event.summary or "").strip().lower()[:80]
         dedup_key = (summary_norm, event.dtstart_utc)
+        # Log every event to see why dedup isn't merging
+        logger.info(
+            "dedup-final candidate | summary=%r dtstart=%s uid=%s cal=%s",
+            summary_norm,
+            event.dtstart_utc.isoformat(),
+            event.uid,
+            event.calendar_url[-40:] if event.calendar_url else "-",
+        )
         existing = seen.get(dedup_key)
         if existing is None:
             seen[dedup_key] = event
         else:
-            # Keep the one with longer duration
             logger.info(
-                "dedup-by-summary SKIPPED duplicate | summary=%s dtstart=%s uid=%s",
-                summary_norm, event.dtstart_utc.isoformat(), event.uid,
+                "dedup-final SKIPPED duplicate | summary=%r dtstart=%s",
+                summary_norm, event.dtstart_utc.isoformat(),
             )
             if (event.dtend_utc - event.dtstart_utc) > (existing.dtend_utc - existing.dtstart_utc):
                 seen[dedup_key] = event

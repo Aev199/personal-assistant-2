@@ -21,7 +21,6 @@ import time
 from datetime import datetime, timezone
 
 import asyncpg
-from aiogram import Bot
 
 # Task line pattern: `- [x] assignee: title 📅 ... ⏫ ➕ ... (ID: 42)`
 _TASK_LINE_RE = re.compile(
@@ -63,16 +62,15 @@ def _parse_tasks_from_md(content: str) -> dict[int, str]:
 
 async def _check_and_sync(
     conn: asyncpg.Connection,
-    bot: Bot,
-    admin_id: int,
     local_statuses: dict[int, str],  # {task_id: 'x' or ' '}
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     """Compare local file status with DB, sync differences.
 
-    Returns (done_count, reopened_count).
+    Returns (done_count, reopened_count, toast_lines).
+    Toast lines are stored in user_settings.ui_payload for SPA display.
     """
     if not local_statuses:
-        return 0, 0
+        return 0, 0, []
 
     task_ids = list(local_statuses.keys())
     rows = await conn.fetch(
@@ -87,6 +85,7 @@ async def _check_and_sync(
 
     done_count = 0
     reopened_count = 0
+    toasts: list[str] = []
 
     for row in rows:
         task_id = int(row["id"])
@@ -95,7 +94,6 @@ async def _check_and_sync(
         file_done = file_status_char == "x"
 
         if file_done and db_status != "done":
-            # Obsidian: checked → mark done in DB
             await conn.execute(
                 "UPDATE tasks SET status='done', updated_at=NOW() WHERE id=$1",
                 task_id,
@@ -103,38 +101,21 @@ async def _check_and_sync(
             done_count += 1
             title = str(row["title"] or "?")
             project = str(row["project_code"] or "")
-            try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=f"✅ Obsidian: {title}" + (f" [{project}]" if project else ""),
-                )
-            except Exception:
-                pass
+            label = f"✅ Obsidian: {title}" + (f" [{project}]" if project else "")
+            toasts.append(label)
 
         elif not file_done and db_status == "done":
-            # Obsidian: unchecked → reopen in DB
             await conn.execute(
                 "UPDATE tasks SET status='todo', updated_at=NOW() WHERE id=$1",
                 task_id,
             )
             reopened_count += 1
-            title = str(row["title"] or "?")
-            project = str(row["project_code"] or "")
-            try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=f"🔄 Obsidian: переоткрыта «{title}»" + (f" [{project}]" if project else ""),
-                )
-            except Exception:
-                pass
 
-    return done_count, reopened_count
+    return done_count, reopened_count, toasts
 
 
 async def _scan_vault(
     db_pool: asyncpg.Pool,
-    bot: Bot,
-    admin_id: int,
     vault_path: str,
     *,
     file_mtimes: dict[str, float],
@@ -150,6 +131,7 @@ async def _scan_vault(
 
     total_done = 0
     total_reopened = 0
+    all_toasts: list[str] = []
     new_mtimes: dict[str, float] = {}
 
     for root, _dirs, files in os.walk(base):
@@ -181,13 +163,51 @@ async def _scan_vault(
 
             try:
                 async with db_pool.acquire() as conn:
-                    done, reopened = await _check_and_sync(
-                        conn, bot, admin_id, local_statuses,
+                    done, reopened, toasts = await _check_and_sync(
+                        conn, local_statuses,
                     )
                     total_done += done
                     total_reopened += reopened
+                    all_toasts.extend(toasts)
             except Exception:
                 logger.exception("sync failed for %s", rel_path)
+
+    # Store toasts in user_settings for SPA display
+    if all_toasts:
+        try:
+            async with db_pool.acquire() as conn:
+                # Get admin chat_id from user_settings
+                row = await conn.fetchrow(
+                    "SELECT chat_id FROM user_settings LIMIT 1"
+                )
+                if row:
+                    chat_id = int(row["chat_id"])
+                    import json as _json
+                    toast_payload = _json.dumps(
+                        {"toast": "\n".join(all_toasts), "toast_ttl": 25},
+                        ensure_ascii=False,
+                    )
+                    # Merge with existing payload
+                    existing = await conn.fetchval(
+                        "SELECT ui_payload FROM user_settings WHERE chat_id=$1",
+                        chat_id,
+                    )
+                    if isinstance(existing, str):
+                        try:
+                            existing = _json.loads(existing)
+                        except Exception:
+                            existing = {}
+                    elif not isinstance(existing, dict):
+                        existing = {}
+                    existing["toast"] = "\n".join(all_toasts)
+                    existing["toast_ttl"] = 25
+                    await conn.execute(
+                        "UPDATE user_settings SET ui_payload=$2::jsonb, updated_at=NOW() WHERE chat_id=$1",
+                        chat_id,
+                        _json.dumps(existing, ensure_ascii=False),
+                    )
+        except Exception:
+            logger.exception("failed to store toast")
 
     if total_done or total_reopened:
         logger.info(
@@ -206,13 +226,11 @@ async def run_vault_watcher() -> None:
     )
 
     database_url = os.getenv("DATABASE_URL", "")
-    bot_token = os.getenv("BOT_TOKEN", "")
-    admin_id = int(os.getenv("ADMIN_ID", "0"))
     vault_path = os.getenv("VAULT_LOCAL_PATH", "/srv/vault")
     poll_interval = float(os.getenv("VAULT_WATCH_INTERVAL_SEC", "10"))
 
-    if not database_url or not bot_token or not admin_id:
-        logger.error("Missing env: DATABASE_URL, BOT_TOKEN, ADMIN_ID")
+    if not database_url:
+        logger.error("Missing env: DATABASE_URL")
         return
 
     if not os.path.isdir(vault_path):
@@ -220,7 +238,6 @@ async def run_vault_watcher() -> None:
         return
 
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=2)
-    bot = Bot(token=bot_token)
 
     file_mtimes: dict[str, float] = {}
     logger.info("vault watcher started, path=%s interval=%.0fs", vault_path, poll_interval)
@@ -229,14 +246,13 @@ async def run_vault_watcher() -> None:
         while True:
             try:
                 file_mtimes = await _scan_vault(
-                    pool, bot, admin_id, vault_path, file_mtimes=file_mtimes,
+                    pool, vault_path, file_mtimes=file_mtimes,
                 )
             except Exception:
                 logger.exception("scan cycle failed")
             await asyncio.sleep(poll_interval)
     finally:
         await pool.close()
-        await bot.session.close()
 
 
 if __name__ == "__main__":

@@ -4,9 +4,20 @@ from bot.adapters.llm_router import ResilientLLMAdapter
 
 
 class FakeProvider:
-    def __init__(self, *, result=None, error=None, enabled=True, circuit_open=False):
+    def __init__(
+        self,
+        *,
+        result=None,
+        error=None,
+        startup_error=None,
+        close_error=None,
+        enabled=True,
+        circuit_open=False,
+    ):
         self.result = result
         self.error = error
+        self.startup_error = startup_error
+        self.close_error = close_error
         self.enabled = enabled
         self.circuit_open = circuit_open
         self.calls = []
@@ -14,9 +25,13 @@ class FakeProvider:
         self.closed = False
 
     async def startup(self):
+        if self.startup_error:
+            raise self.startup_error
         self.started = True
 
     async def close(self):
+        if self.close_error:
+            raise self.close_error
         self.closed = True
 
     async def classify_intake(self, **kwargs):
@@ -82,6 +97,25 @@ class ResilientLLMAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "GEMINI_API_KEY"):
             await router.transcribe_audio(audio_bytes=b"x", filename="a.ogg")
+
+    async def test_gemini_startup_failure_does_not_block_deepseek(self):
+        gemini = FakeProvider(startup_error=RuntimeError("gemini session failed"))
+        deepseek = FakeProvider(result={"action": "task"})
+        router = ResilientLLMAdapter(gemini=gemini, deepseek=deepseek)
+
+        await router.startup()
+
+        self.assertFalse(gemini.started)
+        self.assertTrue(deepseek.started)
+
+    async def test_close_attempts_both_providers(self):
+        gemini = FakeProvider(close_error=RuntimeError("close failed"))
+        deepseek = FakeProvider()
+        router = ResilientLLMAdapter(gemini=gemini, deepseek=deepseek)
+
+        await router.close()
+
+        self.assertTrue(deepseek.closed)
 
 
 if __name__ == "__main__":

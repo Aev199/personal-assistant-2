@@ -31,7 +31,7 @@ async def save_onboarding(
 
     Existing projects are always respected. Suggested new projects are created
     only when ``create_projects`` is true. Items whose specialised integration
-    is unavailable are preserved as normal Inbox tasks instead of being lost.
+    is unavailable or fails are preserved as normal Inbox tasks.
     """
     from bot.handlers import onboarding as flow
 
@@ -104,8 +104,6 @@ async def save_onboarding(
 
     for intent in intents:
         try:
-            # Existing projects are honoured in both confirmation modes. New
-            # projects exist in project_map only after explicit confirmation.
             project = (
                 project_map.get(flow._project_key(intent.project_code))
                 or project_map.get(flow._project_key(intent.project_name))
@@ -128,31 +126,37 @@ async def save_onboarding(
                     else None
                 )
                 if gtasks_ready:
-                    await flow._execute_import_item(
-                        message=message,
-                        db_pool=db_pool,
-                        deps=deps,
-                        kind="personal_task",
-                        payload={
-                            "title": intent.title,
-                            "deadline_local": due.isoformat() if due else "",
-                        },
-                        summary=intent.title,
-                    )
+                    try:
+                        await flow._execute_import_item(
+                            message=message,
+                            db_pool=db_pool,
+                            deps=deps,
+                            kind="personal_task",
+                            payload={
+                                "title": intent.title,
+                                "deadline_local": due.isoformat() if due else "",
+                            },
+                            summary=intent.title,
+                        )
+                    except Exception:
+                        await save_internal_task(intent.title, project=inbox, deadline=due)
                 else:
                     await save_internal_task(intent.title, project=inbox, deadline=due)
 
             elif intent.action == "idea":
                 idea = intent.idea_text or intent.title
                 if gtasks_ready:
-                    await flow._execute_import_item(
-                        message=message,
-                        db_pool=db_pool,
-                        deps=deps,
-                        kind="idea",
-                        payload={"idea_text": idea},
-                        summary=idea,
-                    )
+                    try:
+                        await flow._execute_import_item(
+                            message=message,
+                            db_pool=db_pool,
+                            deps=deps,
+                            kind="idea",
+                            payload={"idea_text": idea},
+                            summary=idea,
+                        )
+                    except Exception:
+                        await save_internal_task(f"Идея: {idea}", project=inbox)
                 else:
                     await save_internal_task(f"Идея: {idea}", project=inbox)
 
@@ -160,17 +164,24 @@ async def save_onboarding(
                 reminder_text = intent.reminder_text or intent.title
                 remind_at = flow._parse_local_dt(intent.remind_at_local, tz_name)
                 if remind_at is not None and remind_at > datetime.now(tz):
-                    await flow._execute_import_item(
-                        message=message,
-                        db_pool=db_pool,
-                        deps=deps,
-                        kind="reminder",
-                        payload={
-                            "reminder_text": reminder_text,
-                            "remind_at_local": remind_at.isoformat(),
-                        },
-                        summary=reminder_text,
-                    )
+                    try:
+                        await flow._execute_import_item(
+                            message=message,
+                            db_pool=db_pool,
+                            deps=deps,
+                            kind="reminder",
+                            payload={
+                                "reminder_text": reminder_text,
+                                "remind_at_local": remind_at.isoformat(),
+                            },
+                            summary=reminder_text,
+                        )
+                    except Exception:
+                        await save_internal_task(
+                            f"Напомнить: {reminder_text}",
+                            project=inbox,
+                            deadline=remind_at,
+                        )
                 else:
                     await save_internal_task(
                         f"Напомнить: {reminder_text}",
@@ -186,6 +197,7 @@ async def save_onboarding(
                     else "ICLOUD_CALENDAR_URL_PERSONAL",
                     "",
                 ).strip()
+                destination = project if calendar_kind == "work" else inbox
                 can_create_event = bool(
                     icloud_ready
                     and start
@@ -199,27 +211,33 @@ async def save_onboarding(
                         intent.title,
                         project_code,
                     )
-                    await flow._execute_import_item(
-                        message=message,
-                        db_pool=db_pool,
-                        deps=deps,
-                        kind="event",
-                        payload={
-                            "title": intent.title,
-                            "calendar_kind": calendar_kind,
-                            "calendar_url": calendar_url,
-                            "summary": summary,
-                            "start_local": start.isoformat(),
-                            "duration_min": int(intent.duration_min or 60),
-                            "project_id": int(project.id)
-                            if calendar_kind == "work"
-                            else None,
-                            "project_code": project_code,
-                        },
-                        summary=summary,
-                    )
+                    try:
+                        await flow._execute_import_item(
+                            message=message,
+                            db_pool=db_pool,
+                            deps=deps,
+                            kind="event",
+                            payload={
+                                "title": intent.title,
+                                "calendar_kind": calendar_kind,
+                                "calendar_url": calendar_url,
+                                "summary": summary,
+                                "start_local": start.isoformat(),
+                                "duration_min": int(intent.duration_min or 60),
+                                "project_id": int(project.id)
+                                if calendar_kind == "work"
+                                else None,
+                                "project_code": project_code,
+                            },
+                            summary=summary,
+                        )
+                    except Exception:
+                        await save_internal_task(
+                            intent.title,
+                            project=destination,
+                            deadline=start,
+                        )
                 else:
-                    destination = project if calendar_kind == "work" else inbox
                     await save_internal_task(
                         intent.title,
                         project=destination,

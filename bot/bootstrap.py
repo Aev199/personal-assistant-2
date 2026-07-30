@@ -21,6 +21,7 @@ from bot.config import load_config
 from bot.deps import AppDeps
 from bot.middlewares.fsm_persistence import FsmPersistenceMiddleware
 from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
+from bot.services.onboarding_import import install_onboarding_import
 from bot.services.product_mode import install_product_mode
 from bot.services.product_mode_overrides import install_product_mode_overrides
 from bot.services.product_mode_spa import install_product_mode_spa
@@ -65,6 +66,7 @@ def build_core(
     install_product_mode()
     install_product_mode_overrides()
     install_product_mode_spa()
+    install_onboarding_import()
 
     bot = Bot(token=bot_token)
 

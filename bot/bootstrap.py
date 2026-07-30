@@ -32,6 +32,7 @@ from bot.handlers import (
     register_events,
     register_inbox,
     register_nav,
+    register_onboarding,
     register_pending_actions,
     register_projects,
     register_reminders,
@@ -85,6 +86,8 @@ def build_core(
     register_events(dp)
     register_team(dp)
     register_reminders(dp)
+    # Must precede the catch-all freeform handlers in register_system.
+    register_onboarding(dp)
     register_system(dp)
     register_pending_actions(dp)
     register_errors(dp)

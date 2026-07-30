@@ -2,9 +2,7 @@
 
 This module centralizes creation of the aiogram Bot/Dispatcher and wiring of
 external integrations (WebDAV/Obsidian vault, Google Tasks, iCloud CalDAV).
-
 The refactor keeps production runtime in :mod:`bot.runtime` + modular handlers.
-Legacy monolith (if ever needed) lives outside the :mod:`bot` package.
 """
 
 from __future__ import annotations
@@ -12,32 +10,37 @@ from __future__ import annotations
 import os
 
 from aiogram import Bot, Dispatcher
-from bot.adapters.webdav_adapter import WebDavAdapter
-from bot.config import load_config
-from bot.services.vault_manager import VaultManager
+
+from bot.adapters.deepseek_adapter import DeepSeekAdapter
+from bot.adapters.gemini_adapter import GeminiAdapter
 from bot.adapters.google_tasks_adapter import GoogleTasksAdapter
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudCalDAVAuth
-from bot.adapters.gemini_adapter import GeminiAdapter
+from bot.adapters.llm_router import ResilientLLMAdapter
+from bot.adapters.webdav_adapter import WebDavAdapter
+from bot.config import load_config
 from bot.deps import AppDeps
-from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
 from bot.middlewares.fsm_persistence import FsmPersistenceMiddleware
+from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
+from bot.services.onboarding_import import install_onboarding_import
 from bot.services.product_mode import install_product_mode
 from bot.services.product_mode_overrides import install_product_mode_overrides
 from bot.services.product_mode_spa import install_product_mode_spa
+from bot.services.vault_manager import VaultManager
 
 from bot.handlers import (
-    register_nav,
-    register_projects,
-    register_tasks,
-    register_inbox,
     register_bulk,
-    register_wizards,
+    register_errors,
     register_events,
-    register_team,
+    register_inbox,
+    register_nav,
+    register_onboarding,
+    register_pending_actions,
+    register_projects,
     register_reminders,
     register_system,
-    register_errors,
-    register_pending_actions,
+    register_tasks,
+    register_team,
+    register_wizards,
 )
 
 
@@ -60,11 +63,10 @@ def build_core(
     Side effects:
         Stores a single dependency container under ``dp.workflow_data['deps']``.
     """
-    # Install the low-friction runtime behavior after all runtime modules have
-    # been imported, but before the bot starts accepting updates or cron ticks.
     install_product_mode()
     install_product_mode_overrides()
     install_product_mode_spa()
+    install_onboarding_import()
 
     bot = Bot(token=bot_token)
 
@@ -74,7 +76,6 @@ def build_core(
     dp.message.outer_middleware.register(guard)
     dp.callback_query.outer_middleware.register(guard)
 
-    # Persist FSM state to DB
     fsm_persistence = FsmPersistenceMiddleware()
     dp.message.middleware.register(fsm_persistence)
     dp.callback_query.middleware.register(fsm_persistence)
@@ -87,6 +88,8 @@ def build_core(
     register_events(dp)
     register_team(dp)
     register_reminders(dp)
+    # Must precede the catch-all freeform handlers in register_system.
+    register_onboarding(dp)
     register_system(dp)
     register_pending_actions(dp)
     register_errors(dp)
@@ -103,13 +106,23 @@ def build_core(
     icloud = ICloudCalDAVAdapter(
         ICloudCalDAVAuth(apple_id=icloud_apple_id, app_password=icloud_app_password)
     )
-    llm = GeminiAdapter(
+
+    gemini = GeminiAdapter(
         api_key=os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""),
         base_url=os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
         llm_model=os.getenv("GEMINI_LLM_MODEL", "gemini-3.1-flash-lite-preview"),
         transcribe_model=os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.1-flash-lite-preview"),
         timeout_sec=int(os.getenv("GEMINI_TIMEOUT_SEC", "45")),
     )
+    deepseek = DeepSeekAdapter(
+        api_key=os.getenv("DEEPSEEK_API_KEY", ""),
+        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        timeout_sec=int(os.getenv("DEEPSEEK_TIMEOUT_SEC", "45")),
+        max_tokens=int(os.getenv("DEEPSEEK_MAX_TOKENS", "8192")),
+        user_id=os.getenv("DEEPSEEK_USER_ID", f"telegram-{int(admin_id or 0)}"),
+    )
+    llm = ResilientLLMAdapter(gemini=gemini, deepseek=deepseek)
 
     deps = AppDeps(
         admin_id=int(admin_id or 0),
@@ -122,7 +135,6 @@ def build_core(
         config=load_config(),
     )
 
-    # Expose deps for DI in handler modules
     try:
         dp.workflow_data["deps"] = deps
     except Exception:

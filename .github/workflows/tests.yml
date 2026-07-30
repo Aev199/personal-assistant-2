@@ -33,10 +33,14 @@ jobs:
           pytest -q \
             tests/test_product_mode.py \
             tests/test_product_mode_spa.py \
+            tests/test_habit_policy.py \
             tests/test_main_menu_keyboard.py \
             tests/test_freeform_intake.py \
             tests/test_system_freeform_route.py \
-            tests/test_system_undo.py
+            tests/test_system_undo.py \
+            tests/test_deepseek_adapter.py \
+            tests/test_llm_router.py \
+            tests/test_onboarding.py
 
       - name: Run full suite diagnostic
         continue-on-error: true

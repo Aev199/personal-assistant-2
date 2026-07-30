@@ -7,19 +7,14 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class AddTaskWizard(StatesGroup):
-    """Wizard for task/subtask creation.
-
-    Mode is stored in FSM data: wizard_mode = 'task' | 'subtask'
-    """
+    """Wizard for task/subtask creation."""
 
     choosing_project = State()
-    choosing_parent = State()      # only for subtask mode
+    choosing_parent = State()
     choosing_assignee = State()
     entering_title = State()
     choosing_deadline = State()
-    # Manual deadline input
     entering_deadline = State()
-    # Backward-compatible alias (some modules used `entering`)
     entering = State()
     confirming = State()
 
@@ -49,20 +44,14 @@ class QuickIdeaWizard(StatesGroup):
 
 
 class AddTeamWizard(StatesGroup):
-    """Add team member from SPA UI."""
-
     entering = State()
 
 
 class EditTeamNoteWizard(StatesGroup):
-    """Edit small note displayed in the team member card."""
-
     entering = State()
 
 
 class EditTaskDeadline(StatesGroup):
-    """Inline deadline editor (used from task card)."""
-
     entering = State()
 
 
@@ -81,8 +70,6 @@ class AddPersonalWizard(StatesGroup):
 
 
 class AddSuperTaskWizard(StatesGroup):
-    """Wizard for creating supertask (epic) inside a project."""
-
     entering_title = State()
     confirming = State()
 
@@ -91,3 +78,9 @@ class FreeformFollowup(StatesGroup):
     """Short follow-up after free-form intake for clarifications."""
 
     awaiting_text = State()
+
+
+class InitialSetup(StatesGroup):
+    """One-shot brain-dump onboarding flow."""
+
+    awaiting_dump = State()

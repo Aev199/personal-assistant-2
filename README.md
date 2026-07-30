@@ -34,7 +34,7 @@ Two save modes are available:
 - `Сохранить всё` creates suggested projects and uses existing ones;
 - `Без новых проектов` still uses matching existing projects, but routes new/uncertain groupings to `INBOX`.
 
-The import is lossless by design. If Google Tasks or iCloud is unavailable, or a reminder time is incomplete, the item is preserved as an internal Inbox task instead of being dropped.
+The import is lossless by design. If Google Tasks or iCloud is unavailable or fails during import, or a reminder time is incomplete, the item is preserved as an internal Inbox task instead of being dropped.
 
 Voice transcription requires Gemini. The resulting transcript can still be classified by DeepSeek if the Gemini classification request fails.
 
@@ -86,6 +86,7 @@ DeepSeek:
 - `DEEPSEEK_BASE_URL` — default `https://api.deepseek.com`
 - `DEEPSEEK_MODEL` — default `deepseek-v4-flash`
 - `DEEPSEEK_TIMEOUT_SEC` — default `45`
+- `DEEPSEEK_MAX_TOKENS` — default `8192`, useful for large onboarding dumps
 - `DEEPSEEK_USER_ID` — optional stable anonymized caller identifier
 
 ## Assistant behavior variables

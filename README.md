@@ -1,37 +1,62 @@
 # Personal Assistant Bot
 
-Single-user Telegram assistant built with `aiogram`, `asyncpg`, Gemini, Google Tasks, and iCloud CalDAV.
+Single-user Telegram assistant built with `aiogram`, `asyncpg`, Gemini/DeepSeek, Google Tasks, iCloud CalDAV, and an SPA-style single-message interface.
 
-This repo is now wired for a safer `Render Free` deployment model:
+## Product model
 
-- `webhook` is the supported runtime mode on Render Free
-- `ADMIN_ID` is mandatory
-- all internal HTTP jobs use `X-Internal-Key`
-- reminders are DB-backed and claimed via a state machine
-- LLM actions are restart-safe and auditable
-- everyday captures use a low-friction execute-first flow with undo
+The bot is optimized for low-friction capture rather than form filling:
 
-## Runtime contract
+- text and voice messages are classified into work tasks, personal tasks, ideas, reminders, and events;
+- safe captures execute immediately and remain undoable;
+- calendar events retain an explicit confirmation step during ordinary free-form use;
+- unknown project references fall back to `INBOX`;
+- Postgres remains the source of truth for internal tasks, reminders, runtime state, and audit data.
 
-- Single-user only. The bot rejects updates from users other than `ADMIN_ID`.
-- Postgres is the source of truth.
-- Reminders must survive restarts and cold starts.
-- Safe free-form actions (`task`, `personal_task`, `reminder`, `idea`) execute immediately.
-- Calendar events still require explicit confirmation.
-- Unknown project references fall back to `INBOX`; unknown assignees become unassigned.
-- `Render Free` is still a compromise platform. Expect delayed delivery under cold starts.
+## Initial population
 
-## Low-friction assistant mode
+A new or nearly empty assistant should be populated in one pass instead of task by task.
 
-The default runtime is optimized for capture speed rather than form filling:
+Start with either:
 
-- send a text or voice message;
-- tasks, ideas, personal tasks, and reminders are saved immediately;
-- use the persistent `↩️ Отмена` button or send `отмени` to undo the latest action;
-- ambiguous or unknown projects are routed to `INBOX` instead of starting another clarification loop;
-- one morning brief and one evening Inbox nudge are delivered through the regular `/tick` cron.
+- `/setup`;
+- `➕ Добавить` → `🧠 Загрузить всё разом`.
 
-The morning brief summarizes today's tasks, reminders, overdue work, Inbox size, and the nearest focus item. The evening message is sent only when Inbox is not empty.
+Then send one large text or voice message containing everything currently held in mind. The setup flow:
+
+1. splits the dump into independent items;
+2. classifies work, personal tasks, ideas, reminders, and events;
+3. groups recurring work topics and suggests projects;
+4. shows one combined preview;
+5. saves everything after one confirmation.
+
+Two save modes are available:
+
+- `Сохранить всё` creates suggested projects and uses existing ones;
+- `Без новых проектов` still uses matching existing projects, but routes new/uncertain groupings to `INBOX`.
+
+The import is lossless by design. If Google Tasks or iCloud is unavailable, or a reminder time is incomplete, the item is preserved as an internal Inbox task instead of being dropped.
+
+Voice transcription requires Gemini. The resulting transcript can still be classified by DeepSeek if the Gemini classification request fails.
+
+## LLM provider routing
+
+Text classification uses this order:
+
+1. Gemini primary model and its configured Gemini model fallbacks;
+2. DeepSeek fallback when Gemini is unavailable, rate-limited, has an open circuit breaker, returns malformed output, or is not configured.
+
+DeepSeek is also allowed as the only text provider. Audio transcription remains Gemini-only.
+
+## Proactive messages
+
+Proactive messages are quiet by default until the system has useful content:
+
+- no morning card before onboarding is completed, unless at least five internal tasks already exist;
+- no empty “day is free” card;
+- weekend morning cards are disabled by default;
+- a morning card is sent only when today contains tasks, overdue work, or reminders;
+- evening Inbox nudges are disabled by default and require explicit opt-in;
+- proactive cards replace the existing SPA anchor instead of leaving a second permanent bot message.
 
 ## Required environment variables
 
@@ -40,17 +65,44 @@ The morning brief summarizes today's tasks, reminders, overdue work, Inbox size,
 - `ADMIN_ID`
 - `INTERNAL_API_KEY`
 
-## Common optional environment variables
+At least one text LLM provider must be configured:
 
-- `BOT_RUNTIME_MODE`
-- `BOT_TIMEZONE` or `APP_TIMEZONE`
-- `LOG_LEVEL`
-- `LOG_FORMAT`
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+- `GEMINI_API_KEY` or `GOOGLE_API_KEY`; and/or
+- `DEEPSEEK_API_KEY`.
+
+## LLM environment variables
+
+Gemini:
+
+- `GEMINI_BASE_URL`
 - `GEMINI_LLM_MODEL`
 - `GEMINI_TRANSCRIBE_MODEL`
 - `GEMINI_TIMEOUT_SEC`
-- `GEMINI_FALLBACK_MODELS` (comma-separated, e.g. `gemini-1.5-flash,gemini-2.0-flash-exp`)
+- `GEMINI_FALLBACK_MODELS` — comma-separated Gemini model names
+
+DeepSeek:
+
+- `DEEPSEEK_API_KEY`
+- `DEEPSEEK_BASE_URL` — default `https://api.deepseek.com`
+- `DEEPSEEK_MODEL` — default `deepseek-v4-flash`
+- `DEEPSEEK_TIMEOUT_SEC` — default `45`
+- `DEEPSEEK_USER_ID` — optional stable anonymized caller identifier
+
+## Assistant behavior variables
+
+- `ASSISTANT_INSTANT_CAPTURE=1`
+- `ASSISTANT_HABIT_MESSAGES=1`
+- `ASSISTANT_MORNING_BRIEF_HOUR=8`
+- `ASSISTANT_WEEKEND_BRIEF=0`
+- `ASSISTANT_EVENING_NUDGE=0`
+- `ASSISTANT_EVENING_NUDGE_HOUR=19`
+- `ASSISTANT_MIN_ITEMS_FOR_HABITS=5`
+- `ASSISTANT_EVENING_INBOX_THRESHOLD=3`
+
+Set `ASSISTANT_INSTANT_CAPTURE=0` to restore confirmation cards for all ordinary LLM-originated actions. Set `ASSISTANT_HABIT_MESSAGES=0` to disable all proactive cards.
+
+## Integration variables
+
 - `GTASKS_PERSONAL_LIST`
 - `GTASKS_IDEAS_LIST`
 - `ICLOUD_APPLE_ID`
@@ -59,12 +111,6 @@ The morning brief summarizes today's tasks, reminders, overdue work, Inbox size,
 - `ICLOUD_CALENDAR_URL_PERSONAL`
 - `BACKUP_STORAGE_BACKEND`
 - `BACKUP_RETENTION_DAYS`
-- `ASSISTANT_INSTANT_CAPTURE` (`1` by default)
-- `ASSISTANT_HABIT_MESSAGES` (`1` by default)
-- `ASSISTANT_MORNING_BRIEF_HOUR` (local hour, `8` by default)
-- `ASSISTANT_EVENING_NUDGE_HOUR` (local hour, `19` by default)
-
-Set `ASSISTANT_INSTANT_CAPTURE=0` to restore confirmation cards for all LLM-originated actions. Set `ASSISTANT_HABIT_MESSAGES=0` to disable proactive daily messages.
 
 ## Local run
 
@@ -73,29 +119,20 @@ pip install -r requirements.txt
 python bot.py
 ```
 
-The app starts an HTTP server. Runtime mode is selected by `BOT_RUNTIME_MODE`.
+Runtime mode is selected by `BOT_RUNTIME_MODE`:
 
-- `webhook`
-  - recommended on Render Free
-- `polling-web`
-  - fallback/debug only
-- `auto`
-  - webhook if `WEBHOOK_URL` is present, otherwise polling-web
+- `webhook` — recommended on Render Free;
+- `polling-web` — fallback/debug mode;
+- `auto` — webhook when `WEBHOOK_URL` exists, otherwise polling-web.
 
 ## HTTP endpoints
 
-- `GET /ping`
-  - liveness
-- `GET /health`
-  - public readiness check, no sensitive details
-- `GET /keepalive`
-  - lightweight endpoint for Render keep-warm cron
-- `GET /tick`
-  - protected cron endpoint for reminders, retries, and habit messages
-- `GET /internal/status`
-  - protected operational status
-- `POST /backup`
-  - protected backup trigger
+- `GET /ping` — liveness;
+- `GET /health` — readiness;
+- `GET /keepalive` — Render keep-warm endpoint;
+- `GET /tick` — reminders, retries, synchronization, and useful proactive cards;
+- `GET /internal/status` — protected operational status;
+- `POST /backup` — protected backup trigger.
 
 Protected endpoints require:
 
@@ -103,58 +140,30 @@ Protected endpoints require:
 X-Internal-Key: <INTERNAL_API_KEY>
 ```
 
-## Render Free deployment
+## Render deployment
 
-Recommended shape:
+Recommended setup:
 
 1. Create a Render Web Service.
-2. Start command: `python bot.py`
-3. Configure:
-   - `BOT_RUNTIME_MODE=webhook`
-   - `WEBHOOK_URL=https://<your-service>.onrender.com`
-   - optional `TELEGRAM_WEBHOOK_SECRET=<random-secret>`
-4. Add Render Cron jobs:
-   - `GET https://<host>/keepalive` every 4-5 minutes
-   - `GET https://<host>/tick` with header `X-Internal-Key`
-   - `POST https://<host>/backup` with header `X-Internal-Key`
+2. Start with `python bot.py`.
+3. Configure `BOT_RUNTIME_MODE=webhook` and `WEBHOOK_URL`.
+4. Add cron calls to `/keepalive`, `/tick`, and `/backup` using `X-Internal-Key` where required.
 
-Notes:
-
-- `keepalive` is a workaround, not a guarantee.
-- reminders are effectively-once at application level, not real-time guaranteed
-- delayed cron execution will produce overdue delivery instead of silent loss
-- morning/evening messages are at-most-once per local calendar day
-
-## LLM behavior
-
-- safe captures execute immediately and write undo metadata to `action_journal`
-- events remain drafts with `Confirm` / `Cancel`
-- malformed or genuinely incomplete output falls back to clarification
-- destructive actions do not execute without confirmation
+Render Free remains a compromise platform. Cold starts can delay reminders; delayed delivery is preferred over silent loss.
 
 ## Data model highlights
 
-- `reminders`
-  - queue state, claim token, retries, delivery timestamps
-- `pending_actions`
-  - persisted execution records and event drafts
-- `conversation_state`
-  - restart-safe follow-up and bulk flow state
-- `processed_updates`
-  - Telegram update dedupe
-- `action_journal`
-  - executed actions and undo metadata
-- `llm_recent_actions`
-  - short-lived duplicate suppression for unresolved drafts
-- `assistant_habit_state`
-  - last morning/evening proactive message dates
+- `tasks` — internal work/Inbox tasks;
+- `reminders` — durable queue, retry and delivery state;
+- `pending_actions` — persisted execution records and event drafts;
+- `conversation_state` — restart-safe follow-up and bulk state;
+- `action_journal` — executed actions and undo metadata;
+- `assistant_habit_state` — proactive-message dates and onboarding completion marker.
 
 ## Verification
-
-Run tests with:
 
 ```bash
 pytest -q
 ```
 
-Current target is functional safety, low-friction daily use, and restart resilience for a single-user MVP, not strict production SLA.
+The target is a low-friction, restart-resilient single-user assistant rather than a strict real-time SLA.

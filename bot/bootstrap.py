@@ -119,6 +119,7 @@ def build_core(
         base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         timeout_sec=int(os.getenv("DEEPSEEK_TIMEOUT_SEC", "45")),
+        max_tokens=int(os.getenv("DEEPSEEK_MAX_TOKENS", "8192")),
         user_id=os.getenv("DEEPSEEK_USER_ID", f"telegram-{int(admin_id or 0)}"),
     )
     llm = ResilientLLMAdapter(gemini=gemini, deepseek=deepseek)

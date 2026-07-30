@@ -40,14 +40,35 @@ class ResilientLLMAdapter:
         return bool(self.gemini.enabled and not self.gemini.circuit_open)
 
     async def startup(self) -> None:
+        """Start both clients independently.
+
+        One provider failing to allocate its session must never prevent the
+        other provider from becoming usable. Requests still perform their own
+        lazy session setup, so startup failures are logged rather than fatal.
+        """
         if self.gemini.enabled:
-            await self.gemini.startup()
+            try:
+                await self.gemini.startup()
+            except Exception as exc:
+                logger.warning(
+                    "Gemini startup failed; DeepSeek may still serve text requests error=%s",
+                    exc,
+                )
         if self.deepseek.enabled:
-            await self.deepseek.startup()
+            try:
+                await self.deepseek.startup()
+            except Exception as exc:
+                logger.warning(
+                    "DeepSeek startup failed; Gemini may still serve requests error=%s",
+                    exc,
+                )
 
     async def close(self) -> None:
-        await self.gemini.close()
-        await self.deepseek.close()
+        for name, provider in (("gemini", self.gemini), ("deepseek", self.deepseek)):
+            try:
+                await provider.close()
+            except Exception as exc:
+                logger.warning("LLM provider close failed provider=%s error=%s", name, exc)
 
     async def _call_text(self, method: str, **kwargs: Any) -> dict[str, Any]:
         primary_error: Exception | None = None

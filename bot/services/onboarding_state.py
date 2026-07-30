@@ -7,23 +7,30 @@ from typing import Any
 import asyncpg
 
 
+_schema_ready = False
+
+
 async def ensure_onboarding_state(conn: asyncpg.Connection, chat_id: int) -> None:
     """Ensure the habit table and onboarding marker exist on old deployments."""
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS assistant_habit_state (
-            chat_id BIGINT PRIMARY KEY,
-            last_morning_brief_date DATE,
-            last_evening_nudge_date DATE,
-            onboarding_completed_at TIMESTAMPTZ,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    global _schema_ready
+    if not _schema_ready:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_habit_state (
+                chat_id BIGINT PRIMARY KEY,
+                last_morning_brief_date DATE,
+                last_evening_nudge_date DATE,
+                onboarding_completed_at TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
         )
-        """
-    )
-    await conn.execute(
-        "ALTER TABLE assistant_habit_state "
-        "ADD COLUMN IF NOT EXISTS onboarding_completed_at TIMESTAMPTZ"
-    )
+        await conn.execute(
+            "ALTER TABLE assistant_habit_state "
+            "ADD COLUMN IF NOT EXISTS onboarding_completed_at TIMESTAMPTZ"
+        )
+        _schema_ready = True
+
     await conn.execute(
         """
         INSERT INTO assistant_habit_state(chat_id)

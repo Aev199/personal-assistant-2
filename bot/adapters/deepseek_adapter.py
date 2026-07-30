@@ -1,9 +1,8 @@
 """DeepSeek API adapter used as a low-cost text-classification fallback.
 
-The adapter intentionally implements the same small public surface consumed by
-``freeform_intake`` as :class:`GeminiAdapter`: ``classify_intake`` and
-``classify_intake_batch``.  Audio transcription remains Gemini-only because the
-DeepSeek Chat Completions API accepts text messages, not Telegram audio blobs.
+The adapter implements the text-classification surface consumed by
+``freeform_intake``. Audio transcription remains Gemini-only because DeepSeek
+Chat Completions accepts text messages rather than Telegram audio blobs.
 """
 
 from __future__ import annotations
@@ -42,12 +41,14 @@ class DeepSeekAdapter:
         base_url: str = "https://api.deepseek.com",
         model: str = "deepseek-v4-flash",
         timeout_sec: int = 45,
+        max_tokens: int = 8192,
         user_id: str = "personal-assistant",
     ) -> None:
         self._api_key = str(api_key or "").strip()
         self._base_url = str(base_url or "https://api.deepseek.com").rstrip("/")
         self._model = str(model or "deepseek-v4-flash").strip()
         self._timeout = aiohttp.ClientTimeout(total=max(5, int(timeout_sec or 45)))
+        self._max_tokens = max(512, min(32768, int(max_tokens or 8192)))
         self._session: Optional[aiohttp.ClientSession] = None
         cleaned_user_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(user_id or "personal-assistant"))
         self._user_id = cleaned_user_id.strip("-")[:512] or "personal-assistant"
@@ -116,12 +117,22 @@ class DeepSeekAdapter:
     def _extract_text(data: dict[str, Any]) -> str:
         choices = data.get("choices") or []
         if not choices:
-            raise RuntimeError("DeepSeek returned no choices")
+            raise ValueError("DeepSeek returned no choices")
         message = (choices[0] or {}).get("message") or {}
         content = str(message.get("content") or "").strip()
         if not content:
-            raise RuntimeError("DeepSeek returned empty content")
+            raise ValueError("DeepSeek returned empty content")
         return content
+
+    async def _wait_before_retry(self, backoff: float, retry_after: str | None = None) -> float:
+        wait_sec = backoff
+        if retry_after:
+            try:
+                wait_sec = max(wait_sec, float(retry_after))
+            except Exception:
+                pass
+        await asyncio.sleep(min(wait_sec, _MAX_BACKOFF_SEC))
+        return min(backoff * 2.0, _MAX_BACKOFF_SEC)
 
     async def _chat_json(self, *, system_prompt: str, user_prompt: str, operation: str) -> dict[str, Any]:
         if not self.enabled:
@@ -142,7 +153,7 @@ class DeepSeekAdapter:
             "stream": False,
             "response_format": {"type": "json_object"},
             "thinking": {"type": "disabled"},
-            "max_tokens": 4096,
+            "max_tokens": self._max_tokens,
             "user_id": self._user_id,
         }
         headers = {
@@ -177,8 +188,10 @@ class DeepSeekAdapter:
                             latency_ms,
                         )
                         if retry < _MAX_RETRIES:
-                            await asyncio.sleep(backoff)
-                            backoff = min(backoff * 2.0, _MAX_BACKOFF_SEC)
+                            backoff = await self._wait_before_retry(
+                                backoff,
+                                response.headers.get("Retry-After"),
+                            )
                             continue
                         break
                     if response.status >= 400:
@@ -195,8 +208,24 @@ class DeepSeekAdapter:
                         latency_ms,
                     )
                     return result
-            except (DeepSeekCircuitBreakerOpen, ValueError, json.JSONDecodeError) as exc:
+            except DeepSeekCircuitBreakerOpen as exc:
                 last_error = exc
+                break
+            except (ValueError, json.JSONDecodeError) as exc:
+                # DeepSeek documents that JSON mode can occasionally return an
+                # empty body. Retry malformed/empty successful responses before
+                # failing over to the caller.
+                last_error = exc
+                logger.warning(
+                    "DeepSeek malformed JSON operation=%s retry=%d/%d error=%s",
+                    operation,
+                    retry,
+                    _MAX_RETRIES,
+                    exc,
+                )
+                if retry < _MAX_RETRIES:
+                    backoff = await self._wait_before_retry(backoff)
+                    continue
                 break
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
                 last_error = RuntimeError(f"DeepSeek network error: {exc}")
@@ -208,8 +237,7 @@ class DeepSeekAdapter:
                     exc,
                 )
                 if retry < _MAX_RETRIES:
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2.0, _MAX_BACKOFF_SEC)
+                    backoff = await self._wait_before_retry(backoff)
                     continue
                 break
             except RuntimeError as exc:

@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - ".github/workflows/actions-storage-cleanup.yml"
 
 permissions:
   contents: read
@@ -21,7 +23,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Install dependencies
         run: |
@@ -42,16 +43,17 @@ jobs:
             tests/test_llm_router.py \
             tests/test_onboarding.py
 
-      - name: Run full suite diagnostic
+      - name: Run full suite diagnostic on failure
+        if: failure()
         continue-on-error: true
         shell: bash
         run: pytest -q 2>&1 | tee pytest-output.txt
 
-      - name: Upload full-suite output
-        if: always()
+      - name: Upload failure diagnostics
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-output
           path: pytest-output.txt
-          if-no-files-found: error
-          retention-days: 7
+          if-no-files-found: warn
+          retention-days: 3

@@ -1,5 +1,6 @@
 name: Actions storage cleanup
 
+# Routine CI ignores changes to this file, so cleanup can run without creating new test artifacts.
 on:
   push:
     paths:

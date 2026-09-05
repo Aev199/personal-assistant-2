@@ -280,23 +280,6 @@ def _resolve_assignee_tolerant(
     return assignee_id, assignee_name, None
 
 
-async def _send_batch_done_summary(message: Message, count: int) -> int | None:
-    text = f"✅ Выполнил {count} {_action_word(count)}."
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📅 Открыть сегодня", callback_data="nav:today"),
-                InlineKeyboardButton(text="📥 Inbox", callback_data="nav:inbox:0"),
-            ]
-        ]
-    )
-    try:
-        sent = await message.answer(text, reply_markup=kb)
-        return int(sent.message_id)
-    except Exception:
-        return None
-
-
 async def _ensure_habit_state(conn: asyncpg.Connection, chat_id: int) -> None:
     await conn.execute(
         """
@@ -623,7 +606,6 @@ def install_product_mode() -> None:
     freeform_intake.create_pending_preview = _instant_create_pending_preview
     freeform_intake._resolve_project = _resolve_project_to_inbox
     freeform_intake._resolve_assignee = _resolve_assignee_tolerant
-    freeform_intake._send_batch_summary = _send_batch_done_summary
 
     tick_module.do_tick = _do_tick_with_habits
     lifecycle_module.do_tick_service = _do_tick_with_habits

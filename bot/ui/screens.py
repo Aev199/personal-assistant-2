@@ -573,7 +573,8 @@ async def ui_render_home_more(
             InlineKeyboardButton(text="В работе", callback_data="nav:work:0"),
             InlineKeyboardButton(text="Просроченные", callback_data="nav:overdue:0"),
         ],
-        [InlineKeyboardButton(text="Напоминания", callback_data="nav:reminders:0")],
+        [InlineKeyboardButton(text="Напоминания", callback_data="nav:reminders:0"),
+         InlineKeyboardButton(text="Записи", callback_data="capture:list:0")],
         [
             InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
             InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),

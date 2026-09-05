@@ -33,6 +33,10 @@ async def _toast_home(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppD
         payload = _ui_payload_get(ui_state)
         payload = ui_payload_with_toast(payload, text, ttl_sec=25)
         await ui_set_state(conn, int(callback.message.chat.id), ui_payload=payload)
+    if ui_state.get("ui_screen") in {"capture", "llm_draft"} and payload.get("capture_id"):
+        from bot.services.capture_receipts import render_receipt
+        await render_receipt(callback.message, db_pool, payload["capture_id"], toast=text)
+        return
     await ui_render_home(callback.message, db_pool, tz_name=deps.tz_name, force_new=False)
 
 
@@ -60,6 +64,13 @@ async def _cleanup_batch_summary_if_done(
             pass
 
 
+async def _delete_legacy_preview(callback, db_pool):
+    async with db_pool.acquire() as conn:
+        ui_state = await ui_get_state(conn, int(callback.message.chat.id))
+    if ui_state.get("ui_message_id") != callback.message.message_id:
+        await callback.message.delete()
+
+
 async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     await callback.answer()
     try:
@@ -73,6 +84,7 @@ async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: A
             UPDATE pending_actions
             SET status='confirmed', confirmed_at=NOW()
             WHERE id=$1 AND chat_id=$2 AND status='pending'
+              AND (expires_at IS NULL OR expires_at > NOW())
             RETURNING id
             """,
             int(pending_action_id),
@@ -104,7 +116,7 @@ async def cb_llm_confirm(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: A
         )
         # Try to delete the draft message (clean up batch cards)
         try:
-            await callback.message.delete()
+            await _delete_legacy_preview(callback, db_pool)
         except Exception:
             pass
     except Exception as exc:
@@ -133,7 +145,7 @@ async def cb_llm_cancel(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
     async with db_pool.acquire() as conn:
         await mark_pending_action_status(conn, pending_action_id=int(pending_action_id), status="cancelled")
     try:
-        await callback.message.delete()
+        await _delete_legacy_preview(callback, db_pool)
     except Exception:
         pass
     await _toast_home(callback, db_pool, deps, "✖ Черновик отменён")
@@ -198,6 +210,13 @@ async def cb_llm_toggle_event_kind(callback: CallbackQuery, db_pool: asyncpg.Poo
 
         await update_pending_action_payload(conn, pending_action_id=int(pending_action_id), payload=payload)
 
+    async with db_pool.acquire() as conn:
+        current_ui = await ui_get_state(conn, int(message.chat.id))
+    draft_payload = {"pending_action_id": int(pending_action_id), "kind": "event"}
+    capture_id = _ui_payload_get(current_ui).get("capture_id")
+    if capture_id:
+        draft_payload["capture_id"] = capture_id
+
     try:
         await ui_render(
             bot=message.bot,
@@ -206,7 +225,7 @@ async def cb_llm_toggle_event_kind(callback: CallbackQuery, db_pool: asyncpg.Poo
             text=_preview_text("event", payload, tz_name=deps.tz_name),
             reply_markup=_preview_keyboard("event", int(pending_action_id), payload),
             screen="llm_draft",
-            payload={"pending_action_id": int(pending_action_id), "kind": "event"},
+            payload=draft_payload,
             fallback_message=message,
             parse_mode=None,
         )
@@ -269,7 +288,7 @@ async def cb_llm_confirm_all(callback: CallbackQuery, db_pool: asyncpg.Pool, dep
 
     await callback.answer()
     try:
-        await callback.message.delete()
+        await _delete_legacy_preview(callback, db_pool)
     except Exception:
         pass
 

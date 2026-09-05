@@ -1,4 +1,4 @@
-﻿"""LLM-based free-form intake for text and voice messages."""
+"""LLM-based free-form intake for text and voice messages."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import hashlib
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
@@ -850,7 +850,9 @@ def _intake_system_prompt_batch(
         "- Prefer task for actionable work items.\n"
         "- Never invent project codes or team members outside the provided lists.\n"
         "- If a field is not applicable, omit it or set to null.\n"
-        "- Keep the 'reply' field under 200 characters, summarizing what was created.\n\n"
+        "- Do not invent missing dates, times, people, or duration. Keep incomplete items with null fields.\n"
+        "- Keep personal and work items separate, even if their destinations are not configured.\n"
+        "- Keep the 'reply' field under 200 characters. Describe classification, never claim anything was saved.\n\n"
         "AVAILABLE_PROJECTS:\n"
         f"{project_lines}\n\n"
         "AVAILABLE_TEAM:\n"
@@ -928,7 +930,7 @@ def _is_complex_message(text: str) -> bool:
     return False
 
 
-def _normalize_batch_payloads(raw_response: dict[str, Any]) -> tuple[list[IntakeIntent], str]:
+def _normalize_batch_payloads(raw_response: dict[str, Any], *, retain_incomplete: bool = False) -> tuple[list[IntakeIntent], str]:
     """Convert batch classification response into a list of IntakeIntent + reply."""
     actions_data = raw_response.get("actions") or []
     if not isinstance(actions_data, list):
@@ -941,8 +943,10 @@ def _normalize_batch_payloads(raw_response: dict[str, Any]) -> tuple[list[Intake
         # Add dummy reply for normalize compatibility; batch items don't have individual reply
         item = dict(item)
         item.setdefault("reply", "")
+        if item.get("action") == "reminder":
+            item.setdefault("reminder_text", item.get("title") or "")
         intent = _normalize_intake_payload(item)
-        if intent.action != "reply":
+        if intent.action != "reply" or (retain_incomplete and intent.needs_followup):
             intents.append(intent)
     return intents, reply
 
@@ -957,22 +961,6 @@ def _plural(count: int, one: str, few: str, many: str) -> str:
     if 2 <= n <= 4:
         return few
     return many
-
-
-async def _send_batch_summary(message: Message, count: int) -> int | None:
-    """Send a one-tap 'Confirm All' card after a batch of individual drafts.
-    Returns the sent message_id, or None on failure."""
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-    word = _plural(count, "черновик", "черновика", "черновиков")
-    text = f"📋 {count} {word} выше — всё верно?"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"✅ Подтвердить всё ({count})", callback_data="llm:batch_confirm"),
-    ]])
-    try:
-        sent = await message.answer(text, reply_markup=kb)
-        return sent.message_id
-    except Exception:
-        return None
 
 
 async def _handle_batch_intents(
@@ -999,6 +987,12 @@ async def _handle_batch_intents(
     if llm is None:
         return False
 
+    from bot.services.capture_receipts import receipt_id, save_receipt, render_receipt
+    capture_id = receipt_id(message)
+    receipt = {"raw_text": text, "source": source, "items": []}
+    # Persist before classification or side effects. No TTL: uncertainty is not deletion.
+    await save_receipt(db_pool, int(message.chat.id), capture_id, receipt)
+
     try:
         user_prompt = _build_classification_user_prompt(
             raw_text=text,
@@ -1015,21 +1009,14 @@ async def _handle_batch_intents(
             ),
             user_prompt=user_prompt,
         )
-        intents, batch_reply = _normalize_batch_payloads(response)
+        intents, batch_reply = _normalize_batch_payloads(response, retain_incomplete=True)
     except Exception:
-        logger.exception("batch classify failed, falling back to single classify")
-        return False  # fallback to single-intent handler will retry
-
-    if not intents:
-        # Nothing actionable found — show reply as toast
-        toast = batch_reply or "Не смог выделить конкретные действия. Уточните запрос."
-        await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
-        await _rerender_with_toast(message, db_pool, deps, toast)
+        logger.exception("batch classify failed; original retained")
+        await render_receipt(message, db_pool, capture_id)
         return True
 
-    # Process each intent sequentially through the same pending-preview pipeline
-    processed_count = 0
-    errors: list[str] = []
+    receipt["items"] = [{"intent": asdict(intent)} for intent in intents]
+    await save_receipt(db_pool, int(message.chat.id), capture_id, receipt)
 
     for idx, intent in enumerate(intents):
         try:
@@ -1053,47 +1040,15 @@ async def _handle_batch_intents(
                 action_hint=action_hint,
             )
             if ok:
-                processed_count += 1
+                receipt["items"][idx]["pending_action_id"] = int(ok)
         except Exception:
-            logger.exception("batch intent %d failed", idx)
-            errors.append(intent.title or intent.reminder_text or intent.idea_text or f"#{idx + 1}")
+            logger.exception("batch intent %d failed; retained for review", idx)
+        # An incomplete or unavailable destination stays in the receipt, in its
+        # original category. Never silently turn a personal item into a work task.
+        await save_receipt(db_pool, int(message.chat.id), capture_id, receipt)
 
-    # ── Tidy up ──
     await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
-
-    # Summary card: one-tap confirm for the whole batch
-    if processed_count > 0:
-        summary_msg_id = await _send_batch_summary(message, processed_count)
-        if summary_msg_id:
-            async with db_pool.acquire() as conn:
-                ui_state = await ui_get_state(conn, int(message.chat.id))
-                payload = _ui_payload_get(ui_state)
-                payload["batch_summary_msg_id"] = int(summary_msg_id)
-                await ui_set_state(conn, int(message.chat.id), ui_payload=payload)
-
-    # Only signal errors that the user needs to know about.
-
-    if processed_count > 0 and errors:
-        await _rerender_with_toast(
-            message, db_pool, deps,
-            f"⚠️ {processed_count} черновиков создано, {len(errors)} не удалось: {', '.join(errors[:3])}",
-        )
-        return True
-
-    if not processed_count and errors:
-        await _rerender_with_toast(
-            message, db_pool, deps,
-            f"❌ Не удалось обработать: {', '.join(errors[:5])}",
-        )
-        return True
-
-    if not processed_count and not errors:
-        await _rerender_with_toast(
-            message, db_pool, deps,
-            batch_reply or "Не удалось создать черновики.",
-        )
-        return True
-
+    await render_receipt(message, db_pool, capture_id)
     return True
 
 
@@ -1116,11 +1071,10 @@ async def _execute_pending_intent(
     persona_mode: str,
     followup_data: dict[str, object],
     action_hint: str | None,
-) -> bool:
+) -> int | bool:
     """Execute a single intake intent: validate, resolve references, create pending preview.
 
-    Returns True if a draft was successfully created or handled.
-    Returns False if the intent is incomplete (needs followup — skipped in batch mode).
+    Return its durable action ID, or False when it needs details or review.
     """
     if intent.needs_followup:
         return False
@@ -1160,7 +1114,7 @@ async def _execute_pending_intent(
         if duplicate:
             return False
 
-        await create_pending_preview(
+        return await create_pending_preview(
             message, db_pool=db_pool, deps=deps, kind="task",
             payload={
                 "title": intent.title,
@@ -1173,7 +1127,6 @@ async def _execute_pending_intent(
             fingerprint=task_fingerprint, summary=intent.title, source=source,
             force_new=True,
         )
-        return True
 
     if action == "personal_task":
         gtasks = getattr(deps, "gtasks", None)
@@ -1186,13 +1139,12 @@ async def _execute_pending_intent(
         if duplicate:
             return False
 
-        await create_pending_preview(
+        return await create_pending_preview(
             message, db_pool=db_pool, deps=deps, kind="personal_task",
             payload={"title": intent.title, "deadline_local": due_local.isoformat() if due_local else ""},
             fingerprint=personal_fingerprint, summary=intent.title, source=source,
             force_new=True,
         )
-        return True
 
     if action == "event":
         start_local = _parse_local_dt(intent.start_at_local, tz_name)
@@ -1239,7 +1191,7 @@ async def _execute_pending_intent(
         if duplicate:
             return False
 
-        await create_pending_preview(
+        return await create_pending_preview(
             message, db_pool=db_pool, deps=deps, kind="event",
             payload={
                 "title": intent.title, "calendar_kind": kind,
@@ -1252,7 +1204,6 @@ async def _execute_pending_intent(
             fingerprint=event_fingerprint, summary=summary, source=source,
             force_new=True,
         )
-        return True
 
     if action == "idea":
         gtasks = getattr(deps, "gtasks", None)
@@ -1262,13 +1213,12 @@ async def _execute_pending_intent(
         duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), idea_fingerprint)
         if duplicate:
             return False
-        await create_pending_preview(
+        return await create_pending_preview(
             message, db_pool=db_pool, deps=deps, kind="idea",
             payload={"idea_text": intent.idea_text},
             fingerprint=idea_fingerprint, summary=intent.idea_text, source=source,
             force_new=True,
         )
-        return True
 
     if action == "reminder":
         remind_local = _parse_local_dt(intent.remind_at_local, tz_name)
@@ -1280,13 +1230,12 @@ async def _execute_pending_intent(
         duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), reminder_fingerprint)
         if duplicate:
             return False
-        await create_pending_preview(
+        return await create_pending_preview(
             message, db_pool=db_pool, deps=deps, kind="reminder",
             payload={"reminder_text": intent.reminder_text, "remind_at_local": remind_local.isoformat()},
             fingerprint=reminder_fingerprint, summary=intent.reminder_text, source=source,
             force_new=True,
         )
-        return True
 
     return False
 
@@ -1934,7 +1883,9 @@ async def handle_freeform_voice(
         return True
 
     try:
-        progress_msg = await message.answer("🎙 Распознаю речь…")
+        from bot.ui.render import ui_render
+        await ui_render(bot=message.bot, db_pool=db_pool, chat_id=int(message.chat.id),
+                        text="Распознаю голосовое…", reply_markup=None, fallback_message=message)
         buf = io.BytesIO()
         await message.bot.download(file_id, destination=buf)
         transcript = await llm.transcribe_audio(
@@ -1942,10 +1893,6 @@ async def handle_freeform_voice(
             filename=filename,
             mime_type=mime_type,
         )
-        try:
-            await message.bot.delete_message(chat_id=message.chat.id, message_id=progress_msg.message_id)
-        except Exception:
-            pass
     except Exception:
         logger.exception("voice transcription failed")
         return False
@@ -1960,7 +1907,7 @@ async def handle_freeform_voice(
         )
         return True
 
-    return await handle_freeform_text(
+    handled = await handle_freeform_text(
         message,
         deps=deps,
         db_pool=db_pool,
@@ -1969,6 +1916,11 @@ async def handle_freeform_voice(
         state=state,
         prepend_text=prepend_text,
     )
+    if handled:
+        from bot.utils import try_delete_user_message
+        await try_delete_user_message(message)
+    return handled
+
 
 
 def _voice_file_meta(message: Message) -> tuple[str | None, str, str | None, int]:

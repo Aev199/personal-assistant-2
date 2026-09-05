@@ -147,6 +147,9 @@ async def create_pending_preview(
             ttl_sec=max(45, ttl_sec),
         )
 
+    if ".batch" in source:
+        return int(pending_action_id)
+
     kb = _preview_keyboard(kind, int(pending_action_id), payload)
     text = _preview_text(kind, payload, tz_name=deps.tz_name)
 

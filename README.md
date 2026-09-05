@@ -12,6 +12,33 @@ The bot is optimized for low-friction capture rather than form filling:
 - unknown project references fall back to `INBOX`;
 - Postgres remains the source of truth for internal tasks, reminders, runtime state, and audit data.
 
+## Free-form lists and SPA receipts
+
+Multi-item free-form text and voice messages use the existing batch classifier
+and execution pipeline. Before classification, the original text/transcript is
+retained in a durable receipt in `conversation_state` (no expiration). Each
+recognized item and its pending-action ID are then saved incrementally. Incomplete
+items and unavailable destinations remain in the receipt instead of disappearing
+or being moved to the work Inbox. Work tasks and Google Tasks personal lists stay
+separate. The explicit `/setup` import is a separate existing flow.
+
+One SPA receipt replaces the current screen and distinguishes executed actions,
+pending confirmations, errors, and unprocessed items using database statuses.
+Calendar events still require confirmation; open their individual preview from
+the receipt. Receipts can be reopened through **More → Records (Записи)**, including
+the original input. The receipt itself is not a scheduled reminder: items lacking
+required details still need clarification before they can be executed.
+
+`ASSISTANT_RICH_MESSAGES=1` (default) enables a collapsed original-input section
+using Telegram Rich Messages when supported by the installed aiogram. Rich content
+is edited on the existing SPA anchor. Unsupported rich payloads retry ordinary
+HTML on the same anchor; older aiogram installations use HTML directly. Set the
+variable to `0` to disable rich rendering. Long source text remains available via
+pagination in both modes. Voice progress also uses the SPA renderer.
+
+References: [Rich message formatting](https://core.telegram.org/bots/api#rich-message-formatting-options),
+[editing messages](https://core.telegram.org/bots/api#editmessagetext).
+
 ## Daily use
 
 Send one task as plain text; choosing a project or due date is optional. The home

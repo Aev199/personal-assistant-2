@@ -79,6 +79,8 @@ def build_core(
     fsm_persistence = FsmPersistenceMiddleware()
     dp.message.middleware.register(fsm_persistence)
     dp.callback_query.middleware.register(fsm_persistence)
+    from bot.handlers.captures import register as register_captures
+    register_captures(dp)
     register_nav(dp)
     register_projects(dp)
     register_tasks(dp)

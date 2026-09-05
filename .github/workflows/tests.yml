@@ -39,6 +39,7 @@ jobs:
             tests/test_home_screen_contract.py \
             tests/test_secondary_surfaces_contract.py \
             tests/test_freeform_intake.py \
+            tests/test_capture_spa.py \
             tests/test_system_freeform_route.py \
             tests/test_system_undo.py \
             tests/test_deepseek_adapter.py \

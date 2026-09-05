@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import asyncpg
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import InlineKeyboardMarkup, Message
+
+try:
+    from aiogram.types import InputRichMessage
+except ImportError:  # Older deployments keep the ordinary HTML screen.
+    InputRichMessage = None
 
 from bot.ui.state import ui_get_state, ui_set_state
 from bot.utils.telegram import fit_telegram_text
@@ -88,6 +94,7 @@ async def ui_render(
     preferred_message_id: int | None = None,
     force_new: bool = False,
     parse_mode: str | None = "HTML",
+    rich_html: str | None = None,
 ) -> int:
     """Render/update the single UI message for a chat.
 
@@ -99,6 +106,12 @@ async def ui_render(
     Notes:
     - payload can be {} to explicitly clear payload; do not use `payload or ...`
     """
+    use_rich = bool(
+        rich_html and InputRichMessage is not None
+        and callable(getattr(bot, "send_rich_message", None))
+        and os.getenv("ASSISTANT_RICH_MESSAGES", "1").lower() not in {"0", "false", "off"}
+    )
+    rich_message = InputRichMessage(html=rich_html) if use_rich else None
     text = fit_telegram_text(text, parse_mode=parse_mode)
 
     # ── Breadcrumb ──
@@ -155,13 +168,12 @@ async def ui_render(
     for ui_msg_id in edit_targets:
         for _ in range(3):
             try:
+                content = {"rich_message": rich_message} if use_rich else {
+                    "text": text, "parse_mode": parse_mode, "disable_web_page_preview": True,
+                }
                 await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=int(ui_msg_id),
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
-                    disable_web_page_preview=True,
+                    chat_id=chat_id, message_id=int(ui_msg_id),
+                    reply_markup=reply_markup, **content,
                 )
                 await _persist(ui_message_id=int(ui_msg_id))
                 await _cleanup_after_success(int(ui_msg_id))
@@ -176,6 +188,10 @@ async def ui_render(
                     await _persist(ui_message_id=int(ui_msg_id))
                     await _cleanup_after_success(int(ui_msg_id))
                     return int(ui_msg_id)
+                if use_rich:
+                    # A rejected rich payload must fall back on the same anchor.
+                    use_rich = False
+                    continue
                 break
             except Exception:
                 break
@@ -185,16 +201,25 @@ async def ui_render(
     send_failed = False
     for _ in range(3):
         try:
-            sent = await bot.send_message(
-                chat_id,
-                text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-                disable_web_page_preview=True,
-            )
+            if use_rich:
+                sent = await bot.send_rich_message(
+                    chat_id=chat_id, rich_message=rich_message, reply_markup=reply_markup,
+                )
+            else:
+                sent = await bot.send_message(
+                    chat_id, text, reply_markup=reply_markup,
+                    parse_mode=parse_mode, disable_web_page_preview=True,
+                )
             break
         except TelegramRetryAfter as e:
             await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
+        except TelegramBadRequest:
+            if use_rich:
+                use_rich = False
+                continue
+            send_failed = True
+            logger.exception("ui_render send failed", extra={"chat_id": int(chat_id)})
+            break
         except Exception:
             send_failed = True
             logger.exception("ui_render send failed", extra={"chat_id": int(chat_id)})

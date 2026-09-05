@@ -1069,8 +1069,6 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             reply_markup=main_menu_kb(),
         )
 
-    await try_delete_user_message(message)
-
     raw = (message.text or "").strip()
     if raw and not raw.startswith("/"):
         handled = await handle_freeform_text(
@@ -1082,6 +1080,7 @@ async def cmd_unknown(message: Message, state: FSMContext, deps: AppDeps, db_poo
             state=state,
         )
         if handled:
+            await try_delete_user_message(message)
             await ensure_main_menu(message, db_pool)
             return
     if not raw:
@@ -1112,8 +1111,6 @@ async def msg_voice_freeform(message: Message, state: FSMContext, deps: AppDeps,
 
     if db_pool is None:
         return await message.answer("⚠️ Голосовые сообщения доступны только при подключённой БД и LLM.")
-
-    await try_delete_user_message(message)
 
     handled = await handle_freeform_voice(
         message,

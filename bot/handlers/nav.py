@@ -94,6 +94,13 @@ async def _rerender_current_screen(
         if persona_mode is None:
             persona_mode = await get_persona_mode(conn, chat_id)
 
+    if screen == "capture" and payload.get("capture_id"):
+        from bot.services.capture_receipts import render_receipt
+        return await render_receipt(message, db_pool, payload["capture_id"],
+                                    page=payload.get("capture_page", 0), toast=toast)
+    if screen == "captures":
+        from bot.services.capture_receipts import render_receipt_list
+        return await render_receipt_list(message, db_pool, page=payload.get("page", 0))
     tz_name = deps.tz_name
     if screen == "secondary":
         return await ui_render_home_more(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)

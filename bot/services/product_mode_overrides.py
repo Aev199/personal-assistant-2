@@ -26,8 +26,11 @@ async def _safe_rerender_with_toast(message: Message, db_pool: asyncpg.Pool, dep
         return int(await _original_rerender(message, db_pool, deps, toast))
     except Exception:
         try:
-            sent = await message.answer(toast)
-            return int(sent.message_id)
+            from bot.ui.render import ui_render
+            return await ui_render(
+                bot=message.bot, db_pool=db_pool, chat_id=int(message.chat.id),
+                text=toast, reply_markup=None, fallback_message=message, force_new=True,
+            )
         except Exception:
             return 0
 
@@ -82,40 +85,6 @@ async def _preview_without_stale_draft_fingerprint(
     return int(pending_action_id)
 
 
-async def _send_accurate_batch_summary(message: Message, count: int) -> int | None:
-    if not product_mode._env_enabled("ASSISTANT_INSTANT_CAPTURE", True):
-        text = f"📋 Создано черновиков: {int(count)}. Всё верно?"
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=f"✅ Подтвердить всё ({int(count)})",
-                        callback_data="llm:batch_confirm",
-                    )
-                ]
-            ]
-        )
-    else:
-        text = (
-            f"✅ Обработал действий: {int(count)}. "
-            "Задачи, идеи и напоминания сохранены сразу; "
-            "события подтвердите в карточках выше."
-        )
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="📅 Открыть сегодня", callback_data="nav:today"),
-                    InlineKeyboardButton(text="📥 Inbox", callback_data="nav:inbox:0"),
-                ]
-            ]
-        )
-    try:
-        sent = await message.answer(text, reply_markup=keyboard)
-        return int(sent.message_id)
-    except Exception:
-        return None
-
-
 def _escaped_focus_line(focus: dict[str, Any] | None, tz) -> str | None:
     if _original_focus_line is None:
         return None
@@ -140,7 +109,6 @@ def install_product_mode_overrides() -> None:
 
     freeform_intake._rerender_with_toast = _safe_rerender_with_toast
     freeform_intake.create_pending_preview = _preview_without_stale_draft_fingerprint
-    freeform_intake._send_batch_summary = _send_accurate_batch_summary
     product_mode._focus_line = _escaped_focus_line
 
     _installed = True

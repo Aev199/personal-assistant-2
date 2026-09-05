@@ -36,6 +36,53 @@ def _qd_suffix(quick_done: bool) -> str:
     return ":qd1" if quick_done else ""
 
 
+def _short_task_title(value: object, limit: int = 76) -> str:
+    """Keep the list scannable; the task card still shows the full title."""
+    text = " ".join(str(value or "").split()).strip() or "Без названия"
+    if len(text) <= limit:
+        return text
+    cut = text[: max(1, limit - 1)].rstrip()
+    if " " in cut:
+        word_cut = cut.rsplit(" ", 1)[0].rstrip()
+        if len(word_cut) >= limit // 2:
+            cut = word_cut
+    return f"{cut}…"
+
+
+def _daily_task_lines_and_buttons(rows, tz, *, offset: int = 0, quick_done: bool = False):
+    """Render action first and keep project/deadline/assignee as quiet metadata."""
+    lines: list[str] = []
+    buttons: list[InlineKeyboardButton] = []
+    for number, row in enumerate(rows or [], offset + 1):
+        title = _short_task_title(row.get("title"))
+        lines.append(f"<b>{number}. {h(title)}</b>")
+
+        meta: list[str] = []
+        project = str(row.get("project") or "").strip()
+        if project:
+            meta.append(project)
+        deadline = legacy.to_local(row.get("deadline"), tz)
+        if deadline:
+            meta.append(f"до {deadline.strftime('%d.%m %H:%M')}")
+        assignee = str(row.get("assignee") or "").strip()
+        if assignee and assignee != "—":
+            meta.append(assignee)
+        if meta:
+            lines.append(f"<i>{h(' · '.join(meta))}</i>")
+
+        buttons.append(
+            InlineKeyboardButton(
+                text=f"✓ {number}" if quick_done else str(number),
+                callback_data=(
+                    f"task:{int(row['id'])}:done_quick"
+                    if quick_done
+                    else f"task:{int(row['id'])}"
+                ),
+            )
+        )
+    return lines, [buttons[i:i + 4] for i in range(0, len(buttons), 4)]
+
+
 async def ui_render_home(
     message: Message | None,
     db_pool: asyncpg.Pool,
@@ -160,19 +207,18 @@ async def ui_render_all_tasks(
     if not rows:
         lines.extend(["", "Список пуст. Просто напишите или надиктуйте новое дело."])
     else:
-        task_lines, task_buttons = legacy._readable_tasks(
+        task_lines, task_buttons = _daily_task_lines_and_buttons(
             rows,
             tz,
             offset=page * page_size,
             quick_done=quick_done,
         )
         lines.extend(["", *task_lines])
-        lines.extend(["", "✓ Номер — завершить" if quick_done else "Номер — открыть"])
         kb.extend(task_buttons)
         kb.append(
             [
                 InlineKeyboardButton(
-                    text="Открывать" if quick_done else "✓ Завершать",
+                    text="Открывать" if quick_done else "✓ Готово",
                     callback_data=(
                         f"nav:all:all:{page}:qd0"
                         if quick_done
@@ -341,7 +387,11 @@ async def ui_render_today(
     kb: list[list[InlineKeyboardButton]] = []
     if tasks:
         lines.extend(["", "<b>Дела</b>"])
-        task_lines, task_buttons = legacy._readable_tasks(tasks, tz, offset=page * page_size)
+        task_lines, task_buttons = _daily_task_lines_and_buttons(
+            tasks,
+            tz,
+            offset=page * page_size,
+        )
         lines.extend(task_lines)
         kb.extend(task_buttons)
 

@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 from bot.ui import simple_daily
 
@@ -68,12 +69,35 @@ class SimpleDailyUiTests(unittest.IsolatedAsyncioTestCase):
 
         kwargs = render.await_args.kwargs
         callbacks = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+        labels = [b.text for row in kwargs["reply_markup"].inline_keyboard for b in row]
         self.assertIn("<b>Дела · 2</b>", kwargs["text"])
         self.assertNotIn("INBOX", kwargs["text"])
+        self.assertIn("<b>2. Выдать нагрузки</b>", kwargs["text"])
+        self.assertIn("<i>BAG · Иванов</i>", kwargs["text"])
+        self.assertNotIn("Номер — открыть", kwargs["text"])
+        self.assertIn("✓ Готово", labels)
         self.assertIn("task:1", callbacks)
         self.assertIn("nav:all:all:0:qd1", callbacks)
         self.assertEqual(callbacks[-2:], ["nav:today", "nav:secondary"])
         self.assertFalse(any(cb and cb.startswith("nav:all:today") for cb in callbacks))
+
+    def test_task_list_truncates_long_titles_without_hiding_full_card_data(self) -> None:
+        full_title = "Очень длинное название задачи " * 10
+        rows = [
+            {
+                "id": 5,
+                "title": full_title,
+                "project": "TEST",
+                "assignee": "—",
+                "deadline": None,
+            }
+        ]
+        lines, keyboard = simple_daily._daily_task_lines_and_buttons(rows, ZoneInfo("UTC"))
+        text = "\n".join(lines)
+        self.assertIn("…</b>", text)
+        self.assertNotIn(full_title, text)
+        self.assertIn("<i>TEST</i>", text)
+        self.assertEqual(keyboard[0][0].callback_data, "task:5")
 
     async def test_secondary_menu_hides_internal_product_surfaces(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=1), bot=SimpleNamespace())

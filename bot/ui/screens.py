@@ -292,261 +292,94 @@ async def ui_render_home(
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
-    """Render GTD Focus Home screen (lightweight)."""
+    """Show actionable work without requiring a project or a due date."""
     if not message:
         return 0
-
     chat_id = int(message.chat.id)
-    tz_name = tz_name or _tz_name()
-    tz = resolve_tzinfo(tz_name)
-
-    # UTC naive for DB comparisons (pool init sets session TZ=UTC, supports TIMESTAMP and TIMESTAMPTZ)
-    now_utc_naive = datetime.now(UTC).replace(tzinfo=None)
-
-    # Local day bounds -> UTC naive
+    tz = resolve_tzinfo(tz_name or _tz_name())
     now_local = datetime.now(tz)
-    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_local = start_local + timedelta(days=1)
-    start_utc_naive = start_local.astimezone(UTC).replace(tzinfo=None)
-    end_utc_naive = end_local.astimezone(UTC).replace(tzinfo=None)
-
-    def _due_str(dt_local: datetime | None, mode: str) -> str:
-        if not dt_local:
-            return "без срока"
-        if mode == "overdue":
-            return f"был {dt_local.strftime('%d.%m %H:%M')}"
-        if mode == "today":
-            return f"до {dt_local.strftime('%H:%M')}"
-        # work
-        return f"до {dt_local.strftime('%d.%m %H:%M')}"
-
-    def _preview_lines(
-        marker: str,
-        project: str,
-        title: str,
-        assignee: str,
-        dt_local: datetime | None,
-        mode: str,
-        *,
-        persona_mode: str,
-    ) -> list[str]:
-        proj = (project or "—").strip()
-        t = (title or "").strip()
-        a = _visible_assignee(assignee, persona_mode)
-        # keep lines readable
-        t_show = t if len(t) <= 90 else (t[:89] + "…")
-        due = _due_str(dt_local, mode)
-        if len(t) > 40:
-            if a:
-                return [
-                    f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
-                    f"   {h(a)} → <i>{h(due)}</i>",
-                ]
-            return [
-                f"{marker} <b>[{h(proj)}]</b> {h(t_show)}",
-                f"   <i>{h(due)}</i>",
-            ]
-        if a:
-            return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — {h(a)}, <i>{h(due)}</i>"]
-        return [f"{marker} <b>[{h(proj)}]</b> {h(t_show)} — <i>{h(due)}</i>"]
+    end_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    end_utc = end_local.astimezone(UTC).replace(tzinfo=None)
 
     try:
         async with db_pool.acquire() as conn:
             payload, toast_line = await _take_screen_payload(conn, chat_id)
-            persona_mode = await get_persona_mode(conn, chat_id)
-
-            # Context: current project + INBOX
-            current_project_id = await conn.fetchval(
-                "SELECT current_project_id FROM user_settings WHERE chat_id=$1",
-                chat_id,
-            )
-            current_project_code = "—"
-            current_project_is_inbox = False
-            if current_project_id:
-                row = await conn.fetchrow("SELECT code FROM projects WHERE id=$1", int(current_project_id))
-                if row and row.get("code"):
-                    current_project_code = str(row["code"])
-                    current_project_is_inbox = current_project_code.upper() == "INBOX"
-
-            inbox_id = await conn.fetchval("SELECT id FROM projects WHERE code='INBOX' LIMIT 1")
-
-            # Counts
-            overdue_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND kind != 'super' AND deadline IS NOT NULL AND deadline < $1",
-                now_utc_naive,
-            )
-            today_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('done','postponed') AND kind != 'super' AND deadline IS NOT NULL AND deadline >= $1 AND deadline < $2",
-                start_utc_naive,
-                end_utc_naive,
-            )
-            inbox_count = 0
-            if inbox_id:
-                inbox_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM tasks WHERE status != 'done' AND kind != 'super' AND project_id=$1",
-                    int(inbox_id),
-                )
-
-            # Work (in_progress): focus within current project if set and not INBOX; otherwise global.
-            work_where = "t.status='in_progress' AND t.kind != 'super'"
-            args: list = []
-            if current_project_id and not current_project_is_inbox:
-                work_where += " AND t.project_id=$1"
-                args = [int(current_project_id)]
-
-            work_count = await conn.fetchval(f"SELECT COUNT(*) FROM tasks t WHERE {work_where}", *args) if args else await conn.fetchval(f"SELECT COUNT(*) FROM tasks t WHERE {work_where}")
-
-            # Previews
-            overdue_rows = await conn.fetch(
+            # Reserve space for undated work even when overdue tasks accumulate.
+            due = list(await conn.fetch(
                 """
-                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
-                FROM tasks t
-                JOIN projects p ON p.id=t.project_id
-                LEFT JOIN team tm ON tm.id=t.assignee_id
-                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline < $1
-                ORDER BY t.deadline ASC
-                LIMIT 1
-                """,
-                now_utc_naive,
-            )
-
-            today_rows = await conn.fetch(
+                SELECT t.id, t.title, t.deadline, p.code AS project
+                FROM tasks t JOIN projects p ON p.id=t.project_id
+                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super'
+                  AND t.deadline < $1
+                ORDER BY t.deadline ASC, t.id ASC LIMIT 3
+                """, end_utc,
+            ))
+            other = list(await conn.fetch(
                 """
-                SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
-                FROM tasks t
-                JOIN projects p ON p.id=t.project_id
-                LEFT JOIN team tm ON tm.id=t.assignee_id
-                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super' AND t.deadline IS NOT NULL AND t.deadline >= $1 AND t.deadline < $2
-                ORDER BY t.deadline ASC
-                LIMIT 1
-                """,
-                start_utc_naive,
-                end_utc_naive,
+                SELECT t.id, t.title, t.deadline, p.code AS project
+                FROM tasks t JOIN projects p ON p.id=t.project_id
+                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super'
+                  AND (t.deadline IS NULL OR t.deadline >= $1)
+                ORDER BY (t.status='in_progress') DESC,
+                         (t.deadline IS NULL) DESC, t.deadline ASC,
+                         t.created_at ASC, t.id ASC
+                LIMIT $2
+                """, end_utc, 5 - len(due),
+            ))
+            reminder = await conn.fetchrow(
+                "SELECT id, text, remind_at FROM reminders WHERE is_sent=FALSE "
+                "ORDER BY remind_at ASC, id ASC LIMIT 1"
             )
-
-            if args:
-                work_rows = await conn.fetch(
-                    f"""
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
-                    FROM tasks t
-                    JOIN projects p ON p.id=t.project_id
-                    LEFT JOIN team tm ON tm.id=t.assignee_id
-                    WHERE {work_where}
-                    ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC
-                    LIMIT 1
-                    """,
-                    *args,
-                )
-            else:
-                work_rows = await conn.fetch(
-                    f"""
-                    SELECT t.id, t.title, p.code AS project, COALESCE(tm.name,'—') AS assignee, t.deadline
-                    FROM tasks t
-                    JOIN projects p ON p.id=t.project_id
-                    LEFT JOIN team tm ON tm.id=t.assignee_id
-                    WHERE {work_where}
-                    ORDER BY t.deadline ASC NULLS LAST, t.created_at DESC
-                    LIMIT 1
-                    """
-                )
-
-            # Persist payload without toast
             await ui_set_state(conn, chat_id, ui_payload=payload)
 
-        # Build text
-        lines: list[str] = []
-        if toast_line:
-            lines.extend([toast_line, ""])
-
-        lines.append("🧠 <b>Фокус</b>")
-        lines.append(f"⭐ Проект: <b>{h(str(current_project_code))}</b>")
-        lines.append("")
-        lines.append(
-            f"🔥 Срочно: <b>{int(overdue_count or 0)}</b> • "
-            f"⏰ Сегодня: <b>{int(today_count or 0)}</b> • "
-            f"⚡ В работе: <b>{int(work_count or 0)}</b> • "
-            f"📥 Inbox: <b>{int(inbox_count or 0)}</b>"
-        )
-
-        lines.append("")
-        lines.append("<b>Ближайшее</b>")
-        if overdue_rows:
-            r = overdue_rows[0]
-            dt_local = to_local(r.get("deadline"), tz)
-            lines.extend(
-                _preview_lines(
-                    "🔥",
-                    r.get("project") or "",
-                    r.get("title") or "",
-                    r.get("assignee") or "—",
-                    dt_local,
-                    "overdue",
-                    persona_mode=persona_mode,
-                )
-            )
-        if today_rows:
-            r = today_rows[0]
-            dt_local = to_local(r.get("deadline"), tz)
-            lines.extend(
-                _preview_lines(
-                    "⏰",
-                    r.get("project") or "",
-                    r.get("title") or "",
-                    r.get("assignee") or "—",
-                    dt_local,
-                    "today",
-                    persona_mode=persona_mode,
-                )
-            )
-        if work_rows:
-            r = work_rows[0]
-            dt_local = to_local(r.get("deadline"), tz)
-            lines.extend(
-                _preview_lines(
-                    "⚡",
-                    r.get("project") or "",
-                    r.get("title") or "",
-                    r.get("assignee") or "—",
-                    dt_local,
-                    "work",
-                    persona_mode=persona_mode,
-                )
-            )
-        if not (overdue_rows or today_rows or work_rows):
-            lines.append("—")
-
-        kb: list[list[InlineKeyboardButton]] = [
-            [
-                InlineKeyboardButton(text="⚡ Быстрая задача", callback_data="quick:task"),
-                InlineKeyboardButton(text="💡 Идея", callback_data="quick:idea"),
-            ]
-        ]
-        if inbox_id:
-            if int(inbox_count or 0) > 0:
-                kb.append([
-                    InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
-                    InlineKeyboardButton(text="🧹 Разобрать Inbox", callback_data="inbox:triage:start"),
-                ])
-            else:
-                kb.append([
-                    InlineKeyboardButton(text=f"📥 Inbox ({int(inbox_count or 0)})", callback_data="nav:inbox:0"),
-                    InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0"),
-                ])
+        rows = due + other
+        lines = ([toast_line, ""] if toast_line else []) + ["<b>Дела</b>"]
+        if not rows:
+            lines.extend([
+                "", "Начните с одного дела, которое не хочется забыть.",
+                "Например: «Проверить расчёт осадки». Срок указывать необязательно.",
+            ])
         else:
-            kb.append([InlineKeyboardButton(text=f"⚡ В работе ({int(work_count or 0)})", callback_data="nav:work:0")])
-        kb.append([InlineKeyboardButton(text="⋯ Ещё", callback_data="nav:secondary")])
+            lines.extend(["", "Открыть дело — нажать на название. Выполнить — ✓."])
+        if reminder:
+            when = to_local(reminder.get("remind_at"), tz)
+            label = when.strftime("%d.%m %H:%M") if when else ""
+            lines.extend(["", f"Напоминание {h(label)}: {h(str(reminder['text'])[:180])}"])
+        lines.extend(["", "Новое дело можно просто написать в чат или надиктовать."])
 
+        kb: list[list[InlineKeyboardButton]] = []
+        for row in rows:
+            title = str(row.get("title") or "Без названия")
+            title = title if len(title) <= 42 else title[:41] + "…"
+            deadline = to_local(row.get("deadline"), tz)
+            if deadline:
+                label = deadline.strftime("%H:%M") if deadline.date() == now_local.date() else deadline.strftime("%d.%m %H:%M")
+                title = f"{label} · {title}"
+            kb.append([
+                InlineKeyboardButton(text=title, callback_data=f"task:{int(row['id'])}"),
+                InlineKeyboardButton(text="✓", callback_data=f"task:{int(row['id'])}:done_quick"),
+            ])
+        undo = payload.get("undo") or {}
+        if (undo.get("new_status") == "done" and undo.get("task_id")
+                and float(undo.get("exp") or 0) > datetime.now(UTC).timestamp()):
+            kb.append([InlineKeyboardButton(
+                text="Вернуть выполненное дело", callback_data=f"undo:task:{int(undo['task_id'])}",
+            )])
+        kb.append([
+            InlineKeyboardButton(text="Сегодня", callback_data="nav:today"),
+            InlineKeyboardButton(text="Все задачи", callback_data="nav:all"),
+        ])
+        if not rows:
+            kb.append([InlineKeyboardButton(text="Добавить несколько дел", callback_data="onboard:start")])
+        kb.append([
+            InlineKeyboardButton(text="Добавить", callback_data="nav:add"),
+            InlineKeyboardButton(text="Ещё", callback_data="nav:secondary"),
+        ])
         return await ui_render(
-            bot=message.bot,
-            db_pool=db_pool,
-            chat_id=chat_id,
-            text="\n".join(lines).strip(),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-            screen="home",
-            fallback_message=message,
-            preferred_message_id=preferred_message_id,
-            parse_mode="HTML",
-            force_new=force_new,
+            bot=message.bot, db_pool=db_pool, chat_id=chat_id,
+            text="\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+            screen="home", fallback_message=message,
+            preferred_message_id=preferred_message_id, parse_mode="HTML", force_new=force_new,
         )
     except Exception:
         logger.exception("ui_render_home failed", extra={"chat_id": chat_id})
@@ -727,11 +560,20 @@ async def ui_render_home_more(
     toast_line = await _pop_screen_toast(db_pool, chat_id)
     persona_mode = await _persona_mode_or_lead(db_pool, chat_id)
 
-    lines = ["⋯ <b>Ещё</b>", "", "Вспомогательные разделы и редкие действия."]
+    lines = ["<b>Ещё</b>"]
     if toast_line:
         lines = [toast_line, ""] + lines
 
     kb_rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="Проекты", callback_data="nav:projects"),
+            InlineKeyboardButton(text="Входящие", callback_data="nav:inbox:0"),
+        ],
+        [
+            InlineKeyboardButton(text="В работе", callback_data="nav:work:0"),
+            InlineKeyboardButton(text="Просроченные", callback_data="nav:overdue:0"),
+        ],
+        [InlineKeyboardButton(text="Напоминания", callback_data="nav:reminders:0")],
         [
             InlineKeyboardButton(text="📊 Статистика", callback_data="home:stats"),
             InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync:status"),
@@ -789,34 +631,17 @@ async def ui_render_help(
 ) -> int:
     chat_id = int(message.chat.id)
     toast_line = await _pop_screen_toast(db_pool, chat_id)
-    persona_mode = await _persona_mode_or_lead(db_pool, chat_id)
     help_lines = [
-        "❓ <b>Короткая справка</b>",
-        "",
-        "• Нижнее меню дает быстрый вход в ежедневные разделы.",
-        "• Большинство действий обновляет один экран, без лишней ленты.",
-        "• Для задачи чаще всего достаточно открыть карточку и выбрать `✅` или `📅`.",
-        "• Быстрое создание работает через `⚡ Быстрая задача` или `➕ Добавить`.",
-        "",
-        "<b>Основные разделы</b>",
-        "• 📅 Сегодня: план дня, напоминания и календарные события.",
-        "• 📋 Все задачи: общий список с фильтрами, включая просрочку.",
-        "• 📁 Проекты: структура и рабочие списки.",
-        "• 🔔 Напоминания: активные напоминания и snooze.",
-        "• ➕ Добавить: создать задачу, событие или напоминание.",
+        "<b>Как пользоваться</b>", "",
+        "Пишите в чат обычным текстом. Одного дела достаточно; проект и срок необязательны.", "",
+        "«Проверить расчёт осадки» — задача без срока.",
+        "«До пятницы отправить расчёт заказчику» — задача со сроком.",
+        "«Напомни завтра в 10 позвонить» — напоминание.", "",
+        "На главном экране видны и дела без даты. В «Сегодня» — задачи со сроком на сегодня, напоминания и календарь.",
+        "Нажмите название дела, чтобы изменить его, или ✓ на главном экране, чтобы выполнить.", "",
+        "Можно отправить голосовое сообщение. Несколько дел сразу — через «Добавить» → «Добавить списком».",
+        "«↩️ Отмена» отменяет последнюю добавленную запись. После ✓ в течение 30 секунд можно нажать «Вернуть выполненное дело».",
     ]
-    if is_solo_mode(persona_mode):
-        help_lines.append("• ⚡ В работе: быстрый вход в активные задачи.")
-    else:
-        help_lines.append("• 👥 Команда: сотрудники и их загрузка.")
-    help_lines.extend(
-        [
-            "• /help: открыть эту справку в любой момент.",
-            "",
-            "<b>Пример свободного ввода</b>",
-            "<i>напомни купить хлеб завтра в 18:00</i>",
-        ]
-    )
     help_text = "\n".join(help_lines)
     if toast_line:
         help_text = f"{toast_line}\n\n{help_text}"
@@ -1018,7 +843,12 @@ async def ui_render_add_menu(
     force_new: bool = False,
 ) -> int:
     toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
-    text = "➕ <b>Что добавить?</b>"
+    text = (
+        "<b>Добавить</b>\n\n"
+        "Напишите дело прямо в чат. Например: «Проверить расчёт осадки до пятницы».\n"
+        "Можно без срока или голосом.\n\n"
+        "Для списка дел или пошагового ввода — кнопки ниже."
+    )
     if toast_line:
         text = f"{toast_line}\n\n{text}"
     return await ui_render(

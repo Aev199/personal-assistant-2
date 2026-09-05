@@ -12,7 +12,7 @@ class MainMenuKeyboardTests(unittest.TestCase):
         self.assertEqual(kb.keyboard[0][0].text, "📅 Сегодня")
         self.assertEqual(kb.keyboard[0][1].text, "➕ Добавить")
         self.assertEqual(kb.keyboard[1][0].text, "📋 Все задачи")
-        self.assertEqual(kb.keyboard[1][1].text, "📁 Проекты")
+        self.assertEqual(kb.keyboard[1][1].text, "🔔 Напоминания")
         self.assertEqual(kb.keyboard[2][0].text, "↩️ Отмена")
         self.assertEqual(len(kb.keyboard), 3)
 
@@ -26,7 +26,7 @@ class MainMenuKeyboardTests(unittest.TestCase):
 
     def test_offline_mode_keeps_add_position(self) -> None:
         kb = main_menu_kb("lead", llm_online=False)
-        self.assertEqual(kb.keyboard[0][1].text, "⚠️ ИИ офлайн")
+        self.assertEqual(kb.keyboard[0][1].text, "➕ Добавить")
 
 
 if __name__ == "__main__":

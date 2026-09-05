@@ -12,16 +12,30 @@ The bot is optimized for low-friction capture rather than form filling:
 - unknown project references fall back to `INBOX`;
 - Postgres remains the source of truth for internal tasks, reminders, runtime state, and audit data.
 
+## Daily use
+
+Send one task as plain text; choosing a project or due date is optional. The home
+screen shows up to three tasks due before tomorrow and uses the remaining slots
+(up to five total) for undated or upcoming work. This keeps unscheduled work
+visible even when overdue tasks accumulate. These are internal Postgres tasks;
+Google Tasks personal lists are not mirrored into this screen.
+
+Open a task by its title, or tap the separate ✓ button to complete it. The home
+screen offers the existing 30-second undo for completion. The persistent menu
+keeps Today, Add, All tasks, Reminders, and capture undo; Projects, Inbox, and
+administration are under More. Add stays available if the LLM is offline so
+manual capture remains reachable.
+
 ## Initial population
 
-A new or nearly empty assistant should be populated in one pass instead of task by task.
+Start with one task, or import a short list when several tasks are already on your mind.
 
 Start with either:
 
 - `/setup`;
-- `➕ Добавить` → `🧠 Загрузить всё разом`.
+- `➕ Добавить` → `Добавить списком`.
 
-Then send one large text or voice message containing everything currently held in mind. The setup flow:
+Then send a text or voice list. Two or three items are enough to start. The setup flow:
 
 1. splits the dump into independent items;
 2. classifies work, personal tasks, ideas, reminders, and events;

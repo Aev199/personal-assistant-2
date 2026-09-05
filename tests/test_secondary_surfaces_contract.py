@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -93,11 +93,11 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_home_more(message, db_pool=object())
 
         rows = _callbacks(render.await_args.kwargs["reply_markup"])
-        self.assertEqual(rows[0], ["nav:all", "nav:reminders:0"])
-        self.assertEqual(rows[1], ["home:stats", "sync:status"])
-        self.assertEqual(rows[2], ["nav:help", "nav:team"])
-        self.assertEqual(rows[3], ["settings:persona:solo"])
-        self.assertEqual(rows[4], ["nav:home"])
+        callbacks = [cb for row in rows for cb in row]
+        for cb in ("nav:projects", "nav:inbox:0", "nav:work:0", "nav:overdue:0",
+                   "nav:reminders:0", "home:stats", "sync:status", "nav:help", "nav:team",
+                   "settings:persona:solo", "nav:home"):
+            self.assertIn(cb, callbacks)
 
     async def test_secondary_menu_hides_team_in_solo(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=15), bot=SimpleNamespace())
@@ -110,10 +110,11 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_home_more(message, db_pool=object())
 
         rows = _callbacks(render.await_args.kwargs["reply_markup"])
-        self.assertEqual(rows[0], ["nav:all", "nav:reminders:0"])
-        self.assertEqual(rows[1], ["home:stats", "sync:status"])
-        self.assertEqual(rows[2], ["nav:help", "settings:persona:lead"])
-        self.assertEqual(rows[3], ["nav:home"])
+        callbacks = [cb for row in rows for cb in row]
+        self.assertNotIn("nav:team", callbacks)
+        self.assertIn("settings:persona:lead", callbacks)
+        self.assertIn("nav:projects", callbacks)
+        self.assertIn("nav:home", callbacks)
 
     async def test_help_screen_has_fast_escape_routes(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=12), bot=SimpleNamespace())
@@ -126,12 +127,12 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_help(message, db_pool=object())
 
         text = render.await_args.kwargs["text"]
-        self.assertIn("/help", text)
+        self.assertIn("Пишите в чат", text)
         rows = _callbacks(render.await_args.kwargs["reply_markup"])
         self.assertEqual(rows[0], ["nav:today", "nav:add"])
         self.assertEqual(rows[1], ["nav:secondary", "nav:home"])
 
-    async def test_help_screen_switches_team_copy_to_work_for_solo(self) -> None:
+    async def test_help_screen_explains_capture_without_team_setup(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=16), bot=SimpleNamespace())
 
         with (
@@ -142,7 +143,7 @@ class SecondarySurfacesContractTests(unittest.IsolatedAsyncioTestCase):
             await ui_render_help(message, db_pool=object())
 
         text = render.await_args.kwargs["text"]
-        self.assertIn("⚡ В работе", text)
+        self.assertIn("проект и срок необязательны", text)
         self.assertNotIn("👥 Команда", text)
 
     async def test_stats_screen_is_secondary_not_daily_action_hub(self) -> None:

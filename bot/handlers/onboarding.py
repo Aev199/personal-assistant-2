@@ -143,11 +143,11 @@ async def _render_start(message: Message, db_pool: asyncpg.Pool) -> int:
         db_pool=db_pool,
         chat_id=int(message.chat.id),
         text=(
-            "🧠 <b>Первичное наполнение</b>\n\n"
-            "Пришлите одним большим сообщением или голосом всё, что сейчас держите в голове. "
-            "Не сортируйте и не оформляйте. Можно перечислить рабочие проекты, личные дела, идеи, "
-            "покупки, встречи и то, что давно откладывается.\n\n"
-            "Я разложу записи, предложу проекты и покажу один общий итог перед сохранением."
+            "<b>Добавить несколько дел</b>\n\n"
+            "Пришлите список текстом или голосом. Можно начать с двух-трёх дел.\n\n"
+            "Например: проверить расчёт; до пятницы отправить письмо; "
+            "напомнить завтра в 10 позвонить.\n\n"
+            "Перед сохранением появится общий список для проверки."
         ),
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
@@ -183,7 +183,7 @@ async def _render_preview(
     )
 
     lines = [
-        "🧠 <b>Черновая система готова</b>",
+        "<b>Проверьте записи</b>",
         "",
         f"Всего записей: <b>{len(intents)}</b>",
         f"💼 Работа: <b>{counts['task']}</b> · 🏡 Личное: <b>{counts['personal_task']}</b>",
@@ -194,7 +194,7 @@ async def _render_preview(
         lines.extend(["", "<b>Предлагаемые проекты</b>"])
         lines.extend(f"• {h(name)}" for name in suggested)
     if inbox_count:
-        lines.append(f"\nВ Inbox без проекта: <b>{inbox_count}</b>")
+        lines.append(f"\nБез проекта: <b>{inbox_count}</b>")
 
     sample = [_intent_label(item) for item in intents[:5] if _intent_label(item)]
     if sample:
@@ -202,8 +202,6 @@ async def _render_preview(
         lines.extend(f"• {h(text[:100])}" for text in sample)
     if len(intents) > len(sample):
         lines.append(f"<i>…и ещё {len(intents) - len(sample)}</i>")
-    if provider:
-        lines.extend(["", f"<i>Разобрано через {h(provider)}.</i>"])
 
     keyboard = [
         [InlineKeyboardButton(text="✅ Сохранить всё", callback_data="onboard:confirm:projects")],

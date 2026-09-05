@@ -7,12 +7,12 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeybo
 
 def main_menu_kb(persona_mode: str = "lead", *, llm_online: bool = True) -> ReplyKeyboardMarkup:
     """Persistent bottom keyboard focused on the four daily actions."""
-    del persona_mode
-    add_button = "➕ Добавить" if llm_online else "⚠️ ИИ офлайн"
+    del persona_mode, llm_online
+    add_button = "➕ Добавить"
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text=add_button)],
-            [KeyboardButton(text="📋 Все задачи"), KeyboardButton(text="📁 Проекты")],
+            [KeyboardButton(text="📋 Все задачи"), KeyboardButton(text="🔔 Напоминания")],
             [KeyboardButton(text="↩️ Отмена")],
         ],
         resize_keyboard=True,
@@ -33,7 +33,7 @@ def add_menu_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🧠 Загрузить всё разом",
+                    text="Добавить списком",
                     callback_data="onboard:start",
                 )
             ],

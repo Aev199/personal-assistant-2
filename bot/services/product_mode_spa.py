@@ -1,8 +1,7 @@
 """SPA-safe delivery for useful proactive assistant messages.
 
-A proactive card is sent only when it has actionable content. Weekend briefs are
-opt-in, evening Inbox nudges are opt-in, and a nearly empty assistant stays quiet
-until onboarding has been completed (or enough tasks already exist).
+Proactive cards use the same minimal product language as the daily UI: tasks and
+today. Technical buckets such as Inbox remain internal implementation details.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ import bot.services.product_mode as product_mode
 from bot.services.onboarding_state import load_onboarding_status
 from bot.tz import resolve_tz_name
 from bot.ui.render import ui_render
+from bot.utils import h
 
 
 _installed = False
@@ -73,6 +73,31 @@ def _habit_policy(
         "evening_allowed": evening_allowed,
         "reason": reason,
     }
+
+
+def _focus_line(focus: dict[str, Any] | None, tz: ZoneInfo) -> str | None:
+    if not focus:
+        return None
+    title = str(focus.get("title") or "").strip()
+    if not title:
+        return None
+    project = str(focus.get("code") or "").strip()
+    if project.upper() == "INBOX":
+        project = ""
+    deadline = focus.get("deadline")
+    when = ""
+    if deadline is not None:
+        try:
+            if getattr(deadline, "tzinfo", None) is None:
+                from datetime import timezone
+
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            when = deadline.astimezone(tz).strftime("%H:%M")
+        except Exception:
+            when = ""
+    meta = " · ".join(value for value in (project, when) if value)
+    suffix = f" · {h(meta)}" if meta else ""
+    return f"🎯 {h(title)}{suffix}"
 
 
 async def _replace_spa_anchor(
@@ -153,11 +178,12 @@ async def maybe_send_habit_messages_spa(
         evening_hour=evening_hour,
     ):
         lines = [
-            "☀️ <b>План на сегодня</b>",
-            f"Сегодня: <b>{snapshot['today']}</b> задач · <b>{snapshot['reminders']}</b> напоминаний",
-            f"Просрочено: <b>{snapshot['overdue']}</b> · Inbox: <b>{snapshot['inbox']}</b>",
+            "☀️ <b>Сегодня</b>",
+            f"Дел на сегодня: <b>{snapshot['today']}</b> · напоминаний: <b>{snapshot['reminders']}</b>",
         ]
-        focus_line = product_mode._focus_line(snapshot.get("focus"), tz)
+        if int(snapshot.get("overdue") or 0):
+            lines.append(f"Просрочено: <b>{snapshot['overdue']}</b>")
+        focus_line = _focus_line(snapshot.get("focus"), tz)
         if focus_line:
             lines.extend(["", focus_line])
 
@@ -169,15 +195,9 @@ async def maybe_send_habit_messages_spa(
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text="📅 Открыть сегодня", callback_data="nav:today"),
-                        InlineKeyboardButton(text="➕ Добавить", callback_data="nav:add"),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text=f"📥 Inbox ({snapshot['inbox']})",
-                            callback_data="nav:inbox:0",
-                        )
-                    ],
+                        InlineKeyboardButton(text="Сегодня", callback_data="nav:today"),
+                        InlineKeyboardButton(text="Дела", callback_data="nav:home"),
+                    ]
                 ]
             ),
         )
@@ -202,17 +222,12 @@ async def maybe_send_habit_messages_spa(
             bot=bot,
             chat_id=int(chat_id),
             text=(
-                "🌙 <b>Inbox накопился</b>\n"
-                f"Неразобранных записей: <b>{snapshot['inbox']}</b>."
+                "🌙 <b>Есть дела без проекта</b>\n"
+                f"Таких дел: <b>{snapshot['inbox']}</b>. Они уже есть в общем списке — разбирать их отдельно не обязательно."
             ),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🧹 Разобрать Inbox",
-                            callback_data="inbox:triage:start",
-                        )
-                    ]
+                    [InlineKeyboardButton(text="Открыть дела", callback_data="nav:home")]
                 ]
             ),
         )

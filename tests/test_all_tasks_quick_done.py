@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
 
 class QuickDonePersistenceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_list_render_keeps_undo_and_navigation_on_same_message(self):
+    async def test_list_render_keeps_undo_without_inventing_navigation(self):
         import time
         from bot.ui.render import ui_render
         undo = {"type": "task_status", "task_id": 42, "prev_status": "in_progress",
@@ -103,8 +103,7 @@ class QuickDonePersistenceTests(unittest.IsolatedAsyncioTestCase):
         args = bot.edit_message_text.await_args.kwargs
         self.assertEqual(args["message_id"], 17)
         callbacks = [b.callback_data for row in args["reply_markup"].inline_keyboard for b in row]
-        self.assertIn("undo:task:42", callbacks)
-        self.assertEqual(callbacks[-3:], ["nav:today", "nav:all", "nav:secondary"])
+        self.assertEqual(callbacks, ["undo:task:42"])
         self.assertEqual(save.await_args.kwargs["ui_payload"],
                          {"page": 2, "filter": "nodate", "undo": undo})
         bot.send_message.assert_not_awaited()

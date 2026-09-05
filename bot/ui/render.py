@@ -1,8 +1,8 @@
 """SPA UI renderer.
 
-The Ultimate SPA design keeps a single editable UI message per chat.
-This renderer edits the stored ui_message_id when possible; otherwise it sends
-a new message and stores its id.
+The SPA design keeps a single editable UI message per chat. Individual screens
+own their navigation; the low-level renderer only preserves markup, deduplicates
+callbacks and injects a short-lived undo action when needed.
 """
 
 from __future__ import annotations
@@ -81,6 +81,24 @@ def _pick_edit_targets(
     return targets
 
 
+def _dedupe_keyboard(reply_markup: InlineKeyboardMarkup | None) -> list[list]:
+    rows = list(reply_markup.inline_keyboard) if reply_markup else []
+    seen: set[str] = set()
+    result: list[list] = []
+    for row in rows:
+        unique_row = []
+        for button in row:
+            key = button.callback_data or button.url
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            unique_row.append(button)
+        if unique_row:
+            result.append(unique_row)
+    return result
+
+
 async def ui_render(
     *,
     bot: Bot,
@@ -98,62 +116,43 @@ async def ui_render(
 ) -> int:
     """Render/update the single UI message for a chat.
 
-    Behaviour:
-    - tries to edit stored ui_message_id (unless force_new)
-    - if edit fails, sends a new message, stores its id, and best-effort deletes old UI message
-    - always updates ui_screen + ui_payload in user_settings
-
-    Notes:
-    - payload can be {} to explicitly clear payload; do not use `payload or ...`
+    The renderer deliberately does not invent navigation. Each screen owns its
+    visible actions, so a compact task card stays compact instead of receiving a
+    second global menu row.
     """
     use_rich = bool(
-        rich_html and InputRichMessage is not None
+        rich_html
+        and InputRichMessage is not None
         and callable(getattr(bot, "send_rich_message", None))
         and os.getenv("ASSISTANT_RICH_MESSAGES", "1").lower() not in {"0", "false", "off"}
     )
     rich_message = InputRichMessage(html=rich_html) if use_rich else None
     text = fit_telegram_text(text, parse_mode=parse_mode)
 
-    # Load current UI state once.
     async with db_pool.acquire() as conn:
         state = await ui_get_state(conn, chat_id)
         old_ui_msg_id = state.get("ui_message_id")
         existing_payload = state.get("ui_payload") or {}
         existing_screen = str(state.get("ui_screen") or "home")
 
-    # Keep one predictable navigation row on every screen, including task cards.
-    from aiogram.types import InlineKeyboardButton
     from bot.ui.state import _undo_active
-    nav_callbacks = {"nav:today", "nav:all", "nav:secondary"}
-    keyboard = [
-        [button for button in row if button.callback_data not in nav_callbacks]
-        for row in (reply_markup.inline_keyboard if reply_markup else [])
-    ]
-    seen = set()
-    unique_rows = []
-    for row in keyboard:
-        unique_row = []
-        for button in row:
-            key = button.callback_data or button.url
-            if key and key in seen:
-                continue
-            if key:
-                seen.add(key)
-            unique_row.append(button)
-        if unique_row:
-            unique_rows.append(unique_row)
-    keyboard = unique_rows
+
+    keyboard = _dedupe_keyboard(reply_markup)
     undo = _undo_active(existing_payload)
     if undo and screen in {"today", "all_tasks"}:
-        keyboard.insert(0, [InlineKeyboardButton(
-            text="Отменить завершение", callback_data=f"undo:task:{int(undo['task_id'])}",
-        )])
-    keyboard.append([
-        InlineKeyboardButton(text="Сегодня", callback_data="nav:today"),
-        InlineKeyboardButton(text="Все задачи", callback_data="nav:all"),
-        InlineKeyboardButton(text="Ещё", callback_data="nav:secondary"),
-    ])
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        from aiogram.types import InlineKeyboardButton
+
+        undo_callback = f"undo:task:{int(undo['task_id'])}"
+        if not any(
+            button.callback_data == undo_callback
+            for row in keyboard
+            for button in row
+        ):
+            keyboard.insert(
+                0,
+                [InlineKeyboardButton(text="Отменить завершение", callback_data=undo_callback)],
+            )
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard) if keyboard else None
 
     new_payload: dict = existing_payload
     if payload is not None:
@@ -194,55 +193,58 @@ async def ui_render(
             except Exception:
                 pass
 
-    # Try edit candidate UI messages.
     for ui_msg_id in edit_targets:
         for _ in range(3):
             try:
                 content = {"rich_message": rich_message} if use_rich else {
-                    "text": text, "parse_mode": parse_mode, "disable_web_page_preview": True,
+                    "text": text,
+                    "parse_mode": parse_mode,
+                    "disable_web_page_preview": True,
                 }
                 await bot.edit_message_text(
-                    chat_id=chat_id, message_id=int(ui_msg_id),
-                    reply_markup=reply_markup, **content,
+                    chat_id=chat_id,
+                    message_id=int(ui_msg_id),
+                    reply_markup=reply_markup,
+                    **content,
                 )
                 await _persist(ui_message_id=int(ui_msg_id))
                 await _cleanup_after_success(int(ui_msg_id))
                 return int(ui_msg_id)
-            except TelegramRetryAfter as e:
-                await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
-            except TelegramBadRequest as e:
-                # A legitimate no-op edit is still a successful render.  Treat
-                # it as success so repeated renders do not create fresh UI
-                # messages and move the SPA to the bottom of the chat.
-                if "message is not modified" in str(e).lower():
+            except TelegramRetryAfter as exc:
+                await asyncio.sleep(float(getattr(exc, "retry_after", 1.0)) + 0.1)
+            except TelegramBadRequest as exc:
+                if "message is not modified" in str(exc).lower():
                     await _persist(ui_message_id=int(ui_msg_id))
                     await _cleanup_after_success(int(ui_msg_id))
                     return int(ui_msg_id)
                 if use_rich:
-                    # A rejected rich payload must fall back on the same anchor.
                     use_rich = False
                     continue
                 break
             except Exception:
                 break
 
-    # Send new UI message.
     sent = None
     send_failed = False
     for _ in range(3):
         try:
             if use_rich:
                 sent = await bot.send_rich_message(
-                    chat_id=chat_id, rich_message=rich_message, reply_markup=reply_markup,
+                    chat_id=chat_id,
+                    rich_message=rich_message,
+                    reply_markup=reply_markup,
                 )
             else:
                 sent = await bot.send_message(
-                    chat_id, text, reply_markup=reply_markup,
-                    parse_mode=parse_mode, disable_web_page_preview=True,
+                    chat_id,
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=True,
                 )
             break
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(float(getattr(exc, "retry_after", 1.0)) + 0.1)
         except TelegramBadRequest:
             if use_rich:
                 use_rich = False

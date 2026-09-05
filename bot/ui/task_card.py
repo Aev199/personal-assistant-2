@@ -1,8 +1,4 @@
-"""Task card UI (keyboard).
-
-Kept separate from handlers so other screens (overdue/tails) can reuse the
-same compact drill-down experience.
-"""
+"""Task card keyboards for the compact daily UI."""
 
 from __future__ import annotations
 
@@ -15,8 +11,8 @@ def task_deadline_kb(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="📅 Сегодня 18:00", callback_data=f"task:{task_id}:dlset:today"),
-                InlineKeyboardButton(text="📅 Завтра 18:00", callback_data=f"task:{task_id}:dlset:tomorrow"),
+                InlineKeyboardButton(text="Сегодня 18:00", callback_data=f"task:{task_id}:dlset:today"),
+                InlineKeyboardButton(text="Завтра 18:00", callback_data=f"task:{task_id}:dlset:tomorrow"),
             ],
             [
                 InlineKeyboardButton(text="+3 дня", callback_data=f"task:{task_id}:dlset:+3"),
@@ -26,10 +22,7 @@ def task_deadline_kb(task_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Без срока", callback_data=f"task:{task_id}:dlset:none"),
                 InlineKeyboardButton(text="Ввести дату", callback_data=f"task:{task_id}:dlset:manual"),
             ],
-            [
-                InlineKeyboardButton(text="⬅ Назад", callback_data=f"task:{task_id}"),
-                InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-            ],
+            [InlineKeyboardButton(text="Назад", callback_data=f"task:{task_id}")],
         ]
     )
 
@@ -50,62 +43,45 @@ def task_card_kb(
     return_label: str | None = None,
     persona_mode: str = "lead",
 ) -> InlineKeyboardMarkup:
-    """Task card keyboard (Drill-down + compact UI)."""
+    """Keep daily task actions small; legacy capabilities stay in handlers."""
+    del in_gtasks, gtasks_dirty, subtasks, is_inbox
 
     status = (status or "todo").lower()
     fallback_back_cb = f"task:{int(parent_task_id)}" if parent_task_id else f"proj:{int(project_id)}"
     back_cb = (return_cb or "").strip() or fallback_back_cb
-    back_label = (return_label or "").strip() or "⬅ Назад"
+    back_label = (return_label or "").strip() or "Назад"
 
     def _triage_row() -> list[list[InlineKeyboardButton]]:
         if not triage:
             return []
         return [
             [
-                InlineKeyboardButton(text="➡ Следующая", callback_data="inbox:triage:next"),
-                InlineKeyboardButton(text="✖ Выйти", callback_data="inbox:triage:exit"),
+                InlineKeyboardButton(text="Следующая", callback_data="inbox:triage:next"),
+                InlineKeyboardButton(text="Выйти", callback_data="inbox:triage:exit"),
             ]
         ]
 
     if not expanded:
-        rows = []
+        rows: list[list[InlineKeyboardButton]] = []
         if status != "done":
-            rows.append([
-                InlineKeyboardButton(text="Готово", callback_data=f"task:{task_id}:done"),
-                InlineKeyboardButton(text="Срок", callback_data=f"task:{task_id}:dl"),
-                InlineKeyboardButton(text="Изменить", callback_data=f"task:{task_id}:more"),
-            ])
-        rows.append([InlineKeyboardButton(text="Назад", callback_data=back_cb)])
+            rows.append(
+                [
+                    InlineKeyboardButton(text="Готово", callback_data=f"task:{task_id}:done"),
+                    InlineKeyboardButton(text="Срок", callback_data=f"task:{task_id}:dl"),
+                    InlineKeyboardButton(text="Изменить", callback_data=f"task:{task_id}:more"),
+                ]
+            )
+        rows.append([InlineKeyboardButton(text=back_label, callback_data=back_cb)])
         rows.extend(_triage_row())
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    # Expanded (⋯ Ещё): secondary actions
-    # Nav buttons (⬅ Назад / ⬅️ Домой) are always at the bottom — consistent with compact mode.
-    rows: list[list[InlineKeyboardButton]] = []
-
-    rows.append([
-        InlineKeyboardButton(text="В работу", callback_data=f"task:{task_id}:in_progress"),
-        InlineKeyboardButton(text="В проект", callback_data=f"task:{task_id}:move"),
-    ])
-    rows.append([
-        InlineKeyboardButton(text="↳ Подзадачи…", callback_data=f"task:{task_id}:subtasks"),
-        InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less"),
-    ])
-    rows.append([
-        InlineKeyboardButton(text="🧩 Связи…", callback_data=f"task:{task_id}:relations"),
-    ])
-    if is_solo_mode(persona_mode):
-        rows.append([InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone")])
-    else:
-        rows.append([
-            InlineKeyboardButton(text="👤 Исполнитель", callback_data=f"task:{task_id}:assignee"),
-            InlineKeyboardButton(text="⏸ Отложить", callback_data=f"task:{task_id}:postpone"),
-        ])
-    rows.append([
-        InlineKeyboardButton(text=back_label, callback_data=back_cb),
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-    ])
-
+    rows = [
+        [InlineKeyboardButton(text="Проект", callback_data=f"task:{task_id}:move")],
+    ]
+    if not is_solo_mode(persona_mode):
+        rows.append([InlineKeyboardButton(text="Исполнитель", callback_data=f"task:{task_id}:assignee")])
+    rows.append([InlineKeyboardButton(text="Отложить", callback_data=f"task:{task_id}:postpone")])
+    rows.append([InlineKeyboardButton(text="Свернуть", callback_data=f"task:{task_id}:less")])
+    rows.append([InlineKeyboardButton(text=back_label, callback_data=back_cb)])
     rows.extend(_triage_row())
-
     return InlineKeyboardMarkup(inline_keyboard=rows)

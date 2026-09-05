@@ -19,7 +19,7 @@ class TaskCardKeyboardTests(unittest.TestCase):
         rows = [[btn.callback_data for btn in row] for row in kb.inline_keyboard]
         self.assertEqual(rows, [["task:10:done", "task:10:dl", "task:10:more"], ["nav:inbox:0"]])
 
-    def test_expanded_card_keeps_secondary_layer_compact(self) -> None:
+    def test_expanded_card_exposes_only_common_edits(self) -> None:
         kb = task_card_kb(
             10,
             20,
@@ -30,14 +30,12 @@ class TaskCardKeyboardTests(unittest.TestCase):
             return_label="back",
         )
 
-        rows = [[btn.callback_data for btn in row] for row in kb.inline_keyboard]
         callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-        for action in ("assignee", "in_progress", "move", "postpone", "subtasks", "relations"):
+        for action in ("move", "assignee", "postpone", "less"):
             self.assertIn(f"task:10:{action}", callbacks)
+        for action in ("in_progress", "subtasks", "relations", "gtasks"):
+            self.assertNotIn(f"task:10:{action}", callbacks)
         self.assertIn("nav:work:0", callbacks)
-        self.assertNotIn("task:10:to_super", callbacks)
-        self.assertNotIn("task:10:detach", callbacks)
-        self.assertNotIn("task:10:g_sync", callbacks)
 
     def test_solo_card_hides_assignee_actions(self) -> None:
         primary = task_card_kb(

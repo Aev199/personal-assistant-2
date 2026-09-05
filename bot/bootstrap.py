@@ -2,7 +2,6 @@
 
 This module centralizes creation of the aiogram Bot/Dispatcher and wiring of
 external integrations (WebDAV/Obsidian vault, Google Tasks, iCloud CalDAV).
-The refactor keeps production runtime in :mod:`bot.runtime` + modular handlers.
 """
 
 from __future__ import annotations
@@ -26,8 +25,14 @@ from bot.services.product_mode import install_product_mode
 from bot.services.product_mode_overrides import install_product_mode_overrides
 from bot.services.product_mode_spa import install_product_mode_spa
 from bot.services.vault_manager import VaultManager
+from bot.ui.simple_mode import install_simple_ui
 
-from bot.handlers import (
+# Screen functions are imported by value in several handlers/services. Install
+# the minimal facade before importing those modules so production binds the
+# simplified daily UI while legacy renderers remain available internally.
+install_simple_ui()
+
+from bot.handlers import (  # noqa: E402
     register_bulk,
     register_errors,
     register_events,

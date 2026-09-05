@@ -77,84 +77,33 @@ async def ensure_main_menu(
     recreate: bool = False,
     llm_online: bool = True,
 ) -> bool:
-    """Ensure the persistent bottom reply-keyboard is visible.
-
-    Telegram clients may hide reply keyboards; the most reliable way to restore
-    it is to (re)send a message that carries the ReplyKeyboardMarkup. To avoid
-    chat spam, we keep a single anchor message and leave it in place. By
-    default this function is a cheap no-op when the anchor already exists.
-
-    Returns ``True`` when a brand-new anchor message was sent. Callers can use
-    that to force a fresh SPA render below the anchor when they want the layout
-    to be "anchor first, SPA second".
-    """
+    """Retire the old reply keyboard once, keeping navigation inside the SPA."""
+    from aiogram.types import ReplyKeyboardRemove
 
     chat_id = int(message.chat.id)
-
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT menu_message_id, persona_mode FROM user_settings WHERE chat_id=$1",
-            chat_id,
+            "SELECT menu_message_id FROM user_settings WHERE chat_id=$1", chat_id,
         )
         menu_mid = row["menu_message_id"] if row else None
-        persona_mode = "lead"
-        if row:
-            persona_mode = await get_persona_mode(conn, chat_id)
-
-    # Keep anchor compact but explicit so recovery does not look like a blank phantom message.
-    _ANCHOR_TEXT_A = "⌨️ Главное меню"
-    _ANCHOR_TEXT_B = "⌨️ Меню активно"
-
-    stale_menu_mid = int(menu_mid) if menu_mid else None
-    if stale_menu_mid and not refresh and not recreate:
+    if menu_mid == -1:
         return False
-
-    if stale_menu_mid and not recreate:
-        try:
-            await message.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=stale_menu_mid,
-                text=_ANCHOR_TEXT_A,
-                reply_markup=main_menu_kb(persona_mode, llm_online=llm_online),
-            )
-            return False
-        except TelegramBadRequest as e:
-            if "message is not modified" in str(e).lower():
-                try:
-                    await message.bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=stale_menu_mid,
-                        text=_ANCHOR_TEXT_B,
-                        reply_markup=main_menu_kb(persona_mode, llm_online=llm_online),
-                    )
-                    return False
-                except TelegramBadRequest as retry_error:
-                    if "message is not modified" in str(retry_error).lower():
-                        return False
-                except TelegramRetryAfter as retry_after:
-                    await asyncio.sleep(float(getattr(retry_after, "retry_after", 1.0)) + 0.1)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
-        except Exception:
-            pass
-
     try:
-        anchor = await message.answer(_ANCHOR_TEXT_A, reply_markup=main_menu_kb(persona_mode, llm_online=llm_online))
+        notice = await message.answer("Меню обновлено", reply_markup=ReplyKeyboardRemove())
         async with db_pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO user_settings(chat_id, menu_message_id, updated_at) VALUES($1,$2,NOW()) "
-                "ON CONFLICT(chat_id) DO UPDATE SET menu_message_id=EXCLUDED.menu_message_id, updated_at=NOW()",
-                chat_id,
-                int(anchor.message_id),
+                "INSERT INTO user_settings(chat_id, menu_message_id, updated_at) VALUES($1,-1,NOW()) "
+                "ON CONFLICT(chat_id) DO UPDATE SET menu_message_id=-1, updated_at=NOW()", chat_id,
             )
-        if stale_menu_mid and stale_menu_mid != int(anchor.message_id):
-            try:
-                await message.bot.delete_message(chat_id=chat_id, message_id=stale_menu_mid)
-            except Exception:
-                pass
-        return True
+        for mid in (menu_mid, notice.message_id):
+            if mid and int(mid) > 0:
+                try:
+                    await message.bot.delete_message(chat_id=chat_id, message_id=int(mid))
+                except Exception:
+                    pass
     except Exception:
-        return False
+        logger.warning("Could not retire reply keyboard", exc_info=True)
+    return False
 
 
 async def cleanup_main_menu_anchor(message: Message, db_pool: asyncpg.Pool) -> None:
@@ -171,7 +120,7 @@ async def cleanup_main_menu_anchor(message: Message, db_pool: asyncpg.Pool) -> N
             chat_id,
         )
         menu_mid = row["menu_message_id"] if row else None
-        if not menu_mid:
+        if not menu_mid or int(menu_mid) < 0:
             return
         await conn.execute(
             "UPDATE user_settings SET menu_message_id=NULL, updated_at=NOW() WHERE chat_id=$1",
@@ -284,6 +233,39 @@ def _single_column_task_buttons(
     return buttons
 
 
+def _readable_tasks(rows, tz, *, offset=0):
+    """Full task text and stable ID callbacks; numbers only label this screen."""
+    lines = []
+    buttons = []
+    for number, row in enumerate(rows, offset + 1):
+        project = str(row.get("project") or "")
+        title = str(row.get("title") or "Без названия")
+        # Reserve space for every task. Exceptionally long titles stay in the card.
+        from bot.utils.telegram import _tg_utf16_units
+        budget = max(80, 2800 // max(1, len(rows)))
+        label = f"{project} · {title}" if project else title
+        if _tg_utf16_units(h(label)) > budget:
+            while label and _tg_utf16_units(h(label)) > budget - 1:
+                label = label[:-1]
+            project, title = "", label + "…"
+        lines.append(f"<b>{number}. {h(project)}</b> · {h(title)}" if project else f"<b>{number}.</b> {h(title)}")
+        details = []
+        deadline = to_local(row.get("deadline"), tz)
+        if deadline:
+            details.append(deadline.strftime("%d.%m %H:%M"))
+        assignee = row.get("assignee")
+        if assignee and assignee != "—":
+            details.append(str(assignee))
+        if details:
+            lines.append(f"<i>{h(' · '.join(details))}</i>")
+        lines.append("")
+        buttons.extend([
+            InlineKeyboardButton(text=str(number), callback_data=f"task:{int(row['id'])}"),
+            InlineKeyboardButton(text=f"✓ {number}", callback_data=f"task:{int(row['id'])}:done_quick"),
+        ])
+    return lines, [buttons[i:i+4] for i in range(0, len(buttons), 4)]
+
+
 async def ui_render_home(
     message: Message | None,
     db_pool: asyncpg.Pool,
@@ -333,32 +315,22 @@ async def ui_render_home(
             await ui_set_state(conn, chat_id, ui_payload=payload)
 
         rows = due + other
-        lines = ([toast_line, ""] if toast_line else []) + ["<b>Дела</b>"]
+        lines = ([toast_line, ""] if toast_line else []) + ["<b>Ближайшие дела</b>"]
         if not rows:
             lines.extend([
                 "", "Начните с одного дела, которое не хочется забыть.",
                 "Например: «Проверить расчёт осадки». Срок указывать необязательно.",
             ])
         else:
-            lines.extend(["", "Открыть дело — нажать на название. Выполнить — ✓."])
+            task_lines, _ = _readable_tasks(rows, tz)
+            lines.extend(["", *task_lines])
         if reminder:
             when = to_local(reminder.get("remind_at"), tz)
             label = when.strftime("%d.%m %H:%M") if when else ""
             lines.extend(["", f"Напоминание {h(label)}: {h(str(reminder['text'])[:180])}"])
-        lines.extend(["", "Новое дело можно просто написать в чат или надиктовать."])
 
-        kb: list[list[InlineKeyboardButton]] = []
-        for row in rows:
-            title = str(row.get("title") or "Без названия")
-            title = title if len(title) <= 42 else title[:41] + "…"
-            deadline = to_local(row.get("deadline"), tz)
-            if deadline:
-                label = deadline.strftime("%H:%M") if deadline.date() == now_local.date() else deadline.strftime("%d.%m %H:%M")
-                title = f"{label} · {title}"
-            kb.append([
-                InlineKeyboardButton(text=title, callback_data=f"task:{int(row['id'])}"),
-                InlineKeyboardButton(text="✓", callback_data=f"task:{int(row['id'])}:done_quick"),
-            ])
+
+        _, kb = _readable_tasks(rows, tz)
         undo = payload.get("undo") or {}
         if (undo.get("new_status") == "done" and undo.get("task_id")
                 and float(undo.get("exp") or 0) > datetime.now(UTC).timestamp()):
@@ -1413,7 +1385,8 @@ async def ui_render_today(
                 parts.extend(["", "<b>📅 События</b>", "<i>События временно недоступны.</i>"])
 
         if tasks:
-            parts.extend(["", "<i>Нажмите на задачу ниже, чтобы открыть карточку.</i>"])
+            task_lines, _ = _readable_tasks(tasks, tz, offset=page * page_size)
+            parts.extend(["", *task_lines])
         elif reminders:
             parts.extend(["", "<i>Задач на сегодня нет. Ниже только напоминания.</i>"])
         elif events:
@@ -1426,7 +1399,8 @@ async def ui_render_today(
             parts.extend(["", f"🔔 Ближайшее напоминание: <b>{h(hhmm)}</b> — {h(head.get('text') or '')}"])
 
         kb: list[list[InlineKeyboardButton]] = []
-        kb.extend(_single_column_task_buttons(tasks, icon="📅", tz=tz))
+        _, task_buttons = _readable_tasks(tasks, tz, offset=page * page_size)
+        kb.extend(task_buttons)
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:
             nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:today:{page-1}"))
@@ -1658,8 +1632,8 @@ async def ui_render_all_tasks(
     filter_title = filter_titles.get(filter_key, "Все")
 
     lines: list[str] = [
-        "📋 <b>Все задачи</b>",
-        f"<i>Фильтр: {h(filter_title)} · Всего: {total}</i>",
+        "<b>Рабочие задачи</b>",
+        f"<i>{h(filter_title)} · {page * page_size + 1 if rows else 0}–{page * page_size + len(rows)} из {total}</i>",
         "",
     ]
     if toast_line:
@@ -1667,7 +1641,8 @@ async def ui_render_all_tasks(
     if not rows:
         lines.append("По выбранному фильтру задач нет.")
     else:
-        lines.append("Нажмите на задачу ниже, чтобы открыть карточку.")
+        task_lines, _ = _readable_tasks(rows, tz, offset=page * page_size)
+        lines.extend(task_lines)
 
     kb: list[list[InlineKeyboardButton]] = []
     qd_suffix = ":qd1" if quick_done else ""
@@ -1680,17 +1655,14 @@ async def ui_render_all_tasks(
         filter_buttons.append(InlineKeyboardButton(text=text, callback_data=f"nav:all:{key}{qd_suffix}"))
     kb.append(filter_buttons)
 
-    toggle_text = "👁 Карточки" if quick_done else "✅ Quick-Done"
-    toggle_qd_suffix = "" if quick_done else ":qd1"
-    kb.append([InlineKeyboardButton(text=toggle_text, callback_data=f"nav:all:{filter_key}:{page}{toggle_qd_suffix}")])
-
-    kb.extend(_single_column_task_buttons(rows, icon="📋", tz=tz, quick_done=quick_done))
+    _, task_buttons = _readable_tasks(rows, tz, offset=page * page_size)
+    kb.extend(task_buttons)
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"nav:all:{filter_key}:{page-1}{qd_suffix}"))
     if (page + 1) * page_size < total:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"nav:all:{filter_key}:{page+1}{qd_suffix}"))
+        nav_row.append(InlineKeyboardButton(text=f"Далее · ещё {total - (page + 1) * page_size}", callback_data=f"nav:all:{filter_key}:{page+1}{qd_suffix}"))
     if nav_row:
         kb.append(nav_row)
 

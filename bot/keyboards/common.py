@@ -5,21 +5,10 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 
 
-def main_menu_kb(persona_mode: str = "lead", *, llm_online: bool = True) -> ReplyKeyboardMarkup:
-    """Persistent bottom keyboard focused on the four daily actions."""
-    del persona_mode, llm_online
-    add_button = "➕ Добавить"
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text=add_button)],
-            [KeyboardButton(text="📋 Все задачи"), KeyboardButton(text="🔔 Напоминания")],
-            [KeyboardButton(text="↩️ Отмена")],
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False,
-        is_persistent=True,
-        selective=True,
-    )
+def main_menu_kb(persona_mode: str = "lead", *, llm_online: bool = True):
+    """Legacy callers must not restore the retired bottom keyboard."""
+    from aiogram.types import ReplyKeyboardRemove
+    return ReplyKeyboardRemove()
 
 
 def back_home_kb() -> InlineKeyboardMarkup:

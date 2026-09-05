@@ -201,6 +201,7 @@ async def cb_nav_home(callback: CallbackQuery, state: FSMContext, db_pool: async
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
+    await ensure_main_menu(callback.message, db_pool)
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
     final_id = await ui_render_home(
@@ -241,6 +242,7 @@ async def cb_nav_home_more(callback: CallbackQuery, state: FSMContext, db_pool: 
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
+    await ensure_main_menu(callback.message, db_pool)
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
     final_id = await ui_render_home_more(
@@ -304,6 +306,7 @@ async def cb_nav_all(callback: CallbackQuery, state: FSMContext, db_pool: asyncp
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
+    await ensure_main_menu(callback.message, db_pool)
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
     raw_data = str(callback.data or "")
@@ -335,6 +338,7 @@ async def cb_nav_today(callback: CallbackQuery, state: FSMContext, db_pool: asyn
     if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
         return await callback.answer("Недоступно", show_alert=True)
     await callback.answer()
+    await ensure_main_menu(callback.message, db_pool)
     wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
     await state.clear()
     page = 0

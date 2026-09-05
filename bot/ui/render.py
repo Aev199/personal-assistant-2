@@ -114,12 +114,6 @@ async def ui_render(
     rich_message = InputRichMessage(html=rich_html) if use_rich else None
     text = fit_telegram_text(text, parse_mode=parse_mode)
 
-    # ── Breadcrumb ──
-    if screen and screen != "home":
-        crumb = _screen_breadcrumb(screen)
-        if crumb:
-            text = crumb + "\n\n" + text
-
     # Load current UI state once.
     async with db_pool.acquire() as conn:
         state = await ui_get_state(conn, chat_id)
@@ -127,9 +121,32 @@ async def ui_render(
         existing_payload = state.get("ui_payload") or {}
         existing_screen = str(state.get("ui_screen") or "home")
 
+    # Keep one predictable navigation row on every screen, including task cards.
+    from aiogram.types import InlineKeyboardButton
+    from bot.ui.state import _undo_active
+    nav_callbacks = {"nav:today", "nav:all", "nav:secondary"}
+    keyboard = [
+        [button for button in row if button.callback_data not in nav_callbacks]
+        for row in (reply_markup.inline_keyboard if reply_markup else [])
+    ]
+    keyboard = [row for row in keyboard if row]
+    undo = _undo_active(existing_payload)
+    if undo and screen in {"today", "all_tasks"}:
+        keyboard.insert(0, [InlineKeyboardButton(
+            text="Отменить завершение", callback_data=f"undo:task:{int(undo['task_id'])}",
+        )])
+    keyboard.append([
+        InlineKeyboardButton(text="Сегодня", callback_data="nav:today"),
+        InlineKeyboardButton(text="Все задачи", callback_data="nav:all"),
+        InlineKeyboardButton(text="Ещё", callback_data="nav:secondary"),
+    ])
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+
     new_payload: dict = existing_payload
     if payload is not None:
-        new_payload = payload
+        new_payload = dict(payload)
+        if undo and screen in {"today", "all_tasks"}:
+            new_payload["undo"] = undo
     new_screen = str(screen or existing_screen or "home")
     fallback_id = getattr(fallback_message, "message_id", None)
     preferred_id = int(preferred_message_id) if preferred_message_id else None

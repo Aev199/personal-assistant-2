@@ -47,8 +47,8 @@ class HomeScreenContractTests(unittest.IsolatedAsyncioTestCase):
         result, conn = await self.render_home(due, [task(4, "Проверить расчёт"), task(5, "Написать письмо")])
         self.assertEqual(result["screen"], "home")
         buttons = result["reply_markup"].inline_keyboard
-        self.assertEqual([[b.callback_data for b in row] for row in buttons[:5]],
-                         [[f"task:{i}", f"task:{i}:done_quick"] for i in range(1, 6)])
+        self.assertEqual([b.callback_data for row in buttons for b in row if b.callback_data.startswith("task:")],
+                         [value for i in range(1, 6) for value in (f"task:{i}", f"task:{i}:done_quick")])
         # Two non-overlapping sets, stable ordering and no current-project filter:
         # a full overdue queue cannot consume the slots reserved for undated work.
         due_call, other_call = conn.fetch.await_args_list
@@ -114,6 +114,8 @@ class HomeScreenContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(undo["task_id"], 42)
         self.assertEqual(undo["prev_status"], "todo")
         self.assertEqual(undo["new_status"], "done")
+        from bot.ui.state import _undo_active
+        self.assertIsNotNone(_undo_active({"undo": undo}, task_id=42))
         rerender.assert_awaited_once()
         self.assertIs(rerender.await_args.args[0], message)
 

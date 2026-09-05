@@ -777,6 +777,7 @@ async def cb_task_done_quick(callback: CallbackQuery, state: FSMContext, db_pool
         )
         
         undo_payload = {
+            "type": "task_status",
             "exp": _now_ts() + 30,
             "task_id": task_id,
             "prev_status": prev_st,
@@ -858,7 +859,11 @@ async def cb_undo_task(callback: CallbackQuery, state: FSMContext, db_pool: asyn
             background_project_sync(int(info["project_id"]), db_pool, vault, error_logger=lambda w, e, c: db_log_error(db_pool, w, e, c)),
             label="vault_sync",
         )
-        await show_task_card(callback.message, db_pool, task_id, deps=deps)
+        if ui_state.get("ui_screen") in {"home", "today", "all_tasks"}:
+            from bot.handlers.nav import _rerender_current_screen
+            await _rerender_current_screen(callback.message, db_pool, deps=deps)
+        else:
+            await show_task_card(callback.message, db_pool, task_id, deps=deps)
     except Exception as e:
         await callback.answer("❌ Ошибка Undo", show_alert=True)
         await db_log_error(db_pool, "cb_undo_task", e, {"task_id": task_id, "chat_id": chat_id})

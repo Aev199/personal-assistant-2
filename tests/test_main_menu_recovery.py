@@ -179,7 +179,7 @@ class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
         state.clear.assert_awaited_once()
 
     async def test_ensure_main_menu_existing_anchor_is_noop_without_refresh(self) -> None:
-        conn = _Conn(menu_message_id=55)
+        conn = _Conn(menu_message_id=-1)
         pool = _Pool(conn)
         message = SimpleNamespace(
             chat=SimpleNamespace(id=101),
@@ -204,9 +204,10 @@ class MainMenuRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         sent = await ensure_main_menu(message, pool, recreate=True)
 
-        self.assertTrue(sent)
+        self.assertFalse(sent)
         message.answer.assert_awaited_once()
-        message.bot.delete_message.assert_awaited_once_with(chat_id=101, message_id=55)
+        self.assertTrue(message.answer.await_args.kwargs["reply_markup"].remove_keyboard)
+        self.assertEqual(message.bot.delete_message.await_count, 2)
 
 
 if __name__ == "__main__":

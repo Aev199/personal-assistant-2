@@ -58,7 +58,7 @@ class AllTasksQuickDoneTests(unittest.IsolatedAsyncioTestCase):
         kwargs = render.await_args.kwargs
         callbacks = [btn.callback_data for row in kwargs["reply_markup"].inline_keyboard for btn in row]
         self.assertIn("task:42:done_quick", callbacks)
-        self.assertIn("nav:all:all:0", callbacks)
+        self.assertIn("task:42", callbacks)
         self.assertIn("nav:all:today:qd1", callbacks)
 
     async def test_all_tasks_default_mode_keeps_open_task_callback(self) -> None:
@@ -74,9 +74,49 @@ class AllTasksQuickDoneTests(unittest.IsolatedAsyncioTestCase):
         kwargs = render.await_args.kwargs
         callbacks = [btn.callback_data for row in kwargs["reply_markup"].inline_keyboard for btn in row]
         self.assertIn("task:42", callbacks)
-        self.assertIn("nav:all:all:0:qd1", callbacks)
-        self.assertNotIn("task:42:done_quick", callbacks)
+        self.assertIn("Позвонить клиенту", kwargs["text"])
+        self.assertIn("task:42:done_quick", callbacks)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuickDonePersistenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_list_render_keeps_undo_and_navigation_on_same_message(self):
+        import time
+        from bot.ui.render import ui_render
+        undo = {"type": "task_status", "task_id": 42, "prev_status": "in_progress",
+                "new_status": "done", "exp": int(time.time()) + 30}
+        bot = SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock(),
+                              delete_message=AsyncMock())
+        with (
+            patch("bot.ui.render.ui_get_state", AsyncMock(return_value={
+                "ui_message_id": 17, "ui_screen": "all_tasks", "ui_payload": {"undo": undo}})),
+            patch("bot.ui.render.ui_set_state", AsyncMock()) as save,
+        ):
+            await ui_render(bot=bot, db_pool=_Pool(object()), chat_id=1,
+                            text="Рабочие задачи", reply_markup=None, screen="all_tasks",
+                            payload={"page": 2, "filter": "nodate"})
+        args = bot.edit_message_text.await_args.kwargs
+        self.assertEqual(args["message_id"], 17)
+        callbacks = [b.callback_data for row in args["reply_markup"].inline_keyboard for b in row]
+        self.assertIn("undo:task:42", callbacks)
+        self.assertEqual(callbacks[-3:], ["nav:today", "nav:all", "nav:secondary"])
+        self.assertEqual(save.await_args.kwargs["ui_payload"],
+                         {"page": 2, "filter": "nodate", "undo": undo})
+        bot.send_message.assert_not_awaited()
+
+    def test_long_list_keeps_every_task_visible_and_every_action_addressable(self):
+        from zoneinfo import ZoneInfo
+        from bot.ui.screens import _readable_tasks
+        rows = [{"id": n + 100, "project": "Проект", "title": "<&😀>" * 150,
+                 "deadline": None} for n in range(30)]
+        lines, keyboard = _readable_tasks(rows, ZoneInfo("UTC"))
+        text = "\n".join(lines)
+        self.assertLess(len(text.encode("utf-16-le")) // 2, 3600)
+        self.assertIn("<b>30.</b>", text)
+        callbacks = [b.callback_data for row in keyboard for b in row]
+        for row in rows:
+            self.assertIn(f"task:{row['id']}", callbacks)
+            self.assertIn(f"task:{row['id']}:done_quick", callbacks)

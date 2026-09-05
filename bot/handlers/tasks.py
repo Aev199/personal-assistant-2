@@ -463,18 +463,17 @@ async def build_task_card(
     }
     st = status_map.get(status, status)
 
-    lines = [
-        f"📝 <b>ЗАДАЧА</b> #{int(row['id'])}",
-        f"Проект: <b>{h(str(row.get('project_code') or ''))}</b>",
-    ]
-    if not is_solo_mode(persona_mode):
-        lines.append(f"Исполнитель: <b>{h(str(row.get('assignee') or '—'))}</b>")
-    lines.extend(
-        [
-            f"Статус: <b>{h(str(st))}</b>",
-            f"Дедлайн: <b>{h(str(dl))}</b>",
-        ]
-    )
+    lines = [f"<b>{h(str(row.get('title') or 'Без названия'))}</b>"]
+    details = [str(row.get("project_code") or "")]
+    assignee = str(row.get("assignee") or "")
+    if not is_solo_mode(persona_mode) and assignee and assignee != "—":
+        details.append(assignee)
+    if row.get("deadline"):
+        details.append(f"до {dl}")
+    if status != "todo":
+        details.append(st)
+    if any(details):
+        lines.append(h(" · ".join(part for part in details if part)))
 
     if triage_active:
         total = triage.get("total") if isinstance(triage, dict) else None
@@ -489,7 +488,6 @@ async def build_task_card(
         left = max(0, int(undo.get("exp", 0)) - _now_ts())
         lines.append(f"↩️ <i>Можно отменить последнее действие</i> (<b>{left}</b> сек)")
 
-    lines += ["", f"Текст: {h(str(row.get('title') or ''))}"]
 
     if row.get("parent_task_id"):
         lines.append(f"Родитель: #{int(row['parent_task_id'])}")
@@ -525,7 +523,7 @@ async def build_task_card(
 
     if undo:
         undo_tid = int(undo.get("task_id") or 0)
-        label = "↩️ Undo (prev)" if undo_tid != int(task_id) else "↩️ Undo"
+        label = "Отменить последнее действие"
         kb.inline_keyboard.insert(0, [InlineKeyboardButton(text=label, callback_data=f"undo:task:{undo_tid}")])
 
     return "\n".join(lines), kb, kind

@@ -233,7 +233,7 @@ def _single_column_task_buttons(
     return buttons
 
 
-def _readable_tasks(rows, tz, *, offset=0):
+def _readable_tasks(rows, tz, *, offset=0, quick_done=False):
     """Full task text and stable ID callbacks; numbers only label this screen."""
     lines = []
     buttons = []
@@ -258,11 +258,10 @@ def _readable_tasks(rows, tz, *, offset=0):
             details.append(str(assignee))
         if details:
             lines.append(f"<i>{h(' · '.join(details))}</i>")
-        lines.append("")
-        buttons.extend([
-            InlineKeyboardButton(text=str(number), callback_data=f"task:{int(row['id'])}"),
-            InlineKeyboardButton(text=f"✓ {number}", callback_data=f"task:{int(row['id'])}:done_quick"),
-        ])
+        buttons.append(InlineKeyboardButton(
+            text=f"✓ {number}" if quick_done else str(number),
+            callback_data=f"task:{int(row['id'])}:done_quick" if quick_done else f"task:{int(row['id'])}",
+        ))
     return lines, [buttons[i:i+4] for i in range(0, len(buttons), 4)]
 
 
@@ -274,108 +273,13 @@ async def ui_render_home(
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
-    """Show actionable work without requiring a project or a due date."""
-    if not message:
+    """Use the full work list as the only home screen."""
+    if message is None:
         return 0
-    chat_id = int(message.chat.id)
-    tz = resolve_tzinfo(tz_name or _tz_name())
-    now_local = datetime.now(tz)
-    end_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    end_utc = end_local.astimezone(UTC).replace(tzinfo=None)
-
-    try:
-        async with db_pool.acquire() as conn:
-            payload, toast_line = await _take_screen_payload(conn, chat_id)
-            # Reserve space for undated work even when overdue tasks accumulate.
-            due = list(await conn.fetch(
-                """
-                SELECT t.id, t.title, t.deadline, p.code AS project
-                FROM tasks t JOIN projects p ON p.id=t.project_id
-                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super'
-                  AND t.deadline < $1
-                ORDER BY t.deadline ASC, t.id ASC LIMIT 3
-                """, end_utc,
-            ))
-            other = list(await conn.fetch(
-                """
-                SELECT t.id, t.title, t.deadline, p.code AS project
-                FROM tasks t JOIN projects p ON p.id=t.project_id
-                WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super'
-                  AND (t.deadline IS NULL OR t.deadline >= $1)
-                ORDER BY (t.status='in_progress') DESC,
-                         (t.deadline IS NULL) DESC, t.deadline ASC,
-                         t.created_at ASC, t.id ASC
-                LIMIT $2
-                """, end_utc, 5 - len(due),
-            ))
-            reminder = await conn.fetchrow(
-                "SELECT id, text, remind_at FROM reminders WHERE is_sent=FALSE "
-                "ORDER BY remind_at ASC, id ASC LIMIT 1"
-            )
-            await ui_set_state(conn, chat_id, ui_payload=payload)
-
-        rows = due + other
-        lines = ([toast_line, ""] if toast_line else []) + ["<b>Ближайшие дела</b>"]
-        if not rows:
-            lines.extend([
-                "", "Начните с одного дела, которое не хочется забыть.",
-                "Например: «Проверить расчёт осадки». Срок указывать необязательно.",
-            ])
-        else:
-            task_lines, _ = _readable_tasks(rows, tz)
-            lines.extend(["", *task_lines])
-        if reminder:
-            when = to_local(reminder.get("remind_at"), tz)
-            label = when.strftime("%d.%m %H:%M") if when else ""
-            lines.extend(["", f"Напоминание {h(label)}: {h(str(reminder['text'])[:180])}"])
-
-
-        _, kb = _readable_tasks(rows, tz)
-        undo = payload.get("undo") or {}
-        if (undo.get("new_status") == "done" and undo.get("task_id")
-                and float(undo.get("exp") or 0) > datetime.now(UTC).timestamp()):
-            kb.append([InlineKeyboardButton(
-                text="Вернуть выполненное дело", callback_data=f"undo:task:{int(undo['task_id'])}",
-            )])
-        kb.append([
-            InlineKeyboardButton(text="Сегодня", callback_data="nav:today"),
-            InlineKeyboardButton(text="Все задачи", callback_data="nav:all"),
-        ])
-        if not rows:
-            kb.append([InlineKeyboardButton(text="Добавить несколько дел", callback_data="onboard:start")])
-        kb.append([
-            InlineKeyboardButton(text="Добавить", callback_data="nav:add"),
-            InlineKeyboardButton(text="Ещё", callback_data="nav:secondary"),
-        ])
-        return await ui_render(
-            bot=message.bot, db_pool=db_pool, chat_id=chat_id,
-            text="\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-            screen="home", fallback_message=message,
-            preferred_message_id=preferred_message_id, parse_mode="HTML", force_new=force_new,
-        )
-    except Exception:
-        logger.exception("ui_render_home failed", extra={"chat_id": chat_id})
-        fallback_kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🔄 Обновить", callback_data="nav:home"),
-                    InlineKeyboardButton(text="📁 Проекты", callback_data="nav:projects"),
-                ],
-                [InlineKeyboardButton(text="❓ Помощь", callback_data="nav:help")],
-            ]
-        )
-        return await ui_render(
-            bot=message.bot,
-            db_pool=db_pool,
-            chat_id=chat_id,
-            text="⚠️ <b>Не удалось обновить главный экран.</b>\n\nПопробуйте ещё раз.",
-            reply_markup=fallback_kb,
-            screen="home",
-            fallback_message=message,
-            preferred_message_id=preferred_message_id,
-            parse_mode="HTML",
-            force_new=force_new,
-        )
+    return await ui_render_all_tasks(
+        message, db_pool, tz_name=tz_name,
+        preferred_message_id=preferred_message_id, force_new=force_new,
+    )
 
 
 
@@ -1643,6 +1547,7 @@ async def ui_render_all_tasks(
     else:
         task_lines, _ = _readable_tasks(rows, tz, offset=page * page_size)
         lines.extend(task_lines)
+        lines.extend(["", "✓ — завершить задачу" if quick_done else "Номер — открыть задачу"])
 
     kb: list[list[InlineKeyboardButton]] = []
     qd_suffix = ":qd1" if quick_done else ""
@@ -1653,10 +1558,18 @@ async def ui_render_all_tasks(
         title = filter_titles[key]
         text = f"• {title}" if key == filter_key else title
         filter_buttons.append(InlineKeyboardButton(text=text, callback_data=f"nav:all:{key}{qd_suffix}"))
+
+
+    _, task_buttons = _readable_tasks(rows, tz, offset=page * page_size, quick_done=quick_done)
+    kb.extend(task_buttons)
+    if rows:
+        mode_label = "Открывать задачи" if quick_done else "Отметить выполненное"
+        mode_suffix = "" if quick_done else ":qd1"
+        kb.append([InlineKeyboardButton(
+            text=mode_label, callback_data=f"nav:all:{filter_key}:{page}{mode_suffix}",
+        )])
     kb.append(filter_buttons)
 
-    _, task_buttons = _readable_tasks(rows, tz, offset=page * page_size)
-    kb.extend(task_buttons)
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 0:
@@ -1665,11 +1578,6 @@ async def ui_render_all_tasks(
         nav_row.append(InlineKeyboardButton(text=f"Далее · ещё {total - (page + 1) * page_size}", callback_data=f"nav:all:{filter_key}:{page+1}{qd_suffix}"))
     if nav_row:
         kb.append(nav_row)
-
-    kb.append([
-        InlineKeyboardButton(text="⬅️ Проекты", callback_data="nav:projects"),
-        InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-    ])
 
     return await ui_render(
         bot=message.bot,

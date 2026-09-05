@@ -68,42 +68,14 @@ def task_card_kb(
         ]
 
     if not expanded:
-        # Compact mode (daily use, minimal buttons)
-        if status == "done":
-            rows_done = [
-                [
-                    InlineKeyboardButton(text=back_label, callback_data=back_cb),
-                    InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-                ]
-            ]
-            rows_done.extend(_triage_row())
-            return InlineKeyboardMarkup(inline_keyboard=rows_done)
-
-        rows: list[list[InlineKeyboardButton]] = []
-        rows.append([
-            InlineKeyboardButton(text="✅ Готово", callback_data=f"task:{task_id}:done"),
-            InlineKeyboardButton(text="🗓 Срок", callback_data=f"task:{task_id}:dl"),
-        ])
-        if is_inbox:
+        rows = []
+        if status != "done":
             rows.append([
-                InlineKeyboardButton(text="📁 В проект…", callback_data=f"task:{task_id}:move"),
-                InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress"),
+                InlineKeyboardButton(text="Готово", callback_data=f"task:{task_id}:done"),
+                InlineKeyboardButton(text="Срок", callback_data=f"task:{task_id}:dl"),
+                InlineKeyboardButton(text="Изменить", callback_data=f"task:{task_id}:more"),
             ])
-        else:
-            if is_solo_mode(persona_mode):
-                rows.append([InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress")])
-            else:
-                rows.append([
-                    InlineKeyboardButton(text="⚡ В работу", callback_data=f"task:{task_id}:in_progress"),
-                    InlineKeyboardButton(text="👤 Исп.", callback_data=f"task:{task_id}:assignee"),
-                ])
-
-        rows.append([InlineKeyboardButton(text="⋯ Ещё", callback_data=f"task:{task_id}:more")])
-        rows.append([
-            InlineKeyboardButton(text=back_label, callback_data=back_cb),
-            InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home"),
-        ])
-
+        rows.append([InlineKeyboardButton(text="Назад", callback_data=back_cb)])
         rows.extend(_triage_row())
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -111,6 +83,10 @@ def task_card_kb(
     # Nav buttons (⬅ Назад / ⬅️ Домой) are always at the bottom — consistent with compact mode.
     rows: list[list[InlineKeyboardButton]] = []
 
+    rows.append([
+        InlineKeyboardButton(text="В работу", callback_data=f"task:{task_id}:in_progress"),
+        InlineKeyboardButton(text="В проект", callback_data=f"task:{task_id}:move"),
+    ])
     rows.append([
         InlineKeyboardButton(text="↳ Подзадачи…", callback_data=f"task:{task_id}:subtasks"),
         InlineKeyboardButton(text="⋯ Свернуть", callback_data=f"task:{task_id}:less"),

@@ -96,6 +96,9 @@ class PersonaModeContractTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(kind, "task")
         self.assertNotIn("Исполнитель:", text)
+        self.assertNotIn("ЗАДАЧА", text)
+        self.assertNotIn("Дедлайн:", text)
+        self.assertNotIn("Текст:", text)
         labels = [btn.text for row in kb.inline_keyboard for btn in row]
         self.assertNotIn("👤 Исп.", labels)
 

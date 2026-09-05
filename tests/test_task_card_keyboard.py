@@ -17,10 +17,7 @@ class TaskCardKeyboardTests(unittest.TestCase):
         )
 
         rows = [[btn.callback_data for btn in row] for row in kb.inline_keyboard]
-        self.assertEqual(rows[0], ["task:10:done", "task:10:dl"])
-        self.assertEqual(rows[1], ["task:10:move", "task:10:in_progress"])
-        self.assertEqual(rows[2], ["task:10:more"])
-        self.assertEqual(rows[3], ["nav:inbox:0", "nav:home"])
+        self.assertEqual(rows, [["task:10:done", "task:10:dl", "task:10:more"], ["nav:inbox:0"]])
 
     def test_expanded_card_keeps_secondary_layer_compact(self) -> None:
         kb = task_card_kb(
@@ -34,13 +31,10 @@ class TaskCardKeyboardTests(unittest.TestCase):
         )
 
         rows = [[btn.callback_data for btn in row] for row in kb.inline_keyboard]
-        self.assertEqual(rows[0], ["task:10:subtasks", "task:10:less"])
-        self.assertEqual(rows[1], ["task:10:relations"])
-        self.assertEqual(rows[2], ["task:10:assignee", "task:10:postpone"])
-        self.assertEqual(rows[3], ["nav:work:0", "nav:home"])
-
         callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-        self.assertNotIn("task:10:move", callbacks)
+        for action in ("assignee", "in_progress", "move", "postpone", "subtasks", "relations"):
+            self.assertIn(f"task:10:{action}", callbacks)
+        self.assertIn("nav:work:0", callbacks)
         self.assertNotIn("task:10:to_super", callbacks)
         self.assertNotIn("task:10:detach", callbacks)
         self.assertNotIn("task:10:g_sync", callbacks)

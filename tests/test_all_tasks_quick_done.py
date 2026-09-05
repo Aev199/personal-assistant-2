@@ -58,7 +58,8 @@ class AllTasksQuickDoneTests(unittest.IsolatedAsyncioTestCase):
         kwargs = render.await_args.kwargs
         callbacks = [btn.callback_data for row in kwargs["reply_markup"].inline_keyboard for btn in row]
         self.assertIn("task:42:done_quick", callbacks)
-        self.assertIn("task:42", callbacks)
+        self.assertNotIn("task:42", callbacks)
+        self.assertIn("nav:all:all:0", callbacks)
         self.assertIn("nav:all:today:qd1", callbacks)
 
     async def test_all_tasks_default_mode_keeps_open_task_callback(self) -> None:
@@ -75,7 +76,8 @@ class AllTasksQuickDoneTests(unittest.IsolatedAsyncioTestCase):
         callbacks = [btn.callback_data for row in kwargs["reply_markup"].inline_keyboard for btn in row]
         self.assertIn("task:42", callbacks)
         self.assertIn("Позвонить клиенту", kwargs["text"])
-        self.assertIn("task:42:done_quick", callbacks)
+        self.assertNotIn("task:42:done_quick", callbacks)
+        self.assertIn("nav:all:all:0:qd1", callbacks)
 
 
 if __name__ == "__main__":
@@ -117,6 +119,8 @@ class QuickDonePersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(len(text.encode("utf-16-le")) // 2, 3600)
         self.assertIn("<b>30.</b>", text)
         callbacks = [b.callback_data for row in keyboard for b in row]
+        _, done_keyboard = _readable_tasks(rows, ZoneInfo("UTC"), quick_done=True)
+        done_callbacks = [b.callback_data for row in done_keyboard for b in row]
         for row in rows:
             self.assertIn(f"task:{row['id']}", callbacks)
-            self.assertIn(f"task:{row['id']}:done_quick", callbacks)
+            self.assertIn(f"task:{row['id']}:done_quick", done_callbacks)

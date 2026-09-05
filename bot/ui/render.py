@@ -129,7 +129,20 @@ async def ui_render(
         [button for button in row if button.callback_data not in nav_callbacks]
         for row in (reply_markup.inline_keyboard if reply_markup else [])
     ]
-    keyboard = [row for row in keyboard if row]
+    seen = set()
+    unique_rows = []
+    for row in keyboard:
+        unique_row = []
+        for button in row:
+            key = button.callback_data or button.url
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            unique_row.append(button)
+        if unique_row:
+            unique_rows.append(unique_row)
+    keyboard = unique_rows
     undo = _undo_active(existing_payload)
     if undo and screen in {"today", "all_tasks"}:
         keyboard.insert(0, [InlineKeyboardButton(

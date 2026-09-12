@@ -55,6 +55,14 @@ xcodegen generate
 open AssistantPocket.xcodeproj
 ```
 
+## First run on iPhone
+
+1. Install the generated `AssistantPocket.ipa` with SideStore.
+2. Open the app; the connection sheet appears automatically.
+3. Enter the public HTTPS base URL of the Personal Assistant web service without a trailing slash.
+4. Enter the server's `COMPANION_API_TOKEN` and tap **Готово**.
+5. Pull down on **Сегодня** to verify connectivity, then save one disposable test item and complete one test task.
+
 ## Next step after real-world testing
 
 If fast capture proves useful, the next increment should be a Share Extension and a UI-independent intake service shared by Telegram and iOS. Do not call Telegram handlers from the iOS API and do not fork classification rules into Swift.

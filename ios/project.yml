@@ -23,5 +23,12 @@ targets:
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGN_STYLE: Automatic
-    scheme:
-      testTargets: []
+schemes:
+  AssistantPocket:
+    build:
+      targets:
+        AssistantPocket: all
+    run:
+      config: Debug
+    archive:
+      config: Release

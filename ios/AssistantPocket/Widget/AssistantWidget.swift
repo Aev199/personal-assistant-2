@@ -54,14 +54,17 @@ struct MarkTaskDoneIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        guard let url = URL(string: normalizedBaseURL(serverURL) + "/api/v1/companion/tasks/\(taskID)/done") else {
+        let server = normalizedBaseURL(serverURL)
+        let cleanToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !server.isEmpty, !cleanToken.isEmpty,
+              let url = URL(string: server + "/api/v1/companion/tasks/\(taskID)/done") else {
             return .result()
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 10
-        request.setValue("Bearer \(token.trimmingCharacters(in: .whitespacesAndNewlines))", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(cleanToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data("{}".utf8)
@@ -107,8 +110,7 @@ private struct AssistantWidgetProvider: AppIntentTimelineProvider {
 
     func timeline(for configuration: AssistantWidgetConfigurationIntent, in context: Context) async -> Timeline<AssistantWidgetEntry> {
         let entry = await load(configuration)
-        let next = Date().addingTimeInterval(15 * 60)
-        return Timeline(entries: [entry], policy: .after(next))
+        return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(15 * 60)))
     }
 
     private func load(_ configuration: AssistantWidgetConfigurationIntent) async -> AssistantWidgetEntry {
@@ -165,7 +167,7 @@ private func normalizedBaseURL(_ value: String) -> String {
 
 private struct AssistantWidgetView: View {
     @Environment(\.widgetFamily) private var family
-    let entry: AssistantWidgetProvider.Entry
+    let entry: AssistantWidgetEntry
 
     private var configuredServer: String {
         entry.configuration.serverURL ?? ""
@@ -200,7 +202,7 @@ private struct AssistantWidgetView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if error == "Настройте виджет" {
-                    Text("Зажмите виджет → Изменить виджет")
+                    Text("Зажмите → Изменить виджет")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -213,36 +215,7 @@ private struct AssistantWidgetView: View {
                 Spacer()
             } else {
                 ForEach(Array(entry.tasks.prefix(taskLimit))) { task in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Button(intent: MarkTaskDoneIntent(
-                            taskID: task.id,
-                            serverURL: configuredServer,
-                            token: configuredToken
-                        )) {
-                            Image(systemName: "circle")
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Выполнено")
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(task.title)
-                                .font(.caption)
-                                .lineLimit(1)
-
-                            HStack(spacing: 5) {
-                                if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
-                                    Text(task.project)
-                                }
-                                if let deadline = task.deadline {
-                                    Text(deadline, format: .dateTime.hour().minute())
-                                }
-                            }
-                            .font(.caption2)
-                            .foregroundStyle(task.overdue ? .red : .secondary)
-                        }
-
-                        Spacer(minLength: 0)
-                    }
+                    taskRow(task)
                 }
 
                 if family == .systemLarge {
@@ -267,7 +240,48 @@ private struct AssistantWidgetView: View {
                 Spacer(minLength: 0)
             }
         }
+        .padding(12)
         .containerBackground(.fill.tertiary, for: .widget)
+    }
+
+    @ViewBuilder
+    private func taskRow(_ task: WidgetTask) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Button(intent: MarkTaskDoneIntent(
+                taskID: task.id,
+                serverURL: configuredServer,
+                token: configuredToken
+            )) {
+                Image(systemName: "circle")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Выполнено")
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(task.title)
+                    .font(.caption)
+                    .lineLimit(1)
+
+                HStack(spacing: 5) {
+                    if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
+                        Text(task.project)
+                    }
+                    if let deadline = task.deadline {
+                        if task.overdue {
+                            Text(deadline, format: .dateTime.hour().minute())
+                                .foregroundStyle(.red)
+                        } else {
+                            Text(deadline, format: .dateTime.hour().minute())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
     }
 }
 

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from bot.bootstrap import build_core
 from bot.config import load_config
+from bot.http.companion import attach_companion_routes
 from bot.http.endpoints import HttpContext, attach_routes
 from bot.lifecycle import make_on_shutdown, make_on_startup
 from bot.services.error_handler import create_error_handler
@@ -184,8 +185,8 @@ def create_app_webhook() -> web.Application:
         backup_lock=backup_lock,
     )
     attach_routes(app, ctx)
+    attach_companion_routes(app, ctx)
     return app
-
 
 
 
@@ -289,6 +290,7 @@ def create_app_polling_web() -> web.Application:
         backup_lock=backup_lock,
     )
     attach_routes(app, ctx)
+    attach_companion_routes(app, ctx)
 
     async def _start(_app: web.Application) -> None:
         log.info("starting polling background task (web-service mode)")
@@ -312,6 +314,7 @@ def create_app_polling_web() -> web.Application:
     app.on_shutdown.append(_stop)
 
     return app
+
 
 async def run_polling() -> None:
     """Run aiogram long-polling (no web server required).

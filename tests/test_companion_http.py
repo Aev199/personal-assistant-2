@@ -18,20 +18,36 @@ def test_companion_routes_are_small_and_explicit():
 
 def test_companion_auth_requires_dedicated_bearer_token(monkeypatch):
     monkeypatch.setenv("COMPANION_API_TOKEN", "pocket-secret")
+    monkeypatch.setenv("COMPANION_WIDGET_TOKEN", "widget-secret")
 
-    good = SimpleNamespace(headers={"Authorization": "Bearer pocket-secret"})
+    app_token = SimpleNamespace(headers={"Authorization": "Bearer pocket-secret"})
+    widget_token = SimpleNamespace(headers={"Authorization": "Bearer widget-secret"})
     bad = SimpleNamespace(headers={"Authorization": "Bearer wrong"})
     legacy = SimpleNamespace(headers={"X-Internal-Key": "pocket-secret"})
 
-    assert companion._authorized(good) is True
-    assert companion._authorized(bad) is False
-    assert companion._authorized(legacy) is False
+    assert companion._authorized(app_token) is True
+    assert companion._authorized(widget_token) is False
+    assert companion._authorized(widget_token, allow_widget=True) is True
+    assert companion._authorized(app_token, allow_widget=True) is True
+    assert companion._authorized(bad, allow_widget=True) is False
+    assert companion._authorized(legacy, allow_widget=True) is False
 
 
 def test_companion_is_disabled_without_token(monkeypatch):
     monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
+    monkeypatch.delenv("COMPANION_WIDGET_TOKEN", raising=False)
     request = SimpleNamespace(headers={"Authorization": "Bearer anything"})
     assert companion._authorized(request) is False
+    assert companion._authorized(request, allow_widget=True) is False
+
+
+def test_widget_token_does_not_grant_capture_scope(monkeypatch):
+    monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
+    monkeypatch.setenv("COMPANION_WIDGET_TOKEN", "widget-secret")
+    request = SimpleNamespace(headers={"Authorization": "Bearer widget-secret"})
+
+    assert companion._authorized(request) is False
+    assert companion._authorized(request, allow_widget=True) is True
 
 
 def test_utc_aware_normalizes_naive_and_aware_values():

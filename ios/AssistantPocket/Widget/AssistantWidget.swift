@@ -1,4 +1,5 @@
 import AppIntents
+import Foundation
 import SwiftUI
 import WidgetKit
 
@@ -28,7 +29,7 @@ struct AssistantWidgetConfigurationIntent: WidgetConfigurationIntent {
     @Parameter(title: "Server URL", description: "Например https://assistant.example.com")
     var serverURL: String?
 
-    @Parameter(title: "Token", description: "COMPANION_API_TOKEN")
+    @Parameter(title: "Token", description: "COMPANION_WIDGET_TOKEN")
     var token: String?
 }
 

@@ -25,19 +25,28 @@ def _configured_token() -> str:
     return (os.getenv("COMPANION_API_TOKEN") or "").strip()
 
 
-def _authorized(request: web.Request) -> bool:
-    expected = _configured_token()
-    if not expected:
+def _configured_widget_token() -> str:
+    return (os.getenv("COMPANION_WIDGET_TOKEN") or "").strip()
+
+
+def _authorized(request: web.Request, *, allow_widget: bool = False) -> bool:
+    accepted = [_configured_token()]
+    if allow_widget:
+        accepted.append(_configured_widget_token())
+    accepted = [token for token in accepted if token]
+    if not accepted:
         return False
+
     header = (request.headers.get("Authorization") or "").strip()
     if not header.lower().startswith("bearer "):
         return False
     supplied = header[7:].strip()
-    return bool(supplied) and secrets.compare_digest(supplied, expected)
+    return bool(supplied) and any(secrets.compare_digest(supplied, token) for token in accepted)
 
 
-def _auth_error() -> web.Response:
-    if not _configured_token():
+def _auth_error(*, allow_widget: bool = False) -> web.Response:
+    configured = bool(_configured_token()) or (allow_widget and bool(_configured_widget_token()))
+    if not configured:
         return web.json_response(
             {"ok": False, "error": "companion_not_configured"},
             status=503,
@@ -73,8 +82,8 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
 
 
 async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request):
-        return _auth_error()
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:
@@ -219,8 +228,8 @@ async def handle_capture(request: web.Request, ctx) -> web.StreamResponse:
 
 
 async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request):
-        return _auth_error()
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:

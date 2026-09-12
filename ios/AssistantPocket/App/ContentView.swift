@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var confirmation: String?
     @State private var showSettings = false
+    @FocusState private var captureFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -56,6 +57,12 @@ struct ContentView: View {
                     showSettings = true
                 }
             }
+            .onOpenURL { url in
+                guard url.scheme == "assistantpocket", url.host == "capture" else { return }
+                confirmation = nil
+                errorMessage = nil
+                captureFocused = true
+            }
             .sheet(isPresented: $showSettings, onDismiss: {
                 Task { await loadToday() }
             }) {
@@ -73,6 +80,7 @@ struct ContentView: View {
             TextField("Например: проверить расчёт Багратиона", text: $captureText, axis: .vertical)
                 .lineLimit(2...6)
                 .textFieldStyle(.plain)
+                .focused($captureFocused)
                 .padding(14)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
                 .submitLabel(.send)
@@ -241,6 +249,7 @@ struct ContentView: View {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.capture(text)
             captureText = ""
+            captureFocused = false
             confirmation = "Сохранено"
         } catch {
             errorMessage = error.localizedDescription

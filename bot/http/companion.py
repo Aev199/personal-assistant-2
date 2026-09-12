@@ -49,6 +49,14 @@ def _utc_naive(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _utc_aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _today(request: web.Request) -> web.StreamResponse:
         return await handle_today(request, ctx)
@@ -79,7 +87,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
     end_local = start_local + timedelta(days=1)
     start_utc = _utc_naive(start_local)
     end_utc = _utc_naive(end_local)
-    now_utc = _utc_naive(now_local)
+    now_utc = datetime.now(timezone.utc)
 
     async with pool.acquire() as conn:
         task_rows = await conn.fetch(
@@ -117,8 +125,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
 
     tasks = []
     for row in task_rows:
-        deadline = row["deadline"]
-        deadline_utc = deadline.replace(tzinfo=timezone.utc) if deadline and deadline.tzinfo is None else deadline
+        deadline_utc = _utc_aware(row["deadline"])
         deadline_local = deadline_utc.astimezone(tz) if deadline_utc else None
         tasks.append(
             {
@@ -127,14 +134,13 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 "project": str(row["project_code"] or ""),
                 "assignee": str(row["assignee"] or ""),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
-                "overdue": bool(deadline and deadline < now_utc),
+                "overdue": bool(deadline_utc and deadline_utc < now_utc),
             }
         )
 
     reminders = []
     for row in reminder_rows:
-        remind_at = row["remind_at"]
-        remind_utc = remind_at.replace(tzinfo=timezone.utc) if remind_at and remind_at.tzinfo is None else remind_at
+        remind_utc = _utc_aware(row["remind_at"])
         remind_local = remind_utc.astimezone(tz) if remind_utc else None
         reminders.append(
             {

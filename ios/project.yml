@@ -12,22 +12,52 @@ targets:
     platform: iOS
     sources:
       - path: AssistantPocket/App
+    info:
+      path: AssistantPocket/App/Info.plist
+      properties:
+        CFBundleDisplayName: Assistant
+        CFBundleURLTypes:
+          - CFBundleURLName: com.aev199.assistantpocket
+            CFBundleURLSchemes:
+              - assistantpocket
+        UIApplicationSupportsIndirectInputEvents: true
+        UILaunchScreen: {}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aev199.assistantpocket
         PRODUCT_NAME: AssistantPocket
         TARGETED_DEVICE_FAMILY: "1"
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Assistant
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - target: AssistantPocketWidget
+        embed: true
+
+  AssistantPocketWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: AssistantPocket/Widget
+    info:
+      path: AssistantPocket/Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Assistant Widget
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aev199.assistantpocket.widget
+        PRODUCT_NAME: AssistantPocketWidget
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        CODE_SIGN_STYLE: Automatic
+
 schemes:
   AssistantPocket:
     build:
       targets:
         AssistantPocket: all
+        AssistantPocketWidget: all
     run:
       config: Debug
     archive:

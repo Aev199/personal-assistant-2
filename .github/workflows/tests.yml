@@ -44,7 +44,8 @@ jobs:
             tests/test_system_undo.py \
             tests/test_deepseek_adapter.py \
             tests/test_llm_router.py \
-            tests/test_onboarding.py
+            tests/test_onboarding.py \
+            tests/test_companion_http.py
 
       - name: Run full suite diagnostic on failure
         if: failure()

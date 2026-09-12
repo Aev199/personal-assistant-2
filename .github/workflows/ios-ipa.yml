@@ -1,0 +1,53 @@
+name: iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build unsigned device app
+        working-directory: ios
+        run: |
+          xcodebuild \
+            -project AssistantPocket.xcodeproj \
+            -scheme AssistantPocket \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            clean build
+
+      - name: Package IPA
+        working-directory: ios
+        run: |
+          rm -rf Payload AssistantPocket.ipa
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/AssistantPocket.app Payload/
+          zip -qry AssistantPocket.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AssistantPocket-ipa
+          path: ios/AssistantPocket.ipa
+          retention-days: 3
+          compression-level: 0

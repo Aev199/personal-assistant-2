@@ -2,6 +2,12 @@ name: iOS IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/system-capture-controls
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ipa.yml"
 
 permissions:
   contents: read

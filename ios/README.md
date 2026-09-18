@@ -9,6 +9,8 @@ A deliberately small native iOS companion for Personal Assistant.
 - a medium/large Home Screen widget shows Today;
 - interactive Quick Done works directly from the widget on iOS 17+;
 - the widget `+` opens the app directly into focused capture;
+- on iOS 18+, **Быстрый ввод** is exposed as a system Control for Control Center, Lock Screen, and Action Button;
+- the same action is exposed as an App Shortcut for Shortcuts / Action Button;
 - no projects screen, no inbox triage screen, no chat clone, no model picker.
 
 Telegram remains the conversational interface. The iOS app is mostly configuration and capture; the widget is intended to be the daily surface.
@@ -68,6 +70,18 @@ open AssistantPocket.xcodeproj
 7. The circle next to a task completes it without opening the app. The `+` button opens the app with the capture field focused.
 
 The widget refreshes on the system timeline and also requests a refresh immediately after Quick Done.
+
+## System quick capture (iOS 18+)
+
+The widget extension also publishes a Control named **Быстрый ввод**. It opens Assistant and immediately focuses the capture field. Apple exposes the same Control in Control Center, on the Lock Screen, and as an Action Button choice.
+
+After installing a new IPA:
+
+1. Open Control Center → add a control → search for **Assistant** → add **Быстрый ввод**.
+2. For Lock Screen access, customize the Lock Screen and replace one of the bottom controls with **Быстрый ввод**.
+3. For the Action Button, choose a **Control** and select Assistant's **Быстрый ввод**. Alternatively choose **Shortcut** and select the Assistant **Быстрый ввод** App Shortcut.
+
+No additional server token or backend endpoint is required for these launch controls; they only open the already-configured app.
 
 ## Next step after real-world testing
 

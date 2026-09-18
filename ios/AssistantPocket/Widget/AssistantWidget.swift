@@ -286,7 +286,6 @@ private struct AssistantWidgetView: View {
     }
 }
 
-@main
 struct AssistantPocketWidget: Widget {
     let kind = "AssistantPocketWidget"
 
@@ -302,5 +301,32 @@ struct AssistantPocketWidget: Widget {
         .description("Дела на сегодня, Quick Done и быстрый захват.")
         .supportedFamilies([.systemMedium, .systemLarge])
         .contentMarginsDisabled()
+    }
+}
+
+
+@available(iOS 18.0, *)
+struct AssistantCaptureControl: ControlWidget {
+    let kind = "com.aev199.assistantpocket.capture-control"
+
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: kind) {
+            ControlWidgetButton(action: OpenAssistantCaptureIntent()) {
+                Label("Быстрый ввод", systemImage: "plus.bubble.fill")
+            }
+        }
+        .displayName("Быстрый ввод")
+        .description("Открывает Assistant сразу в поле ввода.")
+    }
+}
+
+@main
+struct AssistantPocketWidgetBundle: WidgetBundle {
+    @WidgetBundleBuilder
+    var body: some Widget {
+        AssistantPocketWidget()
+        if #available(iOS 18.0, *) {
+            AssistantCaptureControl()
+        }
     }
 }

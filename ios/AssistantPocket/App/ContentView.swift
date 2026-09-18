@@ -1,7 +1,9 @@
+import Combine
 import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var captureText = ""
     @State private var tasks: [TodayTask] = []
@@ -56,12 +58,19 @@ struct ContentView: View {
                 } else {
                     showSettings = true
                 }
+                consumeSystemCaptureRequest()
             }
             .onOpenURL { url in
                 guard url.scheme == "assistantpocket", url.host == "capture" else { return }
-                confirmation = nil
-                errorMessage = nil
-                captureFocused = true
+                activateCapture()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CaptureLaunchSignal.notification)) { _ in
+                activateCapture()
+            }
+            .onChange(of: scenePhase) { phase in
+                if phase == .active {
+                    consumeSystemCaptureRequest()
+                }
             }
             .sheet(isPresented: $showSettings, onDismiss: {
                 Task { await loadToday() }
@@ -212,6 +221,23 @@ struct ContentView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 3)
+    }
+
+    private func consumeSystemCaptureRequest() {
+        guard CaptureLaunchSignal.consume() else { return }
+        activateCapture()
+    }
+
+    private func activateCapture() {
+        confirmation = nil
+        errorMessage = nil
+        guard settings.isConfigured else {
+            showSettings = true
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            captureFocused = true
+        }
     }
 
     @MainActor

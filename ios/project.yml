@@ -12,6 +12,7 @@ targets:
     platform: iOS
     sources:
       - path: AssistantPocket/App
+      - path: AssistantPocket/Shared
     info:
       path: AssistantPocket/App/Info.plist
       properties:
@@ -37,6 +38,7 @@ targets:
     platform: iOS
     sources:
       - path: AssistantPocket/Widget
+      - path: AssistantPocket/Shared
     info:
       path: AssistantPocket/Widget/Info.plist
       properties:

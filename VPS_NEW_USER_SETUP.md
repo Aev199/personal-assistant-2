@@ -43,8 +43,7 @@
 4. отдельный cron для напоминаний и retry-задач
 5. опционально:
    - Gemini LLM
-   - Google Tasks
-   - iCloud Calendar
+      - iCloud Calendar
    - Yandex Disk WebDAV
 
 ## 3. Создай нового Telegram-бота
@@ -141,75 +140,9 @@ GEMINI_API_KEY=...
 2. Проще использовать именно `GEMINI_API_KEY`
 3. Ключ должен храниться только на сервере, не в Git
 
-## 6. Настрой Google Tasks
+## 6. Google Tasks больше не используется
 
-Если Google Tasks не нужен, этот раздел можно пропустить.
-
-Нужные переменные:
-
-```env
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-GOOGLE_REFRESH_TOKEN=...
-```
-
-### Шаг 1. Создай проект в Google Cloud
-
-1. Зайди в Google Cloud Console
-2. Создай новый проект
-3. Включи `Google Tasks API`
-
-### Шаг 2. Настрой OAuth consent screen
-
-1. Открой раздел OAuth consent screen
-2. Выбери `External`, если это обычный личный Google-аккаунт
-3. Заполни минимум обязательных полей
-4. Добавь email нового пользователя в `Test users`
-
-### Шаг 3. Создай OAuth client
-
-1. Открой `Credentials`
-2. Нажми `Create credentials`
-3. Выбери `OAuth client ID`
-4. Тип клиента: `Desktop app`
-5. Сохрани `client_id` и `client_secret`
-
-### Шаг 4. Получи refresh token
-
-В этом репозитории уже есть готовый helper:
-
-`scripts/get_google_refresh_token.py`
-
-На своём локальном компьютере запусти:
-
-```powershell
-cd d:\projects\personal-assistant-2
-$env:GOOGLE_CLIENT_ID="твой_client_id"
-$env:GOOGLE_CLIENT_SECRET="твой_client_secret"
-python .\scripts\get_google_refresh_token.py
-```
-
-Дальше:
-
-1. откроется браузер
-2. войди под нужным Google-аккаунтом нового пользователя
-3. подтверди доступ
-4. скрипт выведет строку:
-
-```env
-GOOGLE_REFRESH_TOKEN=...
-```
-
-Сохрани её.
-
-### Дополнительные env для списков
-
-Можно оставить дефолты:
-
-```env
-GTASKS_PERSONAL_LIST=Личное
-GTASKS_IDEAS_LIST=Идеи
-```
+Личные и рабочие задачи теперь хранятся внутри Assistant. Переменные `GOOGLE_*` и `GTASKS_*` для нового развёртывания не нужны.
 
 ## 7. Настрой iCloud Calendar
 
@@ -372,12 +305,6 @@ GEMINI_TRANSCRIBE_MODEL=gemini-3.1-flash-lite-preview
 GEMINI_FALLBACK_1=gemini-3-flash-preview
 GEMINI_FALLBACK_2=gemini-2.5-flash
 GEMINI_FALLBACK_3=gemini-2.5-flash-lite
-
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_REFRESH_TOKEN=
-GTASKS_PERSONAL_LIST=Личное
-GTASKS_IDEAS_LIST=Идеи
 
 ICLOUD_APPLE_ID=
 ICLOUD_APP_PASSWORD=
@@ -618,15 +545,6 @@ systemctl status cron
 cat /etc/cron.d/personal-assistant-anna-tick
 ```
 
-### Google Tasks не работает
-
-Проверь:
-
-1. `GOOGLE_CLIENT_ID`
-2. `GOOGLE_CLIENT_SECRET`
-3. `GOOGLE_REFRESH_TOKEN`
-4. что нужный email добавлен в `Test users`
-
 ### Supabase не подключается
 
 Проверь:
@@ -679,8 +597,6 @@ sudo systemctl start personal-assistant-anna
 ## 24. Официальные ссылки
 
 - Supabase Postgres connection docs: https://supabase.com/docs/guides/database/connecting-to-postgres
-- Google Tasks quickstart: https://developers.google.com/workspace/tasks/quickstart/python
-- Google OAuth consent setup: https://developers.google.com/workspace/guides/configure-oauth-consent
 - Gemini API quickstart: https://ai.google.dev/gemini-api/docs/get-started/rest
 - Gemini setup / API keys: https://ai.google.dev/tutorials/setup
 - Apple app-specific passwords: https://support.apple.com/en-afri/102654
@@ -695,5 +611,4 @@ sudo systemctl start personal-assistant-anna
 - `bot/lifecycle.py`
 - `bot/db/schema.py`
 - `bot/bootstrap.py`
-- `scripts/get_google_refresh_token.py`
 - `bot/persona.py`

@@ -39,6 +39,7 @@ targets:
     sources:
       - path: AssistantPocket/Widget
       - path: AssistantPocket/Shared/WidgetSharedSettings.swift
+      - path: AssistantPocket/Shared/CaptureIntents.swift
     info:
       path: AssistantPocket/Widget/Info.plist
       properties:

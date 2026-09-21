@@ -6,6 +6,7 @@ enum WidgetSharedSettings {
     private static let accessGroup = "group.0ee1e5aa54499877.1"
     private static let baseURLAccount = "base-url"
     private static let tokenAccount = "token"
+    private static let captureRequestAccount = "capture-request"
 
     static var baseURL: String {
         read(baseURLAccount)
@@ -26,6 +27,16 @@ enum WidgetSharedSettings {
             token.trimmingCharacters(in: .whitespacesAndNewlines),
             account: tokenAccount
         )
+    }
+
+    static func requestCaptureLaunch() {
+        writeValue("1", account: captureRequestAccount)
+    }
+
+    static func consumeCaptureLaunch() -> Bool {
+        guard read(captureRequestAccount) == "1" else { return false }
+        delete(captureRequestAccount)
+        return true
     }
 
     private static func read(_ account: String) -> String {
@@ -67,5 +78,15 @@ enum WidgetSharedSettings {
             add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             SecItemAdd(add as CFDictionary, nil)
         }
+    }
+
+    private static func delete(_ account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup,
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }

@@ -2,19 +2,16 @@ import AppIntents
 import Foundation
 
 enum CaptureLaunchSignal {
-    static let defaultsKey = "assistant.capture.requested"
     static let notification = Notification.Name("assistant.capture.requested")
 
     @MainActor
     static func request() {
-        UserDefaults.standard.set(true, forKey: defaultsKey)
+        WidgetSharedSettings.requestCaptureLaunch()
         NotificationCenter.default.post(name: notification, object: nil)
     }
 
     static func consume() -> Bool {
-        guard UserDefaults.standard.bool(forKey: defaultsKey) else { return false }
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
-        return true
+        WidgetSharedSettings.consumeCaptureLaunch()
     }
 }
 

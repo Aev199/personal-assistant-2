@@ -1,3 +1,4 @@
+import AppIntents
 import Foundation
 import SwiftUI
 import WidgetKit
@@ -26,6 +27,71 @@ private struct WidgetTodayResponse: Decodable {
     let reminders: [WidgetReminder]
 }
 
+private enum WidgetNetwork {
+    static func markDone(taskID: Int) async throws {
+        let server = WidgetSharedSettings.baseURL
+        let token = WidgetSharedSettings.token
+
+        guard !server.isEmpty, !token.isEmpty,
+              let url = URL(string: server + "/api/v1/companion/tasks/\(taskID)/done") else {
+            throw URLError(.userAuthenticationRequired)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 8
+        config.timeoutIntervalForResource = 10
+        config.waitsForConnectivity = false
+
+        let (_, response) = try await URLSession(configuration: config).data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              200..<300 ~= http.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+    }
+}
+
+struct MarkTaskDoneIntent: AppIntent {
+    static var title: LocalizedStringResource = "Выполнить задачу"
+    static var description = IntentDescription("Закрывает задачу Personal Assistant.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Task ID")
+    var taskID: Int
+
+    init() {}
+
+    init(taskID: Int) {
+        self.taskID = taskID
+    }
+
+    func perform() async throws -> some IntentResult {
+        try await WidgetNetwork.markDone(taskID: taskID)
+        WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        return .result()
+    }
+}
+
+struct RefreshAssistantWidgetIntent: AppIntent {
+    static var title: LocalizedStringResource = "Обновить Assistant"
+    static var description = IntentDescription("Запрашивает свежие данные для виджета.")
+    static var openAppWhenRun = false
+
+    init() {}
+
+    func perform() async throws -> some IntentResult {
+        WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        return .result()
+    }
+}
+
 private struct AssistantWidgetEntry: TimelineEntry {
     let date: Date
     let tasks: [WidgetTask]
@@ -40,6 +106,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
             tasks: [
                 WidgetTask(id: 1, title: "Проверить расчёт", project: "БГР", status: "in_progress", deadline: .now, overdue: false),
                 WidgetTask(id: 2, title: "Ответить Иванову", project: "", status: "todo", deadline: nil, overdue: false),
+                WidgetTask(id: 3, title: "Подготовить замечания", project: "", status: "todo", deadline: nil, overdue: false),
             ],
             reminders: [],
             error: nil
@@ -179,11 +246,18 @@ private struct AssistantWidgetView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
             Text("Сейчас")
                 .font(.headline)
 
             Spacer()
+
+            Button(intent: RefreshAssistantWidgetIntent()) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Обновить")
 
             Link(destination: URL(string: "assistantpocket://capture")!) {
                 Image(systemName: "plus.circle.fill")
@@ -195,9 +269,12 @@ private struct AssistantWidgetView: View {
 
     private func focusTask(_ task: WidgetTask) -> some View {
         HStack(alignment: .top, spacing: 9) {
-            Image(systemName: task.inProgress ? "circle.inset.filled" : "circle")
-                .font(.title3)
-                .foregroundStyle(.secondary)
+            Button(intent: MarkTaskDoneIntent(taskID: task.id)) {
+                Image(systemName: task.inProgress ? "circle.inset.filled" : "circle")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Выполнено")
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(task.title)
@@ -213,9 +290,12 @@ private struct AssistantWidgetView: View {
 
     private func compactTask(_ task: WidgetTask) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Button(intent: MarkTaskDoneIntent(taskID: task.id)) {
+                Image(systemName: "circle")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Выполнено")
 
             Text(task.title)
                 .font(.caption)
@@ -297,11 +377,11 @@ private struct AssistantWidgetView: View {
                 .foregroundStyle(.secondary)
 
             if error == "Нет связи" {
-                Text("Проверьте VPN и обновите виджет")
+                Text("Проверьте VPN и нажмите ↻")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             } else if error == "Откройте Assistant и сохраните настройки" {
-                Text("Настройка виджета теперь выполняется в приложении")
+                Text("Настройка виджета выполняется в приложении")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -334,9 +414,24 @@ struct AssistantPocketWidget: Widget {
             AssistantWidgetView(entry: entry)
         }
         .configurationDisplayName("Assistant — Сейчас")
-        .description("Одно главное дело и то, что дальше.")
+        .description("Главное дело, следующие задачи и быстрые действия.")
         .supportedFamilies([.systemMedium, .systemLarge])
         .contentMarginsDisabled()
+    }
+}
+
+@available(iOS 18.0, *)
+struct AssistantCaptureControl: ControlWidget {
+    let kind = "com.aev199.assistantpocket.capture-control"
+
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: kind) {
+            ControlWidgetButton(action: OpenAssistantCaptureIntent()) {
+                Label("Быстрый ввод", systemImage: "plus.bubble.fill")
+            }
+        }
+        .displayName("Быстрый ввод")
+        .description("Открывает Assistant сразу в поле ввода.")
     }
 }
 
@@ -345,5 +440,8 @@ struct AssistantPocketWidgetBundle: WidgetBundle {
     @WidgetBundleBuilder
     var body: some Widget {
         AssistantPocketWidget()
+        if #available(iOS 18.0, *) {
+            AssistantCaptureControl()
+        }
     }
 }

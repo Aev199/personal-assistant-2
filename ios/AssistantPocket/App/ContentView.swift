@@ -361,6 +361,7 @@ struct ContentView: View {
             captureText = ""
             captureFocused = false
             confirmation = "Записано"
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
         } catch {
             present(error)
@@ -376,6 +377,7 @@ struct ContentView: View {
             withAnimation {
                 tasks.removeAll { $0.id == task.id }
             }
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)
         }
@@ -429,6 +431,7 @@ private struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Готово") {
+                        settings.syncWidgetSettings()
                         dismiss()
                     }
                     .disabled(!settings.isConfigured)

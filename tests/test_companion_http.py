@@ -60,3 +60,42 @@ def test_utc_aware_normalizes_naive_and_aware_values():
     assert normalized_naive == datetime(2026, 9, 12, 10, 30, tzinfo=timezone.utc)
     assert normalized_aware == aware
     assert companion._utc_aware(None) is None
+
+
+
+def test_attention_selector_keeps_unscheduled_work_visible():
+    now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 21, 21, 0, tzinfo=timezone.utc)
+    rows = [
+        {"id": 1, "status": "todo", "deadline": datetime(2026, 9, 18, 9, 0), "created_at": datetime(2026, 9, 1)},
+        {"id": 2, "status": "todo", "deadline": datetime(2026, 9, 19, 9, 0), "created_at": datetime(2026, 9, 2)},
+        {"id": 3, "status": "todo", "deadline": datetime(2026, 9, 20, 9, 0), "created_at": datetime(2026, 9, 3)},
+        {"id": 4, "status": "todo", "deadline": datetime(2026, 9, 20, 12, 0), "created_at": datetime(2026, 9, 4)},
+        {"id": 5, "status": "todo", "deadline": None, "created_at": datetime(2026, 9, 5)},
+        {"id": 6, "status": "todo", "deadline": datetime(2026, 9, 22, 12, 0), "created_at": datetime(2026, 9, 6)},
+    ]
+
+    selected = companion._select_attention_tasks(rows, now_utc=now, end_utc_aware=end)
+
+    assert len(selected) == 5
+    assert 5 in {row["id"] for row in selected}
+    urgent = [
+        row for row in selected
+        if companion._utc_aware(row["deadline"]) is not None
+        and companion._utc_aware(row["deadline"]) < end
+    ]
+    assert len(urgent) == 3
+
+
+def test_attention_selector_prefers_in_progress_then_due_today():
+    now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        {"id": 10, "status": "todo", "deadline": datetime(2026, 9, 21, 11, 0), "created_at": datetime(2026, 9, 1)},
+        {"id": 11, "status": "in_progress", "deadline": None, "created_at": datetime(2026, 9, 20)},
+        {"id": 12, "status": "todo", "deadline": datetime(2026, 9, 20, 15, 0), "created_at": datetime(2026, 9, 2)},
+    ]
+
+    selected = companion._select_attention_tasks(rows, now_utc=now, end_utc_aware=end)
+
+    assert [row["id"] for row in selected] == [11, 10, 12]

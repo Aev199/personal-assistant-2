@@ -75,6 +75,7 @@ struct ContentView: View {
             .task {
                 if settings.isConfigured {
                     await loadToday()
+                    await loadPendingIntake()
                     await flushOutbox()
                 } else {
                     showSettings = true
@@ -91,7 +92,10 @@ struct ContentView: View {
             .onChange(of: scenePhase) { phase in
                 if phase == .active {
                     consumeSystemCaptureRequest()
-                    Task { await flushOutbox() }
+                    Task {
+                        await loadPendingIntake()
+                        await flushOutbox()
+                    }
                 }
             }
             .sheet(isPresented: $showSettings, onDismiss: {
@@ -404,6 +408,17 @@ struct ContentView: View {
             reminders = response.reminders
         } catch {
             present(error)
+        }
+    }
+
+    @MainActor
+    private func loadPendingIntake() async {
+        guard settings.isConfigured else { return }
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            pendingIntake = try await client.loadPendingIntake().pending
+        } catch {
+            // A background restore failure should not interrupt the Today surface.
         }
     }
 

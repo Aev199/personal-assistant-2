@@ -153,6 +153,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _intake(request: web.Request) -> web.StreamResponse:
         return await handle_intake(request, ctx)
 
+    async def _intake_pending(request: web.Request) -> web.StreamResponse:
+        return await handle_intake_pending(request, ctx)
+
     async def _intake_confirm(request: web.Request) -> web.StreamResponse:
         return await handle_intake_confirm(request, ctx)
 
@@ -172,6 +175,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_patch("/api/v1/tasks/{task_id}", _task_update)
     app.router.add_post("/api/v1/capture", _capture)
     app.router.add_post("/api/v1/intake", _intake)
+    app.router.add_get("/api/v1/intake/pending", _intake_pending)
     app.router.add_post("/api/v1/intake/{pending_action_id}/confirm", _intake_confirm)
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
     app.router.add_post("/api/v1/tasks/{task_id}/focus", _focus)
@@ -519,6 +523,58 @@ async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:
         source="ios",
     )
     return web.json_response(result, status=200 if result.get("ok") else 400)
+
+
+async def handle_intake_pending(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, kind, payload_json
+            FROM pending_actions
+            WHERE chat_id=$1
+              AND status='pending'
+              AND expires_at > NOW()
+              AND COALESCE(payload_json->>'source', '') LIKE 'ios%'
+            ORDER BY created_at ASC, id ASC
+            LIMIT 20
+            """,
+            int(ctx.deps.admin_id or 0),
+        )
+
+    pending = []
+    for row in rows:
+        payload = row["payload_json"] or {}
+        if isinstance(payload, str):
+            try:
+                import json
+                payload = json.loads(payload)
+            except Exception:
+                payload = {}
+        kind = str(row["kind"] or "")
+        title = str(
+            payload.get("summary")
+            or payload.get("title")
+            or payload.get("reminder_text")
+            or payload.get("idea_text")
+            or "Запись"
+        )
+        pending.append(
+            {
+                "status": "needs_confirmation",
+                "kind": kind,
+                "title": title,
+                "pending_action_id": int(row["id"]),
+            }
+        )
+
+    return web.json_response({"ok": True, "pending": pending})
 
 
 async def handle_intake_confirm(request: web.Request, ctx) -> web.StreamResponse:

@@ -137,6 +137,12 @@ struct APIClient {
         return try decode(NativeIntakeResponse.self, data: data, response: response)
     }
 
+    func loadPendingIntake() async throws -> NativePendingListResponse {
+        let req = try request(path: "/api/v1/intake/pending")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(NativePendingListResponse.self, data: data, response: response)
+    }
+
     func confirmIntake(pendingActionID: Int) async throws -> NativePendingMutationResponse {
         let req = try request(
             path: "/api/v1/intake/\(pendingActionID)/confirm",

@@ -61,6 +61,11 @@ struct TodayReminder: Decodable, Identifiable {
     let at: Date?
 }
 
+struct NativePendingListResponse: Decodable {
+    let ok: Bool
+    let pending: [NativeIntakePending]
+}
+
 struct NativeIntakeResponse: Decodable {
     let ok: Bool
     let captureId: String?

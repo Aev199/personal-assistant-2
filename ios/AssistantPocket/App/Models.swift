@@ -14,6 +14,33 @@ struct TasksResponse: Decodable {
     let tasks: [TodayTask]
 }
 
+struct ProjectsResponse: Decodable {
+    let ok: Bool
+    let projects: [AssistantProject]
+}
+
+struct AssistantProject: Decodable, Identifiable, Hashable {
+    let id: Int
+    let code: String
+    let name: String
+
+    var displayName: String {
+        if code.uppercased() == "INBOX" { return "Входящие" }
+        return name.isEmpty || name == code ? code : "\(code) · \(name)"
+    }
+}
+
+struct TaskMutationResponse: Decodable {
+    let ok: Bool
+    let taskId: Int
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok, status
+        case taskId = "task_id"
+    }
+}
+
 struct TodayTask: Decodable, Identifiable {
     let id: Int
     let title: String

@@ -18,6 +18,7 @@ struct ContentView: View {
     @AppStorage("assistant.clarificationPrompt") private var clarificationPrompt = ""
     @State private var pendingIntake: [NativeIntakePending] = []
     @State private var isFlushingOutbox = false
+    @State private var editingTask: TodayTask?
     @FocusState private var captureFocused: Bool
 
     private var focusTask: TodayTask? { tasks.first }
@@ -99,6 +100,12 @@ struct ContentView: View {
                 SettingsView()
                     .environmentObject(settings)
             }
+            .sheet(item: $editingTask) { task in
+                TaskEditView(task: task) {
+                    Task { await loadToday() }
+                }
+                .environmentObject(settings)
+            }
         }
     }
 
@@ -148,6 +155,10 @@ struct ContentView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     taskMeta(task)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    editingTask = task
                 }
 
                 Spacer(minLength: 8)
@@ -231,6 +242,10 @@ struct ContentView: View {
                     .lineLimit(2)
 
                 taskMeta(task)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                editingTask = task
             }
 
             Spacer(minLength: 0)

@@ -16,7 +16,7 @@ import asyncpg
 from aiohttp import web
 
 from bot.db import db_add_event, ensure_inbox_project_id
-from bot.tz import resolve_tz_name
+from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 
 
@@ -141,6 +141,12 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _tasks(request: web.Request) -> web.StreamResponse:
         return await handle_tasks(request, ctx)
 
+    async def _projects(request: web.Request) -> web.StreamResponse:
+        return await handle_projects(request, ctx)
+
+    async def _task_update(request: web.Request) -> web.StreamResponse:
+        return await handle_task_update(request, ctx)
+
     async def _capture(request: web.Request) -> web.StreamResponse:
         return await handle_capture(request, ctx)
 
@@ -162,6 +168,8 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     # Canonical client API.
     app.router.add_get("/api/v1/today", _today)
     app.router.add_get("/api/v1/tasks", _tasks)
+    app.router.add_get("/api/v1/projects", _projects)
+    app.router.add_patch("/api/v1/tasks/{task_id}", _task_update)
     app.router.add_post("/api/v1/capture", _capture)
     app.router.add_post("/api/v1/intake", _intake)
     app.router.add_post("/api/v1/intake/{pending_action_id}/confirm", _intake_confirm)
@@ -337,6 +345,146 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
             "tasks": tasks,
         }
     )
+
+
+async def handle_projects(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, code, name
+            FROM projects
+            WHERE status='active'
+            ORDER BY CASE WHEN UPPER(code)='INBOX' THEN 0 ELSE 1 END, code
+            """
+        )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "projects": [
+                {
+                    "id": int(row["id"]),
+                    "code": str(row["code"] or ""),
+                    "name": str(row["name"] or ""),
+                }
+                for row in rows
+            ],
+        }
+    )
+
+
+async def handle_task_update(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        task_id = int(request.match_info["task_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+
+    allowed = {"title", "project_code", "deadline"}
+    if not any(key in payload for key in allowed):
+        return web.json_response({"ok": False, "error": "nothing_to_update"}, status=400)
+
+    title = None
+    if "title" in payload:
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            return web.json_response({"ok": False, "error": "empty_title"}, status=400)
+        if len(title) > 1000:
+            return web.json_response({"ok": False, "error": "title_too_long"}, status=413)
+
+    tz_name = resolve_tz_name(ctx.deps.tz_name)
+    deadline_db = None
+    if "deadline" in payload and payload.get("deadline") is not None:
+        raw_deadline = str(payload.get("deadline") or "").strip()
+        try:
+            parsed = datetime.fromisoformat(raw_deadline.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo(tz_name))
+            deadline_db = to_db_utc(
+                parsed,
+                tz_name=tz_name,
+                store_tz=bool(getattr(ctx.deps, "db_tasks_deadline_timestamptz", False)),
+            )
+        except Exception:
+            return web.json_response({"ok": False, "error": "invalid_deadline"}, status=400)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT t.id, t.title, t.status, t.kind, t.project_id,
+                       p.code AS project_code
+                FROM tasks t
+                JOIN projects p ON p.id=t.project_id
+                WHERE t.id=$1
+                FOR UPDATE
+                """,
+                task_id,
+            )
+            if not row:
+                return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
+            if str(row["kind"] or "task").lower() == "super":
+                return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
+            if str(row["status"] or "").lower() == "done":
+                return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
+
+            project_id = int(row["project_id"])
+            project_code = str(row["project_code"] or "")
+            if "project_code" in payload:
+                requested = str(payload.get("project_code") or "").strip()
+                if not requested:
+                    return web.json_response({"ok": False, "error": "empty_project"}, status=400)
+                project = await conn.fetchrow(
+                    """
+                    SELECT id, code
+                    FROM projects
+                    WHERE status='active' AND UPPER(code)=UPPER($1)
+                    LIMIT 1
+                    """,
+                    requested,
+                )
+                if not project:
+                    return web.json_response({"ok": False, "error": "project_not_found"}, status=404)
+                project_id = int(project["id"])
+                project_code = str(project["code"] or "")
+
+            if title is not None:
+                await conn.execute("UPDATE tasks SET title=$2, updated_at=NOW() WHERE id=$1", task_id, title)
+            if "project_code" in payload:
+                await conn.execute("UPDATE tasks SET project_id=$2, updated_at=NOW() WHERE id=$1", task_id, project_id)
+            if "deadline" in payload:
+                await conn.execute("UPDATE tasks SET deadline=$2, updated_at=NOW() WHERE id=$1", task_id, deadline_db)
+
+            effective_title = title if title is not None else str(row["title"] or "")
+            await db_add_event(
+                conn,
+                "task_updated",
+                project_id,
+                task_id,
+                f"iOS edit: [{project_code}] #{task_id} {effective_title}",
+            )
+
+    return web.json_response({"ok": True, "task_id": task_id, "status": "updated"})
 
 
 async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:

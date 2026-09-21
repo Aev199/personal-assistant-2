@@ -92,6 +92,40 @@ struct APIClient {
         return try decode(TasksResponse.self, data: data, response: response)
     }
 
+    func loadProjects() async throws -> ProjectsResponse {
+        let req = try request(path: "/api/v1/projects")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(ProjectsResponse.self, data: data, response: response)
+    }
+
+    func updateTask(
+        taskID: Int,
+        title: String,
+        projectCode: String,
+        deadline: Date?
+    ) async throws -> TaskMutationResponse {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        var payload: [String: Any] = [
+            "title": title,
+            "project_code": projectCode,
+            "deadline": NSNull(),
+        ]
+        if let deadline {
+            payload["deadline"] = formatter.string(from: deadline)
+        }
+
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let req = try request(
+            path: "/api/v1/tasks/\(taskID)",
+            method: "PATCH",
+            body: body
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(TaskMutationResponse.self, data: data, response: response)
+    }
+
     func intake(_ text: String, context: String? = nil) async throws -> NativeIntakeResponse {
         var payload: [String: Any] = ["text": text]
         if let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

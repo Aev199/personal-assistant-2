@@ -10,6 +10,7 @@ struct AllTasksView: View {
     @State private var searchText = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var editingTask: TodayTask?
 
     private var filteredTasks: [TodayTask] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -42,6 +43,10 @@ struct AllTasksView: View {
                 List {
                     ForEach(filteredTasks) { task in
                         taskRow(task)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                editingTask = task
+                            }
                             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                 if !task.inProgress {
                                     Button {
@@ -64,6 +69,15 @@ struct AllTasksView: View {
         .searchable(text: $searchText, prompt: "Найти задачу")
         .task {
             await load()
+        }
+        .sheet(item: $editingTask) { task in
+            TaskEditView(task: task) {
+                Task {
+                    await load()
+                    onChanged()
+                }
+            }
+            .environmentObject(settings)
         }
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import WidgetKit
 
 @MainActor
 final class AppSettings: ObservableObject {
@@ -20,6 +21,7 @@ final class AppSettings: ObservableObject {
     init() {
         self.baseURL = UserDefaults.standard.string(forKey: Self.baseURLKey) ?? ""
         self.token = KeychainStore.read(Self.tokenAccount)
+        syncWidgetSettings()
     }
 
     var isConfigured: Bool {
@@ -28,5 +30,10 @@ final class AppSettings: ObservableObject {
 
     var normalizedBaseURL: String {
         baseURL.trimmingCharacters(in: CharacterSet(charactersIn: " /\n\t"))
+    }
+
+    func syncWidgetSettings() {
+        WidgetSharedSettings.write(baseURL: normalizedBaseURL, token: token)
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }

@@ -38,6 +38,7 @@ targets:
     platform: iOS
     sources:
       - path: AssistantPocket/Widget
+      - path: AssistantPocket/Shared/WidgetSharedSettings.swift
     info:
       path: AssistantPocket/Widget/Info.plist
       properties:

@@ -252,8 +252,13 @@ struct ContentView: View {
             }
 
             if let deadline = task.deadline {
-                Text(deadline, format: .dateTime.hour().minute())
-                    .foregroundStyle(task.overdue ? .red : .secondary)
+                if task.overdue {
+                    Text(deadline, format: .dateTime.hour().minute())
+                        .foregroundStyle(.red)
+                } else {
+                    Text(deadline, format: .dateTime.hour().minute())
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if !task.assignee.isEmpty {

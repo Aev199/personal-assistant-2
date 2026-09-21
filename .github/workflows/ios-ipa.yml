@@ -2,10 +2,6 @@ name: iOS IPA
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - diagnostic/widget-static-esign-20260921
-      - feat/ios-primary-client
 
 permissions:
   contents: read

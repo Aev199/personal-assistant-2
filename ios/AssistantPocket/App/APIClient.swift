@@ -126,10 +126,17 @@ struct APIClient {
         return try decode(TaskMutationResponse.self, data: data, response: response)
     }
 
-    func intake(_ text: String, context: String? = nil) async throws -> NativeIntakeResponse {
+    func intake(
+        _ text: String,
+        context: String? = nil,
+        clientID: UUID? = nil
+    ) async throws -> NativeIntakeResponse {
         var payload: [String: Any] = ["text": text]
         if let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["context"] = context
+        }
+        if let clientID {
+            payload["client_id"] = clientID.uuidString.lowercased()
         }
         let body = try JSONSerialization.data(withJSONObject: payload)
         let req = try request(path: "/api/v1/intake", method: "POST", body: body)

@@ -64,6 +64,7 @@ class NativeIntakeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.native_intake._save_receipt", save),
+            patch("bot.services.native_intake._load_receipt", AsyncMock(return_value=None)),
             patch(
                 "bot.services.native_intake._load_context",
                 AsyncMock(return_value=("lead", None, "INBOX", [], [])),
@@ -92,6 +93,7 @@ class NativeIntakeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("bot.services.native_intake._save_receipt", AsyncMock()),
+            patch("bot.services.native_intake._load_receipt", AsyncMock(return_value=None)),
             patch(
                 "bot.services.native_intake._load_context",
                 AsyncMock(return_value=("lead", None, "INBOX", [], [])),
@@ -108,6 +110,33 @@ class NativeIntakeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "needs_input")
         self.assertEqual(result["needs_input"][0]["prompt"], "Когда напомнить?")
         self.assertEqual(result["saved"], [])
+
+
+    async def test_processed_capture_id_is_idempotent(self):
+        cached = {
+            "ok": True,
+            "capture_id": "abc-123",
+            "status": "saved",
+            "saved": [{"status": "saved", "kind": "task", "title": "X"}],
+            "needs_input": [],
+            "pending": [],
+        }
+        classify = AsyncMock()
+
+        with (
+            patch("bot.services.native_intake._load_receipt", AsyncMock(return_value=cached)),
+            patch("bot.services.native_intake._classify", classify),
+        ):
+            result = await process_native_capture(
+                text="задача X",
+                deps=SimpleNamespace(llm=None, tz_name="Europe/Moscow"),
+                db_pool=object(),
+                chat_id=42,
+                capture_id="abc-123",
+            )
+
+        self.assertEqual(result, cached)
+        classify.assert_not_awaited()
 
 
 if __name__ == "__main__":

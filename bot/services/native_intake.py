@@ -19,6 +19,7 @@ from bot.db.runtime_state import (
     find_recent_action,
     forget_recent_action,
     get_pending_action,
+    get_conversation_state,
     mark_pending_action_status,
     remember_recent_action,
     set_conversation_state,
@@ -48,6 +49,7 @@ async def _save_receipt(
     raw_text: str,
     source: str,
     items: list[dict] | None = None,
+    result: dict | None = None,
 ) -> None:
     async with db_pool.acquire() as conn:
         await set_conversation_state(
@@ -59,9 +61,32 @@ async def _save_receipt(
                 "raw_text": raw_text,
                 "source": source,
                 "items": items or [],
+                "result": result,
             },
-            ttl_sec=None,
+            ttl_sec=30 * 24 * 3600,
         )
+
+
+async def _load_receipt(
+    db_pool: asyncpg.Pool,
+    *,
+    chat_id: int,
+    capture_id: str,
+    raw_text: str,
+) -> dict | None:
+    async with db_pool.acquire() as conn:
+        state = await get_conversation_state(
+            conn,
+            int(chat_id),
+            f"native_capture:{capture_id}",
+        )
+    if not state:
+        return None
+    payload = state.get("payload") or {}
+    if str(payload.get("raw_text") or "").strip() != raw_text:
+        return None
+    result = payload.get("result")
+    return result if isinstance(result, dict) else None
 
 
 async def _load_context(db_pool: asyncpg.Pool, *, chat_id: int):
@@ -405,12 +430,22 @@ async def process_native_capture(
     chat_id: int,
     prepend_text: str | None = None,
     source: str = "ios",
+    capture_id: str | None = None,
 ) -> dict:
     text = str(text or "").strip()
     if not text:
         return {"ok": False, "error": "empty_text"}
 
-    capture_id = secrets.token_hex(8)
+    capture_id = (capture_id or secrets.token_hex(8)).strip()
+    previous_result = await _load_receipt(
+        db_pool,
+        chat_id=int(chat_id),
+        capture_id=capture_id,
+        raw_text=text,
+    )
+    if previous_result and previous_result.get("status") != "stored":
+        return previous_result
+
     await _save_receipt(
         db_pool,
         chat_id=int(chat_id),
@@ -434,15 +469,7 @@ async def process_native_capture(
             prepend_text=prepend_text,
         )
     except Exception as exc:
-        await _save_receipt(
-            db_pool,
-            chat_id=int(chat_id),
-            capture_id=capture_id,
-            raw_text=text,
-            source=source,
-            items=[{"status": "unprocessed", "error": str(exc)}],
-        )
-        return {
+        response = {
             "ok": True,
             "capture_id": capture_id,
             "status": "stored",
@@ -451,6 +478,16 @@ async def process_native_capture(
             "needs_input": [],
             "pending": [],
         }
+        await _save_receipt(
+            db_pool,
+            chat_id=int(chat_id),
+            capture_id=capture_id,
+            raw_text=text,
+            source=source,
+            items=[{"status": "unprocessed", "error": str(exc)}],
+            result=response,
+        )
+        return response
 
     saved = []
     needs_input = []
@@ -510,15 +547,6 @@ async def process_native_capture(
                 }
             )
 
-    await _save_receipt(
-        db_pool,
-        chat_id=int(chat_id),
-        capture_id=capture_id,
-        raw_text=text,
-        source=source,
-        items=receipt_items,
-    )
-
     if needs_input:
         status = "partial" if saved or pending else "needs_input"
     elif pending:
@@ -527,7 +555,7 @@ async def process_native_capture(
         status = "saved"
 
     provider = getattr(getattr(deps, "llm", None), "last_provider", None)
-    return {
+    response = {
         "ok": True,
         "capture_id": capture_id,
         "status": status,
@@ -537,6 +565,16 @@ async def process_native_capture(
         "provider": provider,
         "context": intake._merge_freeform_text(prepend_text, text),
     }
+    await _save_receipt(
+        db_pool,
+        chat_id=int(chat_id),
+        capture_id=capture_id,
+        raw_text=text,
+        source=source,
+        items=receipt_items,
+        result=response,
+    )
+    return response
 
 
 async def confirm_native_action(

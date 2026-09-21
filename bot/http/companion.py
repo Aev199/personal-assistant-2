@@ -561,6 +561,11 @@ async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:
         )
 
     context = str((payload or {}).get("context") or "").strip() or None
+    client_id = str((payload or {}).get("client_id") or "").strip() or None
+    if client_id is not None:
+        if len(client_id) > 64 or not all(ch.isalnum() or ch in "-_" for ch in client_id):
+            return web.json_response({"ok": False, "error": "invalid_client_id"}, status=400)
+
     result = await process_native_capture(
         text=text,
         deps=ctx.deps,
@@ -568,6 +573,7 @@ async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:
         chat_id=int(ctx.deps.admin_id or 0),
         prepend_text=context,
         source="ios",
+        capture_id=client_id,
     )
     return web.json_response(result, status=200 if result.get("ok") else 400)
 

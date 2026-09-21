@@ -452,9 +452,16 @@ struct ContentView: View {
 
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            let response = try await client.intake(text, context: context)
-            CaptureOutbox.remove(queued.id)
+            let response = try await client.intake(text, context: context, clientID: queued.id)
             captureText = ""
+
+            if response.status == "stored" {
+                captureFocused = false
+                confirmation = "Сохранено, разберу позже"
+                return
+            }
+
+            CaptureOutbox.remove(queued.id)
             await applyIntakeResponse(response, originalText: text)
         } catch {
             if isRetryable(error) {
@@ -516,7 +523,12 @@ struct ContentView: View {
 
         for item in queued {
             do {
-                let response = try await client.intake(item.text, context: item.context)
+                let response = try await client.intake(item.text, context: item.context, clientID: item.id)
+                if response.status == "stored" {
+                    confirmation = "Сохранено, разберу позже"
+                    break
+                }
+
                 CaptureOutbox.remove(item.id)
                 await applyIntakeResponse(response, originalText: item.text)
                 refreshed = refreshed || !response.saved.isEmpty

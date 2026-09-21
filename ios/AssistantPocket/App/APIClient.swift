@@ -13,6 +13,8 @@ enum APIClientError: LocalizedError {
         case .invalidURL:
             return "Некорректный адрес сервера."
         case let .http(code, message):
+            if code == 401 { return "Неверный код доступа." }
+            if code == 503 { return "Assistant временно недоступен." }
             return message.isEmpty ? "Ошибка сервера: \(code)" : message
         case .invalidResponse:
             return "Сервер вернул неожиданный ответ."

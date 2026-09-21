@@ -112,12 +112,23 @@ private struct AssistantWidgetProvider: AppIntentTimelineProvider {
         if context.isPreview {
             return placeholder(in: context)
         }
-        return await load(configuration)
+
+        let server = normalizedBaseURL(configuration.serverURL ?? "")
+        let token = (configuration.token ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let error = server.isEmpty || token.isEmpty ? "Настройте виджет" : "Обновление…"
+        return AssistantWidgetEntry(
+            date: .now,
+            configuration: configuration,
+            tasks: [],
+            reminders: [],
+            error: error
+        )
     }
 
     func timeline(for configuration: AssistantWidgetConfigurationIntent, in context: Context) async -> Timeline<AssistantWidgetEntry> {
         let entry = await load(configuration)
-        return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(15 * 60)))
+        let retry = entry.error == nil ? 15 * 60 : 60
+        return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(TimeInterval(retry))))
     }
 
     private func load(_ configuration: AssistantWidgetConfigurationIntent) async -> AssistantWidgetEntry {
@@ -137,12 +148,30 @@ private struct AssistantWidgetProvider: AppIntentTimelineProvider {
 
         do {
             var request = URLRequest(url: url)
-            request.timeoutInterval = 10
+            request.timeoutInterval = 2.5
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            let sessionConfig = URLSessionConfiguration.ephemeral
+            sessionConfig.timeoutIntervalForRequest = 2.5
+            sessionConfig.timeoutIntervalForResource = 3.0
+            sessionConfig.waitsForConnectivity = false
+            let session = URLSession(configuration: sessionConfig)
+
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            if http.statusCode == 401 {
+                return AssistantWidgetEntry(
+                    date: .now,
+                    configuration: configuration,
+                    tasks: [],
+                    reminders: [],
+                    error: "Неверный код виджета"
+                )
+            }
+            guard 200..<300 ~= http.statusCode else {
                 throw URLError(.badServerResponse)
             }
 
@@ -363,6 +392,14 @@ private struct AssistantWidgetView: View {
                 .foregroundStyle(.secondary)
             if error == "Настройте виджет" {
                 Text("Зажмите → Изменить виджет")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else if error == "Обновление…" {
+                Text("Проверяю соединение")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else if error == "Нет связи" {
+                Text("Проверьте VPN и обновите виджет")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

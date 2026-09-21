@@ -124,3 +124,21 @@ def test_attention_selector_prefers_in_progress_then_due_today():
     selected = companion._select_attention_tasks(rows, now_utc=now, end_utc_aware=end)
 
     assert [row["id"] for row in selected] == [11, 10, 12]
+
+
+def test_attention_selector_keeps_explicit_focus_first():
+    now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)
+    rows = [
+        {"id": 20, "status": "in_progress", "deadline": None, "created_at": datetime(2026, 9, 1)},
+        {"id": 21, "status": "todo", "deadline": None, "created_at": datetime(2026, 9, 2)},
+    ]
+
+    selected = companion._select_attention_tasks(
+        rows,
+        now_utc=now,
+        end_utc_aware=end,
+        focus_task_id=21,
+    )
+
+    assert [row["id"] for row in selected][:2] == [21, 20]

@@ -48,7 +48,7 @@ struct AllTasksView: View {
                                 editingTask = task
                             }
                             .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                if !task.inProgress {
+                                if !task.isFocused {
                                     Button {
                                         Task { await focus(task) }
                                     } label: {
@@ -110,7 +110,9 @@ struct AllTasksView: View {
                             .foregroundStyle(task.overdue ? .red : .secondary)
                     }
 
-                    if task.inProgress {
+                    if task.isFocused {
+                        Text("сейчас")
+                    } else if task.inProgress {
                         Text("в работе")
                     }
 

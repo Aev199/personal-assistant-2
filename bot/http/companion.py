@@ -18,6 +18,7 @@ from aiohttp import web
 from bot.db import db_add_event, ensure_inbox_project_id
 from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
+from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
 
 
 MAX_CAPTURE_LEN = 2000
@@ -74,13 +75,22 @@ def _utc_aware(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def _attention_sort_key(row: dict, now_utc: datetime, end_utc_aware: datetime) -> tuple:
+def _attention_sort_key(
+    row: dict,
+    now_utc: datetime,
+    end_utc_aware: datetime,
+    *,
+    focus_task_id: int | None = None,
+) -> tuple:
     deadline = _utc_aware(row.get("deadline"))
     created_at = _utc_aware(row.get("created_at"))
     status = str(row.get("status") or "").lower()
     task_id = int(row.get("id") or 0)
 
-    if status == "in_progress":
+    if focus_task_id is not None and task_id == int(focus_task_id):
+        bucket = -1
+        time_key = deadline.timestamp() if deadline else 0.0
+    elif status == "in_progress":
         bucket = 0
         time_key = deadline.timestamp() if deadline else float("inf")
     elif deadline and now_utc <= deadline < end_utc_aware:
@@ -107,9 +117,18 @@ def _select_attention_tasks(
     end_utc_aware: datetime,
     limit: int = ATTENTION_TASK_LIMIT,
     urgent_limit: int = ATTENTION_URGENT_LIMIT,
+    focus_task_id: int | None = None,
 ) -> list[dict]:
     """Keep the daily surface useful without letting overdue work consume it."""
-    ordered = sorted((dict(row) for row in rows or []), key=lambda row: _attention_sort_key(row, now_utc, end_utc_aware))
+    ordered = sorted(
+        (dict(row) for row in rows or []),
+        key=lambda row: _attention_sort_key(
+            row,
+            now_utc,
+            end_utc_aware,
+            focus_task_id=focus_task_id,
+        ),
+    )
     selected: list[dict] = []
     deferred_urgent: list[dict] = []
     urgent_count = 0
@@ -204,7 +223,19 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
     end_utc = _utc_naive(end_local)
     now_utc = datetime.now(timezone.utc)
 
+    focus_task_id: int | None = None
     async with pool.acquire() as conn:
+        focus_state = await get_conversation_state(
+            conn,
+            int(ctx.deps.admin_id or 0),
+            "attention_focus",
+        )
+        if focus_state:
+            try:
+                focus_task_id = int((focus_state.get("payload") or {}).get("task_id"))
+            except (TypeError, ValueError):
+                focus_task_id = None
+
         task_rows = await conn.fetch(
             """
             SELECT t.id, t.title, t.deadline, t.status, t.created_at,
@@ -240,6 +271,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
         task_rows,
         now_utc=now_utc,
         end_utc_aware=end_local.astimezone(timezone.utc),
+        focus_task_id=focus_task_id,
     )
 
     tasks = []
@@ -255,6 +287,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 "status": str(row["status"] or "todo"),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
+                "focused": focus_task_id is not None and int(row["id"]) == focus_task_id,
             }
         )
 
@@ -301,7 +334,19 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
     end_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     now_utc = datetime.now(timezone.utc)
 
+    focus_task_id: int | None = None
     async with pool.acquire() as conn:
+        focus_state = await get_conversation_state(
+            conn,
+            int(ctx.deps.admin_id or 0),
+            "attention_focus",
+        )
+        if focus_state:
+            try:
+                focus_task_id = int((focus_state.get("payload") or {}).get("task_id"))
+            except (TypeError, ValueError):
+                focus_task_id = None
+
         rows = await conn.fetch(
             """
             SELECT t.id, t.title, t.deadline, t.status, t.created_at,
@@ -323,6 +368,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
             row,
             now_utc,
             end_local.astimezone(timezone.utc),
+            focus_task_id=focus_task_id,
         ),
     )
 
@@ -339,6 +385,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
                 "status": str(row["status"] or "todo"),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
+                "focused": focus_task_id is not None and int(row["id"]) == focus_task_id,
             }
         )
 
@@ -719,6 +766,15 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
                 f"iOS focus: [{row['project_code']}] #{task_id} {row['title']}",
             )
 
+        await set_conversation_state(
+            conn,
+            int(ctx.deps.admin_id or 0),
+            "attention_focus",
+            step="active",
+            payload={"task_id": task_id},
+            ttl_sec=None,
+        )
+
     return web.json_response({"ok": True, "task_id": task_id, "status": "in_progress"})
 
 
@@ -762,6 +818,22 @@ async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:
                     int(row["project_id"]),
                     task_id,
                     f"iOS done: [{row['project_code']}] #{task_id} {row['title']}",
+                )
+
+            focus_state = await get_conversation_state(
+                conn,
+                int(ctx.deps.admin_id or 0),
+                "attention_focus",
+            )
+            try:
+                focused_id = int((focus_state or {}).get("payload", {}).get("task_id"))
+            except (TypeError, ValueError):
+                focused_id = None
+            if focused_id == task_id:
+                await clear_conversation_state(
+                    conn,
+                    int(ctx.deps.admin_id or 0),
+                    "attention_focus",
                 )
 
     return web.json_response({"ok": True, "task_id": task_id, "status": "done"})

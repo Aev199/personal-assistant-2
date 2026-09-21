@@ -49,9 +49,14 @@ struct TodayTask: Decodable, Identifiable {
     let status: String?
     let deadline: Date?
     let overdue: Bool
+    let focused: Bool?
 
     var inProgress: Bool {
         status?.lowercased() == "in_progress"
+    }
+
+    var isFocused: Bool {
+        focused == true
     }
 }
 

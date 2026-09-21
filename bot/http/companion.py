@@ -1,7 +1,8 @@
-"""Minimal HTTP API for the native iOS companion.
+"""HTTP API shared by native Assistant clients.
 
-The companion is intentionally small: fast Inbox capture, a Today list, and
-quick task completion. Telegram remains the richer conversational surface.
+The backend owns task selection and mutations. iOS, widgets, shortcuts and
+Telegram are interfaces over the same data; legacy /companion routes remain
+as compatibility aliases while native clients move to canonical /api/v1 routes.
 """
 
 from __future__ import annotations
@@ -24,7 +25,11 @@ ATTENTION_URGENT_LIMIT = 3
 
 
 def _configured_token() -> str:
-    return (os.getenv("COMPANION_API_TOKEN") or "").strip()
+    return (
+        os.getenv("ASSISTANT_API_TOKEN")
+        or os.getenv("COMPANION_API_TOKEN")
+        or ""
+    ).strip()
 
 
 def _configured_widget_token() -> str:
@@ -127,8 +132,13 @@ def _select_attention_tasks(
 
 
 def attach_companion_routes(app: web.Application, ctx) -> None:
+    """Attach canonical Assistant API plus legacy companion aliases."""
+
     async def _today(request: web.Request) -> web.StreamResponse:
         return await handle_today(request, ctx)
+
+    async def _tasks(request: web.Request) -> web.StreamResponse:
+        return await handle_tasks(request, ctx)
 
     async def _capture(request: web.Request) -> web.StreamResponse:
         return await handle_capture(request, ctx)
@@ -136,6 +146,13 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
+    # Canonical client API.
+    app.router.add_get("/api/v1/today", _today)
+    app.router.add_get("/api/v1/tasks", _tasks)
+    app.router.add_post("/api/v1/capture", _capture)
+    app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
+
+    # Compatibility for already installed companion builds.
     app.router.add_get("/api/v1/companion/today", _today)
     app.router.add_post("/api/v1/companion/capture", _capture)
     app.router.add_post("/api/v1/companion/tasks/{task_id}/done", _done)
@@ -231,6 +248,76 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             "timezone": tz_name,
             "tasks": tasks,
             "reminders": reminders,
+        }
+    )
+
+
+async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
+    """Return the active task backlog for second-level native browsing."""
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        limit = max(1, min(200, int(request.query.get("limit", "100"))))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_limit"}, status=400)
+
+    tz_name = resolve_tz_name(ctx.deps.tz_name)
+    tz = ZoneInfo(tz_name)
+    now_local = datetime.now(tz)
+    end_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    now_utc = datetime.now(timezone.utc)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT t.id, t.title, t.deadline, t.status, t.created_at,
+                   p.code AS project_code, COALESCE(tm.name, '') AS assignee
+            FROM tasks t
+            JOIN projects p ON p.id=t.project_id
+            LEFT JOIN team tm ON tm.id=t.assignee_id
+            WHERE t.status NOT IN ('done', 'postponed')
+              AND t.kind != 'super'
+              AND p.status='active'
+            ORDER BY t.created_at ASC, t.id ASC
+            LIMIT 500
+            """
+        )
+
+    ordered = sorted(
+        (dict(row) for row in rows),
+        key=lambda row: _attention_sort_key(
+            row,
+            now_utc,
+            end_local.astimezone(timezone.utc),
+        ),
+    )
+
+    tasks = []
+    for row in ordered[:limit]:
+        deadline_utc = _utc_aware(row["deadline"])
+        deadline_local = deadline_utc.astimezone(tz) if deadline_utc else None
+        tasks.append(
+            {
+                "id": int(row["id"]),
+                "title": str(row["title"] or ""),
+                "project": str(row["project_code"] or ""),
+                "assignee": str(row["assignee"] or ""),
+                "status": str(row["status"] or "todo"),
+                "deadline": deadline_local.isoformat() if deadline_local else None,
+                "overdue": bool(deadline_utc and deadline_utc < now_utc),
+            }
+        )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "timezone": tz_name,
+            "tasks": tasks,
         }
     )
 

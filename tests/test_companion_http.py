@@ -6,17 +6,24 @@ from aiohttp import web
 from bot.http import companion
 
 
-def test_companion_routes_are_small_and_explicit():
+def test_assistant_routes_include_canonical_and_legacy_aliases():
     app = web.Application()
     companion.attach_companion_routes(app, SimpleNamespace())
 
     routes = {(route.method, route.resource.canonical) for route in app.router.routes()}
+
+    assert ("GET", "/api/v1/today") in routes
+    assert ("GET", "/api/v1/tasks") in routes
+    assert ("POST", "/api/v1/capture") in routes
+    assert ("POST", "/api/v1/tasks/{task_id}/done") in routes
+
     assert ("GET", "/api/v1/companion/today") in routes
     assert ("POST", "/api/v1/companion/capture") in routes
     assert ("POST", "/api/v1/companion/tasks/{task_id}/done") in routes
 
 
 def test_companion_auth_requires_dedicated_bearer_token(monkeypatch):
+    monkeypatch.delenv("ASSISTANT_API_TOKEN", raising=False)
     monkeypatch.setenv("COMPANION_API_TOKEN", "pocket-secret")
     monkeypatch.setenv("COMPANION_WIDGET_TOKEN", "widget-secret")
 
@@ -33,7 +40,18 @@ def test_companion_auth_requires_dedicated_bearer_token(monkeypatch):
     assert companion._authorized(legacy, allow_widget=True) is False
 
 
+def test_assistant_api_token_is_supported(monkeypatch):
+    monkeypatch.setenv("ASSISTANT_API_TOKEN", "assistant-secret")
+    monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
+    monkeypatch.delenv("COMPANION_WIDGET_TOKEN", raising=False)
+
+    request = SimpleNamespace(headers={"Authorization": "Bearer assistant-secret"})
+    assert companion._authorized(request) is True
+    assert companion._authorized(request, allow_widget=True) is True
+
+
 def test_companion_is_disabled_without_token(monkeypatch):
+    monkeypatch.delenv("ASSISTANT_API_TOKEN", raising=False)
     monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
     monkeypatch.delenv("COMPANION_WIDGET_TOKEN", raising=False)
     request = SimpleNamespace(headers={"Authorization": "Bearer anything"})
@@ -42,6 +60,7 @@ def test_companion_is_disabled_without_token(monkeypatch):
 
 
 def test_widget_token_does_not_grant_capture_scope(monkeypatch):
+    monkeypatch.delenv("ASSISTANT_API_TOKEN", raising=False)
     monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
     monkeypatch.setenv("COMPANION_WIDGET_TOKEN", "widget-secret")
     request = SimpleNamespace(headers={"Authorization": "Bearer widget-secret"})
@@ -60,7 +79,6 @@ def test_utc_aware_normalizes_naive_and_aware_values():
     assert normalized_naive == datetime(2026, 9, 12, 10, 30, tzinfo=timezone.utc)
     assert normalized_aware == aware
     assert companion._utc_aware(None) is None
-
 
 
 def test_attention_selector_keeps_unscheduled_work_visible():

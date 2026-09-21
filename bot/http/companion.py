@@ -153,6 +153,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _intake_cancel(request: web.Request) -> web.StreamResponse:
         return await handle_intake_cancel(request, ctx)
 
+    async def _focus(request: web.Request) -> web.StreamResponse:
+        return await handle_task_focus(request, ctx)
+
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
@@ -163,6 +166,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/intake", _intake)
     app.router.add_post("/api/v1/intake/{pending_action_id}/confirm", _intake_confirm)
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
+    app.router.add_post("/api/v1/tasks/{task_id}/focus", _focus)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
 
     # Compatibility for already installed companion builds.
@@ -465,6 +469,53 @@ async def handle_capture(request: web.Request, ctx) -> web.StreamResponse:
         },
         status=201,
     )
+
+
+async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        task_id = int(request.match_info["task_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT t.id, t.title, t.status, t.kind, t.project_id, p.code AS project_code
+            FROM tasks t
+            JOIN projects p ON p.id=t.project_id
+            WHERE t.id=$1
+            FOR UPDATE
+            """,
+            task_id,
+        )
+        if not row:
+            return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
+        if str(row["kind"] or "task").lower() == "super":
+            return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
+        if str(row["status"] or "").lower() in {"done", "postponed"}:
+            return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
+
+        if str(row["status"] or "todo").lower() != "in_progress":
+            await conn.execute(
+                "UPDATE tasks SET status='in_progress', updated_at=NOW() WHERE id=$1",
+                task_id,
+            )
+            await db_add_event(
+                conn,
+                "task_in_progress",
+                int(row["project_id"]),
+                task_id,
+                f"iOS focus: [{row['project_code']}] #{task_id} {row['title']}",
+            )
+
+    return web.json_response({"ok": True, "task_id": task_id, "status": "in_progress"})
 
 
 async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:

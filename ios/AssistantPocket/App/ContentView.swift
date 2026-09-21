@@ -6,7 +6,7 @@ struct ContentView: View {
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var captureText = ""
+    @AppStorage("assistant.captureDraft") private var captureText = ""
     @State private var tasks: [TodayTask] = []
     @State private var reminders: [TodayReminder] = []
     @State private var isLoading = false
@@ -14,9 +14,10 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var confirmation: String?
     @State private var showSettings = false
-    @State private var clarificationContext: String?
-    @State private var clarificationPrompt: String?
+    @AppStorage("assistant.clarificationContext") private var clarificationContext = ""
+    @AppStorage("assistant.clarificationPrompt") private var clarificationPrompt = ""
     @State private var pendingIntake: [NativeIntakePending] = []
+    @State private var isFlushingOutbox = false
     @FocusState private var captureFocused: Bool
 
     private var focusTask: TodayTask? { tasks.first }
@@ -73,6 +74,7 @@ struct ContentView: View {
             .task {
                 if settings.isConfigured {
                     await loadToday()
+                    await flushOutbox()
                 } else {
                     showSettings = true
                 }
@@ -88,6 +90,7 @@ struct ContentView: View {
             .onChange(of: scenePhase) { phase in
                 if phase == .active {
                     consumeSystemCaptureRequest()
+                    Task { await flushOutbox() }
                 }
             }
             .sheet(isPresented: $showSettings, onDismiss: {
@@ -289,7 +292,7 @@ struct ContentView: View {
                 .font(.headline)
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextField(clarificationPrompt == nil ? "Написать или надиктовать…" : "Уточнить…", text: $captureText, axis: .vertical)
+                TextField(clarificationPrompt.isEmpty ? "Написать или надиктовать…" : "Уточнить…", text: $captureText, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
                     .focused($captureFocused)
@@ -319,7 +322,7 @@ struct ContentView: View {
                 .accessibilityLabel("Сохранить")
             }
 
-            if let clarificationPrompt {
+            if !clarificationPrompt.isEmpty {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "questionmark.circle")
                         .foregroundStyle(.secondary)
@@ -401,46 +404,109 @@ struct ContentView: View {
         isSending = true
         errorMessage = nil
         confirmation = nil
+        let context = clarificationContext.isEmpty ? nil : clarificationContext
+        let queued = CaptureOutbox.enqueue(text: text, context: context)
         defer { isSending = false }
 
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            let response = try await client.intake(text, context: clarificationContext)
-
+            let response = try await client.intake(text, context: context)
+            CaptureOutbox.remove(queued.id)
             captureText = ""
-
-            if let need = response.needsInput.first {
-                clarificationPrompt = need.prompt
-                clarificationContext = response.context ?? clarificationContext ?? text
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                    captureFocused = true
-                }
-            } else {
-                clarificationPrompt = nil
-                clarificationContext = nil
-                captureFocused = false
-            }
-
-            for pending in response.pending where !pendingIntake.contains(where: { $0.id == pending.id }) {
-                pendingIntake.append(pending)
-            }
-
-            let savedCount = response.saved.count
-            if savedCount == 1 {
-                confirmation = "Записано"
-            } else if savedCount > 1 {
-                confirmation = "Записано: \(savedCount)"
-            } else if response.status == "stored" {
-                confirmation = response.message ?? "Записано"
-            }
-
-            if savedCount > 0 {
-                WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-                await loadToday()
-            }
+            await applyIntakeResponse(response, originalText: text)
         } catch {
+            if isRetryable(error) {
+                captureText = ""
+                captureFocused = false
+                confirmation = "Сохранено на телефоне"
+                return
+            }
+
+            CaptureOutbox.remove(queued.id)
             present(error)
         }
+    }
+
+    @MainActor
+    private func applyIntakeResponse(_ response: NativeIntakeResponse, originalText: String) async {
+        if let need = response.needsInput.first {
+            clarificationPrompt = need.prompt
+            clarificationContext = response.context ?? (clarificationContext.isEmpty ? originalText : clarificationContext)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                captureFocused = true
+            }
+        } else {
+            clarificationPrompt = ""
+            clarificationContext = ""
+            captureFocused = false
+        }
+
+        for pending in response.pending where !pendingIntake.contains(where: { $0.id == pending.id }) {
+            pendingIntake.append(pending)
+        }
+
+        let savedCount = response.saved.count
+        if savedCount == 1 {
+            confirmation = "Записано"
+        } else if savedCount > 1 {
+            confirmation = "Записано: \(savedCount)"
+        } else if response.status == "stored" {
+            confirmation = response.message ?? "Записано"
+        }
+
+        if savedCount > 0 {
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            await loadToday()
+        }
+    }
+
+    @MainActor
+    private func flushOutbox() async {
+        guard settings.isConfigured, !isFlushingOutbox else { return }
+        let queued = CaptureOutbox.all()
+        guard !queued.isEmpty else { return }
+
+        isFlushingOutbox = true
+        defer { isFlushingOutbox = false }
+
+        let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+        var refreshed = false
+
+        for item in queued {
+            do {
+                let response = try await client.intake(item.text, context: item.context)
+                CaptureOutbox.remove(item.id)
+                await applyIntakeResponse(response, originalText: item.text)
+                refreshed = refreshed || !response.saved.isEmpty
+            } catch {
+                if isRetryable(error) {
+                    break
+                }
+                // Keep the item: a durable capture is preferable to silent loss.
+                break
+            }
+        }
+
+        if refreshed {
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        }
+    }
+
+    private func isRetryable(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .notConnectedToInternet, .networkConnectionLost,
+                 .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+                return true
+            default:
+                return false
+            }
+        }
+        if let apiError = error as? APIClientError,
+           case let .http(code, _) = apiError {
+            return code == 502 || code == 503 || code == 504
+        }
+        return false
     }
 
     @MainActor

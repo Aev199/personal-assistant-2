@@ -42,6 +42,15 @@ struct AllTasksView: View {
                 List {
                     ForEach(filteredTasks) { task in
                         taskRow(task)
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                if !task.inProgress {
+                                    Button {
+                                        Task { await focus(task) }
+                                    } label: {
+                                        Label("Сейчас", systemImage: "play.fill")
+                                    }
+                                }
+                            }
                     }
                 }
                 .listStyle(.plain)
@@ -117,6 +126,20 @@ struct AllTasksView: View {
             tasks = try await client.loadTasks().tasks
         } catch let APIClientError.http(code, _) where code == 404 {
             errorMessage = "Обновите backend Assistant до версии с полным API."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func focus(_ task: TodayTask) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.focusTask(taskID: task.id)
+            await load()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            onChanged()
         } catch {
             errorMessage = error.localizedDescription
         }

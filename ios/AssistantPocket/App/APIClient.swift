@@ -134,6 +134,16 @@ struct APIClient {
         return try decode(CaptureResponse.self, data: responseData, response: response)
     }
 
+    func focusTask(taskID: Int) async throws -> DoneResponse {
+        let req = try request(
+            path: "/api/v1/tasks/\(taskID)/focus",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(DoneResponse.self, data: data, response: response)
+    }
+
     func markDone(taskID: Int) async throws -> DoneResponse {
         let body = Data("{}".utf8)
         let (data, response) = try await send(

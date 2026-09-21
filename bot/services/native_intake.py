@@ -534,7 +534,7 @@ async def process_native_capture(
         "needs_input": needs_input,
         "pending": pending,
         "provider": provider,
-        "context": prepend_text or text,
+        "context": intake._merge_freeform_text(prepend_text, text),
     }
 
 

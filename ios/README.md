@@ -1,88 +1,63 @@
-# Assistant Pocket
+# Assistant for iOS
 
-A deliberately small native iOS companion for Personal Assistant.
+The native iOS app is a primary mobile surface of Personal Assistant, not a companion to Telegram.
 
-## MVP scope
+## Product roles
 
-- one free-form capture field in the app;
-- native iOS keyboard dictation can be used for voice input;
-- a medium/large Home Screen widget shows Today;
-- interactive Quick Done works directly from the widget on iOS 17+;
-- the widget `+` opens the app directly into focused capture;
-- on iOS 18+, **Быстрый ввод** is exposed as a system Control for Control Center, Lock Screen, and Action Button;
-- the same action is exposed as an App Shortcut for Shortcuts / Action Button;
-- no projects screen, no inbox triage screen, no chat clone, no model picker.
+- **Widget** — the lowest-friction daily surface: see what matters now, Quick Done, refresh, quick capture.
+- **iOS app** — Today + capture + one second-level active-task list. No tab bar, no chat clone, no project-management dashboard.
+- **Telegram** — conversational / command interface to the same backend, especially useful while working on a PC.
+- **Backend** — source of truth and owner of attention ordering, tasks, reminders and mutations.
 
-Telegram remains the conversational interface. The iOS app is mostly configuration and capture; the widget is intended to be the daily surface.
+The same Task/Reminder data is used by every client.
 
-## Backend configuration
+## Native UI scope
 
-Set two secrets on the server:
+The main screen remains deliberately small:
 
-```bash
-COMPANION_API_TOKEN=<long-random-secret>
-COMPANION_WIDGET_TOKEN=<different-long-random-secret>
-```
+1. **Сейчас** — one attention task or reminder.
+2. **Дальше** — a short continuation, not the whole backlog.
+3. **Запомнить** — fast Inbox capture.
 
-`COMPANION_API_TOKEN` is the full companion token used by the app. `COMPANION_WIDGET_TOKEN` is intentionally restricted: it can read Today and mark tasks done, but it cannot create captures. The regular app token is also accepted by read/done endpoints for backward compatibility, but the separate widget token is recommended.
+The toolbar contains one second-level **Задачи** screen with the complete active backlog, local search and Quick Done. This screen is intentionally not a permanent tab.
 
-Restart the bot/web service after changing environment variables.
+The Home Screen widget uses StaticConfiguration; configurable AppIntentConfiguration is intentionally avoided because it fails after the current ESign sideload resigning flow.
 
-### API
+## Backend API
 
-- `GET /api/v1/companion/today`
-- `POST /api/v1/companion/capture` with `{ "text": "..." }`
-- `POST /api/v1/companion/tasks/{id}/done`
+Canonical native-client routes:
 
-Requests use Bearer authentication.
+- GET /api/v1/today
+- GET /api/v1/tasks?limit=100
+- POST /api/v1/capture with a JSON text field
+- POST /api/v1/tasks/{id}/done
 
-The first MVP captures text literally into the existing `INBOX` project. It intentionally does not duplicate the Telegram LLM intake path yet.
+Legacy /api/v1/companion/... routes remain as compatibility aliases. Current iOS builds try the canonical route first and fall back to legacy routes where possible, so the app can survive a rolling backend upgrade.
 
-## Why widget settings are separate
+Authentication uses Bearer tokens. ASSISTANT_API_TOKEN is the preferred full-client environment variable. Existing COMPANION_API_TOKEN remains supported as a fallback. COMPANION_WIDGET_TOKEN remains supported only for older widget builds with restricted read/done scope.
 
-The sideload build does not use App Groups. SideStore currently has a known issue where App Group storage used by widget extensions is not available reliably after sideload signing. Avoiding App Groups keeps the widget usable with SideStore, at the cost of entering the server URL and widget token once in the widget configuration.
+Capture currently stores literal text in the existing INBOX. Natural-language classification must eventually move into a UI-independent backend intake service shared by Telegram and iOS rather than being duplicated in Swift.
 
-## Build
+## Widget sharing and sideload signing
 
-The repository contains a manual-only GitHub Actions workflow named **iOS IPA**. It never runs on push.
+The current ESign profile gives the app and widget the same keychain access group. The app writes the server URL and token to that shared Keychain; the widget reads them automatically.
 
-Run it manually when an IPA is needed. The workflow generates the Xcode project with XcodeGen, builds an unsigned device app together with its widget extension, packages it as `AssistantPocket.ipa`, and keeps the artifact for three days.
+This avoids a second widget-configuration flow. Quick Done uses an optimistic local cache so the widget can redraw before waiting for a second Today round-trip.
 
-The resulting unsigned IPA is intended for SideStore/AltStore-style signing on the device.
+## System quick capture
 
-For local macOS development:
+On iOS 18+, **Быстрый ввод** is exposed as a Control for Control Center, Lock Screen and Action Button, and as an App Shortcut. It opens Assistant directly into the capture field.
 
-```bash
-brew install xcodegen
-cd ios
-xcodegen generate
-open AssistantPocket.xcodeproj
-```
+## First run
 
-## First run on iPhone
+1. Install the signed IPA.
+2. Open Assistant.
+3. Enter the HTTPS base URL and full API token once.
+4. Tap **Готово**; the app syncs configuration to the widget automatically.
+5. Add **Assistant — Сейчас** to the Home Screen.
 
-1. Install the generated `AssistantPocket.ipa` with SideStore.
-2. Open the app; the connection sheet appears automatically.
-3. Enter the public HTTPS base URL of the Personal Assistant web service without a trailing slash.
-4. Enter `COMPANION_API_TOKEN` and tap **Готово**.
-5. Add the **Assistant — Сегодня** widget to the Home Screen.
-6. Long-press the widget → **Edit Widget** and enter the same HTTPS base URL plus `COMPANION_WIDGET_TOKEN`.
-7. The circle next to a task completes it without opening the app. The `+` button opens the app with the capture field focused.
+No separate widget token entry is required for the current ESign build.
 
-The widget refreshes on the system timeline and also requests a refresh immediately after Quick Done.
+## Direction
 
-## System quick capture (iOS 18+)
-
-The widget extension also publishes a Control named **Быстрый ввод**. It opens Assistant and immediately focuses the capture field. Apple exposes the same Control in Control Center, on the Lock Screen, and as an Action Button choice.
-
-After installing a new IPA:
-
-1. Open Control Center → add a control → search for **Assistant** → add **Быстрый ввод**.
-2. For Lock Screen access, customize the Lock Screen and replace one of the bottom controls with **Быстрый ввод**.
-3. For the Action Button, choose a **Control** and select Assistant's **Быстрый ввод**. Alternatively choose **Shortcut** and select the Assistant **Быстрый ввод** App Shortcut.
-
-No additional server token or backend endpoint is required for these launch controls; they only open the already-configured app.
-
-## Next step after real-world testing
-
-If this interaction proves useful, the next increment should be a Share Extension and then a UI-independent intake service shared by Telegram and iOS. Do not call Telegram handlers from the iOS API and do not fork classification rules into Swift.
+Do not make iOS a second Telegram UI. Native surfaces should optimize for immediate action; conversational and bulk operations belong in Telegram. Business rules belong in the backend so future clients (web, macOS, Siri/Shortcuts) do not fork behavior.

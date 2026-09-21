@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - diagnostic/widget-static-esign-20260921
+      - feat/ios-primary-client
 
 permissions:
   contents: read
@@ -50,7 +51,7 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: AssistantPocket-static-widget-diagnostic
+          name: AssistantPocket-ios-primary-client
           path: ios/AssistantPocket.ipa
           retention-days: 3
           compression-level: 0

@@ -64,28 +64,70 @@ private enum WidgetCodec {
 }
 
 private enum WidgetNetwork {
+    static func loadToday() async throws -> (Data, HTTPURLResponse) {
+        try await send(
+            path: "/api/v1/today",
+            legacyPath: "/api/v1/companion/today"
+        )
+    }
+
     static func markDone(taskID: Int) async throws {
+        let (_, response) = try await send(
+            path: "/api/v1/tasks/\(taskID)/done",
+            legacyPath: "/api/v1/companion/tasks/\(taskID)/done",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+
+        guard 200..<300 ~= response.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    private static func send(
+        path: String,
+        legacyPath: String? = nil,
+        method: String = "GET",
+        body: Data? = nil
+    ) async throws -> (Data, HTTPURLResponse) {
         let server = WidgetSharedSettings.baseURL
         let token = WidgetSharedSettings.token
-
-        guard !server.isEmpty, !token.isEmpty,
-              let url = URL(string: server + "/api/v1/companion/tasks/\(taskID)/done") else {
+        guard !server.isEmpty, !token.isEmpty else {
             throw URLError(.userAuthenticationRequired)
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 6
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data("{}".utf8)
+        func makeRequest(_ path: String) throws -> URLRequest {
+            guard let url = URL(string: server + path) else {
+                throw URLError(.badURL)
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.timeoutInterval = 6
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let body {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = body
+            }
+            return request
+        }
 
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              200..<300 ~= http.statusCode else {
+        let primary = try makeRequest(path)
+        let (primaryData, primaryResponse) = try await URLSession.shared.data(for: primary)
+        guard let primaryHTTP = primaryResponse as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
+
+        if primaryHTTP.statusCode == 404, let legacyPath {
+            let legacy = try makeRequest(legacyPath)
+            let (legacyData, legacyResponse) = try await URLSession.shared.data(for: legacy)
+            guard let legacyHTTP = legacyResponse as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return (legacyData, legacyHTTP)
+        }
+
+        return (primaryData, primaryHTTP)
     }
 }
 
@@ -203,8 +245,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
         let server = WidgetSharedSettings.baseURL
         let token = WidgetSharedSettings.token
 
-        guard !server.isEmpty, !token.isEmpty,
-              let url = URL(string: server + "/api/v1/companion/today") else {
+        guard !server.isEmpty, !token.isEmpty else {
             return AssistantWidgetEntry(
                 date: .now,
                 tasks: [],
@@ -214,15 +255,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
         }
 
         do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 6
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw URLError(.badServerResponse)
-            }
+            let (data, http) = try await WidgetNetwork.loadToday()
 
             if http.statusCode == 401 {
                 return AssistantWidgetEntry(

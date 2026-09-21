@@ -8,6 +8,12 @@ struct TodayResponse: Decodable {
     let reminders: [TodayReminder]
 }
 
+struct TasksResponse: Decodable {
+    let ok: Bool
+    let timezone: String
+    let tasks: [TodayTask]
+}
+
 struct TodayTask: Decodable, Identifiable {
     let id: Int
     let title: String

@@ -50,6 +50,25 @@ struct APIClient {
         return request
     }
 
+    private func send(
+        path: String,
+        legacyPath: String? = nil,
+        method: String = "GET",
+        body: Data? = nil
+    ) async throws -> (Data, URLResponse) {
+        let primary = try request(path: path, method: method, body: body)
+        let (data, response) = try await URLSession.shared.data(for: primary)
+
+        if let http = response as? HTTPURLResponse,
+           http.statusCode == 404,
+           let legacyPath {
+            let legacy = try request(path: legacyPath, method: method, body: body)
+            return try await URLSession.shared.data(for: legacy)
+        }
+
+        return (data, response)
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, data: Data, response: URLResponse) throws -> T {
         guard let http = response as? HTTPURLResponse else { throw APIClientError.invalidResponse }
         guard 200..<300 ~= http.statusCode else {
@@ -60,21 +79,38 @@ struct APIClient {
     }
 
     func loadToday() async throws -> TodayResponse {
-        let req = try request(path: "/api/v1/companion/today")
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await send(
+            path: "/api/v1/today",
+            legacyPath: "/api/v1/companion/today"
+        )
         return try decode(TodayResponse.self, data: data, response: response)
+    }
+
+    func loadTasks(limit: Int = 100) async throws -> TasksResponse {
+        let safeLimit = max(1, min(200, limit))
+        let (data, response) = try await send(path: "/api/v1/tasks?limit=\(safeLimit)")
+        return try decode(TasksResponse.self, data: data, response: response)
     }
 
     func capture(_ text: String) async throws -> CaptureResponse {
         let data = try JSONSerialization.data(withJSONObject: ["text": text])
-        let req = try request(path: "/api/v1/companion/capture", method: "POST", body: data)
-        let (responseData, response) = try await URLSession.shared.data(for: req)
+        let (responseData, response) = try await send(
+            path: "/api/v1/capture",
+            legacyPath: "/api/v1/companion/capture",
+            method: "POST",
+            body: data
+        )
         return try decode(CaptureResponse.self, data: responseData, response: response)
     }
 
     func markDone(taskID: Int) async throws -> DoneResponse {
-        let req = try request(path: "/api/v1/companion/tasks/\(taskID)/done", method: "POST", body: Data("{}".utf8))
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let body = Data("{}".utf8)
+        let (data, response) = try await send(
+            path: "/api/v1/tasks/\(taskID)/done",
+            legacyPath: "/api/v1/companion/tasks/\(taskID)/done",
+            method: "POST",
+            body: body
+        )
         return try decode(DoneResponse.self, data: data, response: response)
     }
 }

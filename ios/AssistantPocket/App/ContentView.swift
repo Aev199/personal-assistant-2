@@ -45,7 +45,17 @@ struct ContentView: View {
             }
             .navigationTitle("Сегодня")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    NavigationLink {
+                        AllTasksView {
+                            Task { await loadToday() }
+                        }
+                        .environmentObject(settings)
+                    } label: {
+                        Image(systemName: "list.bullet")
+                    }
+                    .accessibilityLabel("Все задачи")
+
                     Button {
                         showSettings = true
                     } label: {

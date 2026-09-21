@@ -2,6 +2,9 @@ name: iOS IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - diagnostic/widget-static-esign-20260921
 
 permissions:
   contents: read
@@ -47,7 +50,7 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: AssistantPocket-ipa
+          name: AssistantPocket-static-widget-diagnostic
           path: ios/AssistantPocket.ipa
           retention-days: 3
           compression-level: 0

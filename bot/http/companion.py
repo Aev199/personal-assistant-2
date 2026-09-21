@@ -19,6 +19,8 @@ from bot.tz import resolve_tz_name
 
 
 MAX_CAPTURE_LEN = 2000
+ATTENTION_TASK_LIMIT = 5
+ATTENTION_URGENT_LIMIT = 3
 
 
 def _configured_token() -> str:
@@ -66,6 +68,64 @@ def _utc_aware(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _attention_sort_key(row: dict, now_utc: datetime, end_utc_aware: datetime) -> tuple:
+    deadline = _utc_aware(row.get("deadline"))
+    created_at = _utc_aware(row.get("created_at"))
+    status = str(row.get("status") or "").lower()
+    task_id = int(row.get("id") or 0)
+
+    if status == "in_progress":
+        bucket = 0
+        time_key = deadline.timestamp() if deadline else float("inf")
+    elif deadline and now_utc <= deadline < end_utc_aware:
+        bucket = 1
+        time_key = deadline.timestamp()
+    elif deadline and deadline < now_utc:
+        bucket = 2
+        # Recent overdue work is more actionable than ancient backlog debt.
+        time_key = -deadline.timestamp()
+    elif deadline is None:
+        bucket = 3
+        time_key = created_at.timestamp() if created_at else 0.0
+    else:
+        bucket = 4
+        time_key = deadline.timestamp()
+
+    return (bucket, time_key, task_id)
+
+
+def _select_attention_tasks(
+    rows,
+    *,
+    now_utc: datetime,
+    end_utc_aware: datetime,
+    limit: int = ATTENTION_TASK_LIMIT,
+    urgent_limit: int = ATTENTION_URGENT_LIMIT,
+) -> list[dict]:
+    """Keep the daily surface useful without letting overdue work consume it."""
+    ordered = sorted((dict(row) for row in rows or []), key=lambda row: _attention_sort_key(row, now_utc, end_utc_aware))
+    selected: list[dict] = []
+    deferred_urgent: list[dict] = []
+    urgent_count = 0
+
+    for row in ordered:
+        deadline = _utc_aware(row.get("deadline"))
+        is_urgent = bool(deadline and deadline < end_utc_aware)
+        if is_urgent and urgent_count >= urgent_limit:
+            deferred_urgent.append(row)
+            continue
+
+        selected.append(row)
+        if is_urgent:
+            urgent_count += 1
+        if len(selected) >= limit:
+            return selected
+
+    if len(selected) < limit:
+        selected.extend(deferred_urgent[: limit - len(selected)])
+    return selected
+
+
 def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _today(request: web.Request) -> web.StreamResponse:
         return await handle_today(request, ctx)
@@ -101,19 +161,17 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
     async with pool.acquire() as conn:
         task_rows = await conn.fetch(
             """
-            SELECT t.id, t.title, t.deadline, p.code AS project_code,
-                   COALESCE(tm.name, '') AS assignee
+            SELECT t.id, t.title, t.deadline, t.status, t.created_at,
+                   p.code AS project_code, COALESCE(tm.name, '') AS assignee
             FROM tasks t
             JOIN projects p ON p.id=t.project_id
             LEFT JOIN team tm ON tm.id=t.assignee_id
-            WHERE t.status != 'done'
+            WHERE t.status NOT IN ('done', 'postponed')
               AND t.kind != 'super'
-              AND t.deadline IS NOT NULL
-              AND t.deadline < $1
-            ORDER BY t.deadline ASC, t.id ASC
-            LIMIT 100
-            """,
-            end_utc,
+              AND p.status='active'
+            ORDER BY t.created_at ASC, t.id ASC
+            LIMIT 200
+            """
         )
         reminder_rows = await conn.fetch(
             """
@@ -132,8 +190,14 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             end_utc,
         )
 
+    selected_task_rows = _select_attention_tasks(
+        task_rows,
+        now_utc=now_utc,
+        end_utc_aware=end_local.astimezone(timezone.utc),
+    )
+
     tasks = []
-    for row in task_rows:
+    for row in selected_task_rows:
         deadline_utc = _utc_aware(row["deadline"])
         deadline_local = deadline_utc.astimezone(tz) if deadline_utc else None
         tasks.append(
@@ -142,6 +206,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 "title": str(row["title"] or ""),
                 "project": str(row["project_code"] or ""),
                 "assignee": str(row["assignee"] or ""),
+                "status": str(row["status"] or "todo"),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
             }

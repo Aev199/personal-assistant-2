@@ -34,6 +34,73 @@ struct TodayReminder: Decodable, Identifiable {
     let at: Date?
 }
 
+struct NativeIntakeResponse: Decodable {
+    let ok: Bool
+    let captureId: String?
+    let status: String
+    let message: String?
+    let saved: [NativeIntakeItem]
+    let needsInput: [NativeIntakeNeedInput]
+    let pending: [NativeIntakePending]
+    let context: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, status, message, saved, pending, context
+        case captureId = "capture_id"
+        case needsInput = "needs_input"
+    }
+}
+
+struct NativeIntakeItem: Decodable, Identifiable {
+    let status: String
+    let kind: String
+    let title: String
+    let pendingActionId: Int?
+
+    var id: Int { pendingActionId ?? title.hashValue }
+
+    enum CodingKeys: String, CodingKey {
+        case status, kind, title
+        case pendingActionId = "pending_action_id"
+    }
+}
+
+struct NativeIntakeNeedInput: Decodable, Identifiable {
+    let status: String
+    let action: String
+    let title: String
+    let prompt: String
+
+    var id: String { "\(action):\(title):\(prompt)" }
+}
+
+struct NativeIntakePending: Decodable, Identifiable {
+    let status: String
+    let kind: String
+    let title: String
+    let pendingActionId: Int
+
+    var id: Int { pendingActionId }
+
+    enum CodingKeys: String, CodingKey {
+        case status, kind, title
+        case pendingActionId = "pending_action_id"
+    }
+}
+
+struct NativePendingMutationResponse: Decodable {
+    let ok: Bool
+    let status: String?
+    let pendingActionId: Int?
+    let message: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, status, message, error
+        case pendingActionId = "pending_action_id"
+    }
+}
+
 struct CaptureResponse: Decodable {
     let ok: Bool
     let task: CapturedTask

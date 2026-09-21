@@ -40,7 +40,7 @@ struct APIClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 15
+        request.timeoutInterval = 20
         request.setValue("Bearer \(cleanToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
@@ -90,6 +90,37 @@ struct APIClient {
         let safeLimit = max(1, min(200, limit))
         let (data, response) = try await send(path: "/api/v1/tasks?limit=\(safeLimit)")
         return try decode(TasksResponse.self, data: data, response: response)
+    }
+
+    func intake(_ text: String, context: String? = nil) async throws -> NativeIntakeResponse {
+        var payload: [String: Any] = ["text": text]
+        if let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["context"] = context
+        }
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let req = try request(path: "/api/v1/intake", method: "POST", body: body)
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(NativeIntakeResponse.self, data: data, response: response)
+    }
+
+    func confirmIntake(pendingActionID: Int) async throws -> NativePendingMutationResponse {
+        let req = try request(
+            path: "/api/v1/intake/\(pendingActionID)/confirm",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(NativePendingMutationResponse.self, data: data, response: response)
+    }
+
+    func cancelIntake(pendingActionID: Int) async throws -> NativePendingMutationResponse {
+        let req = try request(
+            path: "/api/v1/intake/\(pendingActionID)/cancel",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(NativePendingMutationResponse.self, data: data, response: response)
     }
 
     func capture(_ text: String) async throws -> CaptureResponse {

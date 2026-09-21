@@ -14,6 +14,9 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var confirmation: String?
     @State private var showSettings = false
+    @State private var clarificationContext: String?
+    @State private var clarificationPrompt: String?
+    @State private var pendingIntake: [NativeIntakePending] = []
     @FocusState private var captureFocused: Bool
 
     private var focusTask: TodayTask? { tasks.first }
@@ -286,7 +289,7 @@ struct ContentView: View {
                 .font(.headline)
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("Написать или надиктовать…", text: $captureText, axis: .vertical)
+                TextField(clarificationPrompt == nil ? "Написать или надиктовать…" : "Уточнить…", text: $captureText, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
                     .focused($captureFocused)
@@ -314,6 +317,40 @@ struct ContentView: View {
                 .buttonBorderShape(.circle)
                 .disabled(captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                 .accessibilityLabel("Сохранить")
+            }
+
+            if let clarificationPrompt {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.secondary)
+                    Text(clarificationPrompt)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            ForEach(pendingIntake) { pending in
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(pending.title)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 10) {
+                        Button("Добавить") {
+                            Task { await confirmPending(pending) }
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Не добавлять") {
+                            Task { await cancelPending(pending) }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
             }
         }
     }
@@ -368,12 +405,73 @@ struct ContentView: View {
 
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.capture(text)
+            let response = try await client.intake(text, context: clarificationContext)
+
             captureText = ""
-            captureFocused = false
-            confirmation = "Записано"
+
+            if let need = response.needsInput.first {
+                clarificationPrompt = need.prompt
+                clarificationContext = response.context ?? clarificationContext ?? text
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    captureFocused = true
+                }
+            } else {
+                clarificationPrompt = nil
+                clarificationContext = nil
+                captureFocused = false
+            }
+
+            for pending in response.pending where !pendingIntake.contains(where: { $0.id == pending.id }) {
+                pendingIntake.append(pending)
+            }
+
+            let savedCount = response.saved.count
+            if savedCount == 1 {
+                confirmation = "Записано"
+            } else if savedCount > 1 {
+                confirmation = "Записано: \(savedCount)"
+            } else if response.status == "stored" {
+                confirmation = response.message ?? "Записано"
+            }
+
+            if savedCount > 0 {
+                WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                await loadToday()
+            }
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func confirmPending(_ pending: NativeIntakePending) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            let response = try await client.confirmIntake(pendingActionID: pending.pendingActionId)
+            guard response.ok else {
+                throw APIClientError.invalidResponse
+            }
+            withAnimation {
+                pendingIntake.removeAll { $0.id == pending.id }
+            }
+            confirmation = "Добавлено"
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func cancelPending(_ pending: NativeIntakePending) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.cancelIntake(pendingActionID: pending.pendingActionId)
+            withAnimation {
+                pendingIntake.removeAll { $0.id == pending.id }
+            }
         } catch {
             present(error)
         }

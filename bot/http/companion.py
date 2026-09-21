@@ -17,6 +17,7 @@ from aiohttp import web
 
 from bot.db import db_add_event, ensure_inbox_project_id
 from bot.tz import resolve_tz_name
+from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 
 
 MAX_CAPTURE_LEN = 2000
@@ -143,6 +144,15 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _capture(request: web.Request) -> web.StreamResponse:
         return await handle_capture(request, ctx)
 
+    async def _intake(request: web.Request) -> web.StreamResponse:
+        return await handle_intake(request, ctx)
+
+    async def _intake_confirm(request: web.Request) -> web.StreamResponse:
+        return await handle_intake_confirm(request, ctx)
+
+    async def _intake_cancel(request: web.Request) -> web.StreamResponse:
+        return await handle_intake_cancel(request, ctx)
+
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
@@ -150,6 +160,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_get("/api/v1/today", _today)
     app.router.add_get("/api/v1/tasks", _tasks)
     app.router.add_post("/api/v1/capture", _capture)
+    app.router.add_post("/api/v1/intake", _intake)
+    app.router.add_post("/api/v1/intake/{pending_action_id}/confirm", _intake_confirm)
+    app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
 
     # Compatibility for already installed companion builds.
@@ -320,6 +333,81 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
             "tasks": tasks,
         }
     )
+
+
+async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+
+    text = str((payload or {}).get("text") or "").strip()
+    if not text:
+        return web.json_response({"ok": False, "error": "empty_text"}, status=400)
+    if len(text) > MAX_CAPTURE_LEN:
+        return web.json_response(
+            {"ok": False, "error": "text_too_long", "max_length": MAX_CAPTURE_LEN},
+            status=413,
+        )
+
+    context = str((payload or {}).get("context") or "").strip() or None
+    result = await process_native_capture(
+        text=text,
+        deps=ctx.deps,
+        db_pool=pool,
+        chat_id=int(ctx.deps.admin_id or 0),
+        prepend_text=context,
+        source="ios",
+    )
+    return web.json_response(result, status=200 if result.get("ok") else 400)
+
+
+async def handle_intake_confirm(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+    try:
+        pending_action_id = int(request.match_info["pending_action_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_pending_action_id"}, status=400)
+
+    result = await confirm_native_action(
+        pending_action_id=pending_action_id,
+        deps=ctx.deps,
+        db_pool=pool,
+        chat_id=int(ctx.deps.admin_id or 0),
+    )
+    return web.json_response(result, status=200 if result.get("ok") else 409)
+
+
+async def handle_intake_cancel(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+    try:
+        pending_action_id = int(request.match_info["pending_action_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_pending_action_id"}, status=400)
+
+    result = await cancel_native_action(
+        pending_action_id=pending_action_id,
+        db_pool=pool,
+        chat_id=int(ctx.deps.admin_id or 0),
+    )
+    return web.json_response(result, status=200 if result.get("ok") else 409)
 
 
 async def handle_capture(request: web.Request, ctx) -> web.StreamResponse:

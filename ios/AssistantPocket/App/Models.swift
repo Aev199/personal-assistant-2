@@ -13,8 +13,13 @@ struct TodayTask: Decodable, Identifiable {
     let title: String
     let project: String
     let assignee: String
+    let status: String?
     let deadline: Date?
     let overdue: Bool
+
+    var inProgress: Bool {
+        status?.lowercased() == "in_progress"
+    }
 }
 
 struct TodayReminder: Decodable, Identifiable {

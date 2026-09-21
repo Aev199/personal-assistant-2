@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feat/attention-first-ios
     paths-ignore:
       - ".github/workflows/actions-storage-cleanup.yml"
 

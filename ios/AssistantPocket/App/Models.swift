@@ -116,12 +116,25 @@ struct NativeIntakePending: Decodable, Identifiable {
     let kind: String
     let title: String
     let pendingActionId: Int
+    let payload: NativeIntakePendingPayload?
 
     var id: Int { pendingActionId }
 
     enum CodingKeys: String, CodingKey {
-        case status, kind, title
+        case status, kind, title, payload
         case pendingActionId = "pending_action_id"
+    }
+}
+
+struct NativeIntakePendingPayload: Decodable {
+    let startLocal: Date?
+    let durationMin: Int?
+    let calendarKind: String?
+
+    enum CodingKeys: String, CodingKey {
+        case startLocal = "start_local"
+        case durationMin = "duration_min"
+        case calendarKind = "calendar_kind"
     }
 }
 

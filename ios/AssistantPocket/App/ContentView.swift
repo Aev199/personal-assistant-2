@@ -358,6 +358,18 @@ struct ContentView: View {
                         .font(.subheadline.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
 
+                    if let start = pending.payload?.startLocal {
+                        HStack(spacing: 6) {
+                            Text(start, format: .dateTime.day().month().hour().minute())
+                            if let duration = pending.payload?.durationMin {
+                                Text("·")
+                                Text("\(duration) мин")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
                     HStack(spacing: 10) {
                         Button("Добавить") {
                             Task { await confirmPending(pending) }

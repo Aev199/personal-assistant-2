@@ -618,6 +618,7 @@ async def handle_intake_pending(request: web.Request, ctx) -> web.StreamResponse
                 "kind": kind,
                 "title": title,
                 "pending_action_id": int(row["id"]),
+                "payload": payload,
             }
         )
 

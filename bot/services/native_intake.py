@@ -338,6 +338,7 @@ async def _persist_action(
             }
 
         stored_payload = {**spec["payload"], "source": source}
+        needs_confirmation = spec["kind"] not in SAFE_INSTANT_KINDS
         pending_id = await create_pending_action(
             conn,
             chat_id=int(chat_id),
@@ -345,7 +346,7 @@ async def _persist_action(
             payload=stored_payload,
             source_message_id=0,
             fingerprint=fingerprint,
-            ttl_sec=900,
+            ttl_sec=86400 if needs_confirmation else 900,
         )
         await remember_recent_action(
             conn,
@@ -354,7 +355,7 @@ async def _persist_action(
             action=str(spec["kind"]),
             summary=str(spec["summary"]),
             pending_action_id=int(pending_id),
-            ttl_sec=900,
+            ttl_sec=86400 if needs_confirmation else 300,
         )
 
     if spec["kind"] not in SAFE_INSTANT_KINDS:

@@ -7,8 +7,13 @@ private struct WidgetTask: Decodable, Identifiable {
     let id: Int
     let title: String
     let project: String
+    let status: String?
     let deadline: Date?
     let overdue: Bool
+
+    var inProgress: Bool {
+        status?.lowercased() == "in_progress"
+    }
 }
 
 private struct WidgetReminder: Decodable, Identifiable {
@@ -26,10 +31,10 @@ struct AssistantWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "Assistant"
     static var description = IntentDescription("Подключение виджета к Personal Assistant")
 
-    @Parameter(title: "Server URL", description: "Например https://assistant.example.com")
+    @Parameter(title: "Адрес Assistant", description: "Например https://assistant.example.com")
     var serverURL: String?
 
-    @Parameter(title: "Token", description: "COMPANION_WIDGET_TOKEN")
+    @Parameter(title: "Код виджета", description: "Отдельный код доступа для виджета")
     var token: String?
 }
 
@@ -94,8 +99,9 @@ private struct AssistantWidgetProvider: AppIntentTimelineProvider {
             date: .now,
             configuration: AssistantWidgetConfigurationIntent(),
             tasks: [
-                WidgetTask(id: 1, title: "Проверить расчёт", project: "БГР", deadline: .now, overdue: false),
-                WidgetTask(id: 2, title: "Подготовить материалы", project: "", deadline: nil, overdue: false),
+                WidgetTask(id: 1, title: "Проверить расчёт", project: "БГР", status: "in_progress", deadline: .now, overdue: false),
+                WidgetTask(id: 2, title: "Ответить Иванову", project: "", status: "todo", deadline: nil, overdue: false),
+                WidgetTask(id: 3, title: "Подготовить замечания", project: "", status: "todo", deadline: nil, overdue: false),
             ],
             reminders: [],
             error: nil
@@ -178,75 +184,87 @@ private struct AssistantWidgetView: View {
         entry.configuration.token ?? ""
     }
 
-    private var taskLimit: Int {
-        family == .systemLarge ? 6 : 3
+    private var visibleTaskCount: Int {
+        family == .systemLarge ? 5 : 3
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Сегодня")
-                    .font(.headline)
-
-                Spacer()
-
-                Link(destination: URL(string: "assistantpocket://capture")!) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                }
-                .accessibilityLabel("Добавить")
-            }
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 10 : 7) {
+            header
 
             if let error = entry.error {
-                Spacer()
-                Text(error)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if error == "Настройте виджет" {
-                    Text("Зажмите → Изменить виджет")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer()
-            } else if entry.tasks.isEmpty && entry.reminders.isEmpty {
-                Spacer()
-                Text("Ничего срочного")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            } else {
-                ForEach(Array(entry.tasks.prefix(taskLimit))) { task in
-                    taskRow(task)
-                }
+                errorState(error)
+            } else if let focus = entry.tasks.first {
+                focusTask(focus)
 
-                if family == .systemLarge {
-                    ForEach(Array(entry.reminders.prefix(2))) { reminder in
-                        HStack(spacing: 8) {
-                            Image(systemName: "bell")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(reminder.text)
-                                .font(.caption)
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
-                            if let at = reminder.at {
-                                Text(at, format: .dateTime.hour().minute())
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                let rest = Array(entry.tasks.dropFirst().prefix(max(0, visibleTaskCount - 1)))
+                if !rest.isEmpty {
+                    Text("Дальше")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(rest) { task in
+                        compactTask(task)
                     }
                 }
 
+                if family == .systemLarge, let reminder = entry.reminders.first {
+                    compactReminder(reminder)
+                }
+
                 Spacer(minLength: 0)
+            } else if let reminder = entry.reminders.first {
+                focusReminder(reminder)
+                Spacer(minLength: 0)
+            } else {
+                emptyState
             }
         }
         .padding(12)
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
-    @ViewBuilder
-    private func taskRow(_ task: WidgetTask) -> some View {
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("Сейчас")
+                .font(.headline)
+
+            Spacer()
+
+            Link(destination: URL(string: "assistantpocket://capture")!) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+            }
+            .accessibilityLabel("Запомнить")
+        }
+    }
+
+    private func focusTask(_ task: WidgetTask) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Button(intent: MarkTaskDoneIntent(
+                taskID: task.id,
+                serverURL: configuredServer,
+                token: configuredToken
+            )) {
+                Image(systemName: task.inProgress ? "circle.inset.filled" : "circle")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Выполнено")
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(task.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(family == .systemLarge ? 2 : 1)
+
+                taskMeta(task)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func compactTask(_ task: WidgetTask) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button(intent: MarkTaskDoneIntent(
                 taskID: task.id,
@@ -254,33 +272,112 @@ private struct AssistantWidgetView: View {
                 token: configuredToken
             )) {
                 Image(systemName: "circle")
+                    .font(.caption)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Выполнено")
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(task.title)
-                    .font(.caption)
-                    .lineLimit(1)
+            Text(task.title)
+                .font(.caption)
+                .lineLimit(1)
 
-                HStack(spacing: 5) {
-                    if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
-                        Text(task.project)
-                    }
-                    if let deadline = task.deadline {
-                        if task.overdue {
-                            Text(deadline, format: .dateTime.hour().minute())
-                                .foregroundStyle(.red)
-                        } else {
-                            Text(deadline, format: .dateTime.hour().minute())
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+            Spacer(minLength: 0)
+
+            if let deadline = task.deadline {
+                if task.overdue {
+                    Text(deadline, format: .dateTime.hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                } else {
+                    Text(deadline, format: .dateTime.hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func taskMeta(_ task: WidgetTask) -> some View {
+        HStack(spacing: 5) {
+            if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
+                Text(task.project)
             }
 
+            if let deadline = task.deadline {
+                if task.overdue {
+                    Text(deadline, format: .dateTime.hour().minute())
+                        .foregroundStyle(.red)
+                } else {
+                    Text(deadline, format: .dateTime.hour().minute())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if task.inProgress {
+                Text("в работе")
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+
+    private func focusReminder(_ reminder: WidgetReminder) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("Напоминание", systemImage: "bell.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(reminder.text)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+            if let at = reminder.at {
+                Text(at, format: .dateTime.hour().minute())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func compactReminder(_ reminder: WidgetReminder) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "bell")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(reminder.text)
+                .font(.caption)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if let at = reminder.at {
+                Text(at, format: .dateTime.hour().minute())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func errorState(_ error: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Spacer(minLength: 0)
+            Text(error)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            if error == "Настройте виджет" {
+                Text("Зажмите → Изменить виджет")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Spacer(minLength: 0)
+            Text("Свободно")
+                .font(.subheadline.weight(.semibold))
+            Text("Запишите следующее дело, когда оно появится.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
     }
@@ -297,13 +394,12 @@ struct AssistantPocketWidget: Widget {
         ) { entry in
             AssistantWidgetView(entry: entry)
         }
-        .configurationDisplayName("Assistant — Сегодня")
-        .description("Дела на сегодня, Quick Done и быстрый захват.")
+        .configurationDisplayName("Assistant — Сейчас")
+        .description("Одно главное дело, следующее и быстрый ввод.")
         .supportedFamilies([.systemMedium, .systemLarge])
         .contentMarginsDisabled()
     }
 }
-
 
 @available(iOS 18.0, *)
 struct AssistantCaptureControl: ControlWidget {

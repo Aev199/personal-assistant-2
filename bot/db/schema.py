@@ -228,6 +228,25 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_status_due ON reminders(status, next_attempt_at_utc)")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_chat_id ON reminders(chat_id)")
 
+    # Lightweight non-actionable captures. Ideas are intentionally not tasks:
+    # they do not compete for attention until explicitly promoted later.
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ideas (
+            id BIGSERIAL PRIMARY KEY,
+            chat_id BIGINT NOT NULL,
+            text TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            archived_at TIMESTAMPTZ
+        )
+        """
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ideas_chat_status_created ON ideas(chat_id, status, created_at DESC)"
+    )
+
     # sync status
     await conn.execute(
         """

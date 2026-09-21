@@ -37,6 +37,22 @@ class TaskCardKeyboardTests(unittest.TestCase):
             self.assertNotIn(f"task:10:{action}", callbacks)
         self.assertIn("nav:work:0", callbacks)
 
+    def test_personal_card_hides_project_and_assignee(self) -> None:
+        kb = task_card_kb(
+            10,
+            20,
+            None,
+            "todo",
+            expanded=True,
+            persona_mode="lead",
+            is_personal=True,
+        )
+
+        callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+        self.assertNotIn("task:10:move", callbacks)
+        self.assertNotIn("task:10:assignee", callbacks)
+        self.assertIn("task:10:postpone", callbacks)
+
     def test_solo_card_hides_assignee_actions(self) -> None:
         primary = task_card_kb(
             10,

@@ -159,25 +159,62 @@ async def msg_undo_last(message: Message, state: FSMContext, deps: AppDeps, db_p
                     else:
                         toast = "Напоминание уже отсутствует."
                 elif action == "personal_task":
-                    gtasks = getattr(deps, "gtasks", None)
-                    list_id = str(undo.get("list_id") or "")
-                    g_task_id = str(undo.get("g_task_id") or "")
+                    task_id = int(undo.get("task_id") or 0)
                     title = str(undo.get("title") or "личное дело")
-                    if gtasks is None or not gtasks.enabled() or not list_id or not g_task_id:
-                        raise RuntimeError("Google Tasks undo unavailable")
-                    await gtasks.delete_task(list_id, g_task_id)
-                    await db_add_event(conn, "personal_task_undo", None, None, f"↩️ Отмена личной задачи: {title}")
-                    toast = f"↩️ Личное дело отменено: {title}"
+                    if task_id:
+                        row = await conn.fetchrow(
+                            "SELECT project_id, title FROM tasks WHERE id=$1 AND kind='personal'",
+                            task_id,
+                        )
+                        if row:
+                            work_project_id = int(row["project_id"])
+                            title = str(row["title"] or title)
+                            await conn.execute(
+                                "DELETE FROM tasks WHERE id=$1 AND kind='personal'",
+                                task_id,
+                            )
+                            await db_add_event(
+                                conn,
+                                "personal_task_undo",
+                                work_project_id,
+                                task_id,
+                                f"↩️ Отмена личной задачи: {title}",
+                            )
+                            toast = f"↩️ Личное дело отменено: {title}"
+                        else:
+                            toast = "Личная задача уже отсутствует."
+                    else:
+                        # Legacy journal entries could point to Google Tasks.
+                        # We intentionally no longer call the external service.
+                        toast = "Старая запись осталась в Google Tasks; Assistant её больше не меняет."
                 elif action == "idea":
-                    gtasks = getattr(deps, "gtasks", None)
-                    list_id = str(undo.get("list_id") or "")
-                    g_task_id = str(undo.get("g_task_id") or "")
+                    idea_id = int(undo.get("idea_id") or 0)
                     title = str(undo.get("title") or "идея")
-                    if gtasks is None or not gtasks.enabled() or not list_id or not g_task_id:
-                        raise RuntimeError("Google Tasks undo unavailable")
-                    await gtasks.delete_task(list_id, g_task_id)
-                    await db_add_event(conn, "idea_undo", None, None, f"↩️ Отмена идеи: {title}")
-                    toast = f"↩️ Идея отменена: {title}"
+                    if idea_id:
+                        row = await conn.fetchrow(
+                            "SELECT text FROM ideas WHERE id=$1 AND chat_id=$2",
+                            idea_id,
+                            chat_id,
+                        )
+                        if row:
+                            title = str(row["text"] or title)
+                            await conn.execute(
+                                "DELETE FROM ideas WHERE id=$1 AND chat_id=$2",
+                                idea_id,
+                                chat_id,
+                            )
+                            await db_add_event(
+                                conn,
+                                "idea_undo",
+                                None,
+                                None,
+                                f"↩️ Отмена идеи: {title}",
+                            )
+                            toast = f"↩️ Идея удалена: {title}"
+                        else:
+                            toast = "Идея уже отсутствует."
+                    else:
+                        toast = "Старая идея осталась в Google Tasks; Assistant её больше не меняет."
                 elif action == "event":
                     icloud = getattr(deps, "icloud", None)
                     ics_url = str(undo.get("ics_url") or "")

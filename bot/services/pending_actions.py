@@ -9,7 +9,7 @@ from typing import Any
 import asyncpg
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from bot.db import db_add_event, ensure_inbox_project_id
+from bot.db import db_add_event, ensure_inbox_project_id, ensure_personal_project_id
 from bot.db.runtime_state import (
     create_pending_action,
     mark_pending_action_status,
@@ -18,7 +18,6 @@ from bot.db.runtime_state import (
     update_pending_action_payload,
 )
 from bot.deps import AppDeps
-from bot.services.gtasks_service import due_from_local_date, get_or_create_list_id
 from bot.services.vault_sync import background_project_sync
 from bot.tz import fmt_local, to_db_utc
 from bot.ui.render import ui_render
@@ -246,65 +245,97 @@ async def execute_pending_action(
         return f"✅ Задача создана: {payload.get('title') or ''}"
 
     if kind == "personal_task":
-        gtasks = getattr(deps, "gtasks", None)
-        if gtasks is None or not gtasks.enabled():
-            raise RuntimeError("Google Tasks не настроен")
         due_local = _parse_iso_dt(payload.get("deadline_local"))
-        due_utc = due_from_local_date(due_local, timezone.utc) if due_local else None
-        list_name = os.getenv("GTASKS_PERSONAL_LIST", "Личное")
-        list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
-        created = await gtasks.create_task(list_id, str(payload.get("title") or ""), due=due_utc)
-        g_task_id = str((created or {}).get("id") or "")
         async with db_pool.acquire() as conn:
-            if _can_write(conn):
-                await db_add_event(conn, "personal_task_created", None, None, f"LLM/{source}: {payload.get('title') or ''}")
-                await record_action_journal(
-                    conn,
-                    chat_id=chat_id,
-                    source="llm",
-                    action_type="personal_task",
-                    summary=str(payload.get("title") or ""),
-                    payload={"pending_action_id": pending_action_id},
-                    undo_payload={
-                        "action": "personal_task",
-                        "list_id": list_id,
-                        "g_task_id": g_task_id,
-                        "title": str(payload.get("title") or ""),
-                        "fingerprint": fingerprint,
-                    },
-                    action_key=f"pending-confirm:{pending_action_id}",
+            project_id = await ensure_personal_project_id(conn)
+            task_id = await conn.fetchval(
+                """
+                INSERT INTO tasks (project_id, title, status, kind, deadline)
+                VALUES ($1, $2, 'todo', 'personal', $3)
+                RETURNING id
+                """,
+                int(project_id),
+                str(payload.get("title") or ""),
+                to_db_utc(
+                    due_local,
+                    tz_name=deps.tz_name,
+                    store_tz=bool(getattr(deps, "db_tasks_deadline_timestamptz", False)),
                 )
-                await mark_pending_action_status(conn, pending_action_id=pending_action_id, status="executed")
+                if due_local
+                else None,
+            )
+            await db_add_event(
+                conn,
+                "personal_task_created",
+                int(project_id),
+                int(task_id),
+                f"LLM/{source}: {payload.get('title') or ''}",
+            )
+            await record_action_journal(
+                conn,
+                chat_id=chat_id,
+                source="llm",
+                action_type="personal_task",
+                summary=str(payload.get("title") or ""),
+                payload={"pending_action_id": pending_action_id},
+                undo_payload={
+                    "action": "personal_task",
+                    "task_id": int(task_id),
+                    "project_id": int(project_id),
+                    "title": str(payload.get("title") or ""),
+                    "fingerprint": fingerprint,
+                },
+                action_key=f"pending-confirm:{pending_action_id}",
+            )
+            await mark_pending_action_status(
+                conn,
+                pending_action_id=pending_action_id,
+                status="executed",
+            )
         return f"✅ Личная задача создана: {payload.get('title') or ''}"
 
     if kind == "idea":
-        gtasks = getattr(deps, "gtasks", None)
-        if gtasks is None or not gtasks.enabled():
-            raise RuntimeError("Google Tasks не настроен")
-        list_name = os.getenv("GTASKS_IDEAS_LIST", "Идеи")
-        list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
-        created = await gtasks.create_task(list_id, str(payload.get("idea_text") or ""))
-        g_task_id = str((created or {}).get("id") or "")
+        text_value = str(payload.get("idea_text") or "").strip()
+        if not text_value:
+            raise RuntimeError("Пустая идея")
         async with db_pool.acquire() as conn:
-            if _can_write(conn):
-                await db_add_event(conn, "idea_captured", None, None, f"LLM/{source}: {payload.get('idea_text') or ''}")
-                await record_action_journal(
-                    conn,
-                    chat_id=chat_id,
-                    source="llm",
-                    action_type="idea",
-                    summary=str(payload.get("idea_text") or ""),
-                    payload={"pending_action_id": pending_action_id},
-                    undo_payload={
-                        "action": "idea",
-                        "list_id": list_id,
-                        "g_task_id": g_task_id,
-                        "title": str(payload.get("idea_text") or ""),
-                        "fingerprint": fingerprint,
-                    },
-                    action_key=f"pending-confirm:{pending_action_id}",
-                )
-                await mark_pending_action_status(conn, pending_action_id=pending_action_id, status="executed")
+            idea_id = await conn.fetchval(
+                """
+                INSERT INTO ideas (chat_id, text, source, status)
+                VALUES ($1, $2, $3, 'active')
+                RETURNING id
+                """,
+                int(chat_id),
+                text_value,
+                source,
+            )
+            await db_add_event(
+                conn,
+                "idea_captured",
+                None,
+                None,
+                f"LLM/{source}: {text_value}",
+            )
+            await record_action_journal(
+                conn,
+                chat_id=chat_id,
+                source="llm",
+                action_type="idea",
+                summary=text_value,
+                payload={"pending_action_id": pending_action_id},
+                undo_payload={
+                    "action": "idea",
+                    "idea_id": int(idea_id),
+                    "title": text_value,
+                    "fingerprint": fingerprint,
+                },
+                action_key=f"pending-confirm:{pending_action_id}",
+            )
+            await mark_pending_action_status(
+                conn,
+                pending_action_id=pending_action_id,
+                status="executed",
+            )
         return "✅ Идея сохранена"
 
     if kind == "reminder":

@@ -8,7 +8,7 @@ from .user_settings import (
     set_persona_mode,
 )
 from .errors import db_log_error
-from .projects import fetch_portfolio_rows, ensure_inbox_project_id
+from .projects import fetch_portfolio_rows, ensure_inbox_project_id, ensure_personal_project_id
 
 __all__ = [
     "db_add_event",
@@ -19,4 +19,5 @@ __all__ = [
     "db_log_error",
     "fetch_portfolio_rows",
     "ensure_inbox_project_id",
+    "ensure_personal_project_id",
 ]

@@ -99,7 +99,9 @@ struct AllTasksView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 7) {
-                    if task.project.uppercased() == "INBOX" {
+                    if task.isPersonal {
+                        Text("Личное")
+                    } else if task.project.uppercased() == "INBOX" {
                         Text("Входящие")
                     } else if !task.project.isEmpty {
                         Text(task.project)

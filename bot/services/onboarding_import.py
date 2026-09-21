@@ -96,7 +96,6 @@ async def save_onboarding(
 
     saved = 0
     errors: list[str] = []
-    gtasks_ready = bool(deps.gtasks is not None and deps.gtasks.enabled())
     icloud_ready = bool(
         os.getenv("ICLOUD_APPLE_ID", "").strip()
         and os.getenv("ICLOUD_APP_PASSWORD", "").strip()
@@ -125,40 +124,42 @@ async def save_onboarding(
                     if intent.deadline_local
                     else None
                 )
-                if gtasks_ready:
-                    try:
-                        await flow._execute_import_item(
-                            message=message,
-                            db_pool=db_pool,
-                            deps=deps,
-                            kind="personal_task",
-                            payload={
-                                "title": intent.title,
-                                "deadline_local": due.isoformat() if due else "",
-                            },
-                            summary=intent.title,
-                        )
-                    except Exception:
-                        await save_internal_task(intent.title, project=inbox, deadline=due)
-                else:
+                try:
+                    await flow._execute_import_item(
+                        message=message,
+                        db_pool=db_pool,
+                        deps=deps,
+                        kind="personal_task",
+                        payload={
+                            "title": intent.title,
+                            "deadline_local": due.isoformat() if due else "",
+                        },
+                        summary=intent.title,
+                    )
+                except Exception:
                     await save_internal_task(intent.title, project=inbox, deadline=due)
 
             elif intent.action == "idea":
                 idea = intent.idea_text or intent.title
-                if gtasks_ready:
-                    try:
-                        await flow._execute_import_item(
-                            message=message,
-                            db_pool=db_pool,
-                            deps=deps,
-                            kind="idea",
-                            payload={"idea_text": idea},
-                            summary=idea,
+                try:
+                    await flow._execute_import_item(
+                        message=message,
+                        db_pool=db_pool,
+                        deps=deps,
+                        kind="idea",
+                        payload={"idea_text": idea},
+                        summary=idea,
+                    )
+                except Exception:
+                    async with db_pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            INSERT INTO ideas (chat_id, text, source, status)
+                            VALUES ($1, $2, 'onboarding.fallback', 'active')
+                            """,
+                            int(message.chat.id),
+                            idea,
                         )
-                    except Exception:
-                        await save_internal_task(f"Идея: {idea}", project=inbox)
-                else:
-                    await save_internal_task(f"Идея: {idea}", project=inbox)
 
             elif intent.action == "reminder":
                 reminder_text = intent.reminder_text or intent.title

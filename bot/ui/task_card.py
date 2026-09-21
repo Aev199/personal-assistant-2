@@ -42,6 +42,7 @@ def task_card_kb(
     return_cb: str | None = None,
     return_label: str | None = None,
     persona_mode: str = "lead",
+    is_personal: bool = False,
 ) -> InlineKeyboardMarkup:
     """Keep daily task actions small; legacy capabilities stay in handlers."""
     del in_gtasks, gtasks_dirty, subtasks, is_inbox
@@ -75,11 +76,11 @@ def task_card_kb(
         rows.extend(_triage_row())
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    rows = [
-        [InlineKeyboardButton(text="Проект", callback_data=f"task:{task_id}:move")],
-    ]
-    if not is_solo_mode(persona_mode):
-        rows.append([InlineKeyboardButton(text="Исполнитель", callback_data=f"task:{task_id}:assignee")])
+    rows: list[list[InlineKeyboardButton]] = []
+    if not is_personal:
+        rows.append([InlineKeyboardButton(text="Проект", callback_data=f"task:{task_id}:move")])
+        if not is_solo_mode(persona_mode):
+            rows.append([InlineKeyboardButton(text="Исполнитель", callback_data=f"task:{task_id}:assignee")])
     rows.append([InlineKeyboardButton(text="Отложить", callback_data=f"task:{task_id}:postpone")])
     rows.append([InlineKeyboardButton(text="Свернуть", callback_data=f"task:{task_id}:less")])
     rows.append([InlineKeyboardButton(text=back_label, callback_data=back_cb)])

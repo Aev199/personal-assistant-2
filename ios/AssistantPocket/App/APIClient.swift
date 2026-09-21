@@ -101,7 +101,7 @@ struct APIClient {
     func updateTask(
         taskID: Int,
         title: String,
-        projectCode: String,
+        projectCode: String?,
         deadline: Date?
     ) async throws -> TaskMutationResponse {
         let formatter = ISO8601DateFormatter()
@@ -109,9 +109,11 @@ struct APIClient {
 
         var payload: [String: Any] = [
             "title": title,
-            "project_code": projectCode,
             "deadline": NSNull(),
         ]
+        if let projectCode, !projectCode.isEmpty {
+            payload["project_code"] = projectCode
+        }
         if let deadline {
             payload["deadline"] = formatter.string(from: deadline)
         }

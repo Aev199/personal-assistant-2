@@ -38,24 +38,26 @@ struct TaskEditView: View {
                         .lineLimit(1...4)
                 }
 
-                Section("Проект") {
-                    if projects.isEmpty {
-                        HStack {
-                            Text(projectCode.uppercased() == "INBOX" ? "Входящие" : projectCode)
-                            Spacer()
-                            if errorMessage == nil {
-                                ProgressView()
-                                    .controlSize(.small)
+                if !task.isPersonal {
+                    Section("Проект") {
+                        if projects.isEmpty {
+                            HStack {
+                                Text(projectCode.uppercased() == "INBOX" ? "Входящие" : projectCode)
+                                Spacer()
+                                if errorMessage == nil {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
                             }
-                        }
-                    } else {
-                        Picker("Проект", selection: $projectCode) {
-                            ForEach(projects) { project in
-                                Text(project.displayName)
-                                    .tag(project.code)
+                        } else {
+                            Picker("Проект", selection: $projectCode) {
+                                ForEach(projects) { project in
+                                    Text(project.displayName)
+                                        .tag(project.code)
+                                }
                             }
+                            .labelsHidden()
                         }
-                        .labelsHidden()
                     }
                 }
 
@@ -82,7 +84,9 @@ struct TaskEditView: View {
             .navigationTitle("Задача")
             .navigationBarTitleDisplayMode(.inline)
             .task {
-                await loadProjects()
+                if !task.isPersonal {
+                    await loadProjects()
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -97,7 +101,7 @@ struct TaskEditView: View {
                     }
                     .disabled(
                         title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || projectCode.isEmpty
+                        || (!task.isPersonal && projectCode.isEmpty)
                         || isSaving
                     )
                 }
@@ -124,7 +128,8 @@ struct TaskEditView: View {
     @MainActor
     private func save() async {
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanTitle.isEmpty, !projectCode.isEmpty else { return }
+        guard !cleanTitle.isEmpty else { return }
+        guard task.isPersonal || !projectCode.isEmpty else { return }
 
         isSaving = true
         errorMessage = nil
@@ -135,7 +140,7 @@ struct TaskEditView: View {
             _ = try await client.updateTask(
                 taskID: task.id,
                 title: cleanTitle,
-                projectCode: projectCode,
+                projectCode: task.isPersonal ? nil : projectCode,
                 deadline: hasDeadline ? deadline : nil
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")

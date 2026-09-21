@@ -2,7 +2,7 @@
 
 Aiogram startup/shutdown hooks are responsible for:
 
-- starting / closing integration sessions (WebDAV, Google Tasks, iCloud)
+- starting / closing integration sessions (WebDAV, iCloud)
 - creating and closing the asyncpg pool
 - best-effort DB schema bootstrap
 - webhook self-heal loop
@@ -72,13 +72,6 @@ def make_on_startup(
         # Start integrations
         if hasattr(cloud, "startup"):
             await cloud.startup()
-
-        if os.getenv("GOOGLE_REFRESH_TOKEN", ""):
-            try:
-                await gtasks.startup()
-                log.info("Google Tasks enabled")
-            except Exception as e:
-                log.warning("Google Tasks startup failed", error_type=type(e).__name__, error_message=str(e))
 
         if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
             try:
@@ -166,11 +159,6 @@ def make_on_startup(
                     if hasattr(cloud, "close"):
                         try:
                             await cloud.close()
-                        except Exception:
-                            pass
-                    if os.getenv("GOOGLE_REFRESH_TOKEN", ""):
-                        try:
-                            await gtasks.close()
                         except Exception:
                             pass
                     if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
@@ -285,11 +273,6 @@ def make_on_startup(
                         await cloud.close()
                     except Exception:
                         pass
-                if os.getenv("GOOGLE_REFRESH_TOKEN", ""):
-                    try:
-                        await gtasks.close()
-                    except Exception:
-                        pass
                 if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
                     try:
                         await icloud.close()
@@ -347,12 +330,6 @@ def make_on_shutdown(*, dp: Dispatcher, cloud, gtasks, icloud, llm):
         if hasattr(cloud, "close"):
             try:
                 await cloud.close()
-            except Exception:
-                pass
-
-        if os.getenv("GOOGLE_REFRESH_TOKEN", ""):
-            try:
-                await gtasks.close()
             except Exception:
                 pass
 

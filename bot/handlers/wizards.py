@@ -32,6 +32,7 @@ from bot.db import (
     get_persona_mode,
     fetch_portfolio_rows,
     ensure_inbox_project_id,
+    ensure_personal_project_id,
 )
 from bot.fsm import (
     AddTaskWizard,
@@ -45,7 +46,6 @@ from bot.handlers.common import escape_hatch_menu_or_command
 from bot.keyboards import main_menu_kb, back_home_kb
 from bot.persona import is_solo_mode
 from bot.services.background import fire_and_forget
-from bot.services.gtasks_service import get_or_create_list_id, due_from_local_date
 from bot.services.vault_sync import background_project_sync, background_log_event
 from bot.ui.render import ui_safe_edit as safe_edit, ui_safe_wizard_render as wizard_render
 from bot.ui.screens import ui_render_home, ui_render_projects_portfolio
@@ -1481,7 +1481,7 @@ async def cb_rem_task(callback: CallbackQuery, state: FSMContext, db_pool: async
 
 
 # ---------------------------------------------------------------------------
-# Personal (Google Tasks)
+# Personal
 # ---------------------------------------------------------------------------
 
 
@@ -1509,24 +1509,18 @@ async def cb_add_personal_start(callback: CallbackQuery, state: FSMContext, deps
     if not await _guard(callback, deps):
         return
     await callback.answer()
-    gtasks = deps.gtasks
-    if not gtasks.enabled():
-        return await safe_edit(
-            callback.message,
-            "❌ Google Tasks не настроен. Добавьте GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN в ENV.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="⬅ Назад", callback_data="add:cancel")]]
-            ),
-        )
     await state.clear()
-    await state.update_data(wizard_chat_id=int(callback.message.chat.id), wizard_msg_id=int(callback.message.message_id))
+    await state.update_data(
+        wizard_chat_id=int(callback.message.chat.id),
+        wizard_msg_id=int(callback.message.message_id),
+    )
     await state.set_state(AddPersonalWizard.entering_text)
     await wizard_render(
         bot=callback.bot,
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text="🏡 <b>Личное</b> (в Google Tasks): отправьте текст задачи одним сообщением.",
+        text="🏡 <b>Личное</b>\nОтправьте задачу одним сообщением.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         parse_mode="HTML",
     )
@@ -1555,7 +1549,7 @@ async def msg_personal_text(message: Message, state: FSMContext, db_pool: asyncp
         tz = _tz_from_deps(deps)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=tz)
-        return await _create_personal_in_gtasks(message, state, db_pool, deps, dt.astimezone(tz))
+        return await _create_personal_task(message, state, db_pool, deps, dt.astimezone(tz))
     await state.set_state(AddPersonalWizard.choosing_deadline)
     await wizard_render(
         bot=message.bot,
@@ -1567,7 +1561,7 @@ async def msg_personal_text(message: Message, state: FSMContext, db_pool: asyncp
     )
 
 
-async def _create_personal_in_gtasks(
+async def _create_personal_task(
     msg: Message,
     state: FSMContext,
     db_pool: asyncpg.Pool,
@@ -1575,7 +1569,6 @@ async def _create_personal_in_gtasks(
     due_local: datetime | None,
 ) -> None:
     data = await state.get_data()
-    gtasks = deps.gtasks
     text = (data.get("personal_text") or "").strip()
     if not text:
         await wizard_render(
@@ -1594,31 +1587,50 @@ async def _create_personal_in_gtasks(
         await state.clear()
         return
 
-    list_name = os.getenv("GTASKS_PERSONAL_LIST", "Личное")
-    tz = _tz_from_deps(deps)
-
     try:
-        list_id = await get_or_create_list_id(db_pool, gtasks, list_name)
-        due_utc = due_from_local_date(due_local, tz)
-        await gtasks.create_task(list_id, text, due=due_utc)
+        async with db_pool.acquire() as conn:
+            project_id = await ensure_personal_project_id(conn)
+            task_id = await conn.fetchval(
+                """
+                INSERT INTO tasks (project_id, title, status, kind, deadline)
+                VALUES ($1, $2, 'todo', 'personal', $3)
+                RETURNING id
+                """,
+                int(project_id),
+                text,
+                to_deadline_db(due_local, deps) if due_local else None,
+            )
+            await db_add_event(
+                conn,
+                "personal_task_created",
+                int(project_id),
+                int(task_id),
+                f"Личное: #{int(task_id)} {text}",
+            )
+
+        tz = _tz_from_deps(deps)
         dl_txt = "без срока" if due_local is None else due_local.astimezone(tz).strftime("%d.%m")
         await wizard_render(
             bot=msg.bot,
             state=state,
             chat_id=int(msg.chat.id),
             fallback_msg=msg,
-            text=f"✅ Добавлено в Google Tasks («{h(list_name)}»):\n\n<b>{h(text)}</b>\n<i>Срок: {h(dl_txt)}</i>",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
+            text=f"✅ <b>{h(text)}</b>\n<i>Срок: {h(dl_txt)}</i>",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]
+            ),
             parse_mode="HTML",
         )
-    except Exception as e:
+    except Exception as exc:
         await wizard_render(
             bot=msg.bot,
             state=state,
             chat_id=int(msg.chat.id),
             fallback_msg=msg,
-            text=f"❌ Ошибка Google Tasks: {h(str(e))}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
+            text=f"❌ Не удалось сохранить личную задачу: {h(str(exc))}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]
+            ),
             parse_mode="HTML",
         )
     finally:
@@ -1658,7 +1670,7 @@ async def cb_personal_deadline(callback: CallbackQuery, state: FSMContext, db_po
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[_wizard_cancel_row()]),
         )
 
-    return await _create_personal_in_gtasks(callback.message, state, db_pool, deps, due_local)
+    return await _create_personal_task(callback.message, state, db_pool, deps, due_local)
 
 
 async def msg_personal_deadline(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -1682,7 +1694,7 @@ async def msg_personal_deadline(message: Message, state: FSMContext, db_pool: as
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=tz)
     due_local = parsed.astimezone(tz)
-    return await _create_personal_in_gtasks(message, state, db_pool, deps, due_local)
+    return await _create_personal_task(message, state, db_pool, deps, due_local)
 
 
 # ---------------------------------------------------------------------------
@@ -1713,23 +1725,18 @@ async def cb_quick_idea(callback: CallbackQuery, state: FSMContext, db_pool: asy
     if not await _guard(callback, deps):
         return
     await callback.answer()
-    gtasks = deps.gtasks
-    if not gtasks.enabled():
-        return await safe_edit(callback.message, "❌ Google Tasks не настроен.", reply_markup=back_home_kb())
     await state.clear()
     await state.set_state(QuickIdeaWizard.entering_text)
-    ideas_list = os.getenv("GTASKS_IDEAS_LIST", "Идеи")
     await wizard_render(
         bot=callback.bot,
         state=state,
         chat_id=int(callback.message.chat.id),
         fallback_msg=callback.message,
-        text=f"💡 <b>Идея</b> (Google Tasks → «{h(ideas_list)}»)\nОтправьте текст идеи. Без сроков.",
+        text="💡 <b>Идея</b>\nОтправьте мысль. Она не станет задачей сама по себе.",
         reply_markup=_quick_cancel_kb(),
         parse_mode="HTML",
     )
 
-    # Bind wizard message as current SPA UI anchor (important for reply-keyboard navigation)
     try:
         data = await state.get_data()
         wiz_msg_id = data.get("wizard_msg_id")
@@ -1751,8 +1758,6 @@ async def cb_quick_cancel(callback: CallbackQuery, state: FSMContext, db_pool: a
 async def msg_quick_idea_text(message: Message, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     if deps.admin_id and (not message.from_user or message.from_user.id != deps.admin_id):
         return
-    gtasks = deps.gtasks
-    
     if await escape_hatch_menu_or_command(message, state, db_pool):
         return
     await try_delete_user_message(message)
@@ -1760,27 +1765,39 @@ async def msg_quick_idea_text(message: Message, state: FSMContext, db_pool: asyn
     if not raw:
         return
 
-    ideas_list = os.getenv("GTASKS_IDEAS_LIST", "Идеи")
     try:
-        list_id = await get_or_create_list_id(db_pool, gtasks, ideas_list)
-        await gtasks.create_task(list_id, raw)
+        async with db_pool.acquire() as conn:
+            idea_id = await conn.fetchval(
+                """
+                INSERT INTO ideas (chat_id, text, source, status)
+                VALUES ($1, $2, 'telegram.quick', 'active')
+                RETURNING id
+                """,
+                int(message.chat.id),
+                raw,
+            )
+            await db_add_event(conn, "idea_captured", None, None, f"Идея #{int(idea_id)}: {raw}")
         await wizard_render(
             bot=message.bot,
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text=f"✅ Добавлено в «{h(ideas_list)}»: <b>{h(raw)}</b>",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
+            text=f"✅ Идея сохранена: <b>{h(raw)}</b>",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]
+            ),
             parse_mode="HTML",
         )
-    except Exception as e:
+    except Exception as exc:
         await wizard_render(
             bot=message.bot,
             state=state,
             chat_id=int(message.chat.id),
             fallback_msg=None,
-            text=f"❌ Ошибка Google Tasks: {h(str(e))}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]),
+            text=f"❌ Не удалось сохранить идею: {h(str(exc))}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Домой", callback_data="nav:home")]]
+            ),
             parse_mode="HTML",
         )
     finally:

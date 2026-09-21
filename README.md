@@ -1,6 +1,6 @@
 # Personal Assistant Bot
 
-Single-user Telegram assistant built with `aiogram`, `asyncpg`, Gemini/DeepSeek, Google Tasks, iCloud CalDAV, and an SPA-style single-message interface.
+Single-user personal assistant built with `aiogram`, `asyncpg`, Gemini/DeepSeek, iCloud CalDAV, a Telegram SPA, and a native iOS client.
 
 ## Product model
 
@@ -10,7 +10,7 @@ The bot is optimized for low-friction capture rather than form filling:
 - safe captures execute immediately and remain undoable;
 - calendar events retain an explicit confirmation step during ordinary free-form use;
 - unknown project references fall back to `INBOX`;
-- Postgres remains the source of truth for internal tasks, reminders, runtime state, and audit data.
+- Postgres remains the source of truth for work tasks, personal tasks, ideas, reminders, runtime state, and audit data.
 
 ## Free-form lists and SPA receipts
 
@@ -19,8 +19,7 @@ and execution pipeline. Before classification, the original text/transcript is
 retained in a durable receipt in `conversation_state` (no expiration). Each
 recognized item and its pending-action ID are then saved incrementally. Incomplete
 items and unavailable destinations remain in the receipt instead of disappearing
-or being moved to the work Inbox. Work tasks and Google Tasks personal lists stay
-separate. The explicit `/setup` import is a separate existing flow.
+or being moved to the work Inbox. Work and personal tasks stay in Assistant; ideas are stored separately so they do not become obligations. The explicit `/setup` import is a separate existing flow.
 
 One SPA receipt replaces the current screen and distinguishes executed actions,
 pending confirmations, errors, and unprocessed items using database statuses.
@@ -44,8 +43,7 @@ References: [Rich message formatting](https://core.telegram.org/bots/api#rich-me
 Send one task as plain text; choosing a project or due date is optional. The home
 screen shows up to three tasks due before tomorrow and uses the remaining slots
 (up to five total) for undated or upcoming work. This keeps unscheduled work
-visible even when overdue tasks accumulate. These are internal Postgres tasks;
-Google Tasks personal lists are not mirrored into this screen.
+visible even when overdue tasks accumulate. Work and personal tasks use the same internal attention feed.
 
 Open a task by its title, or tap the separate ✓ button to complete it. The home
 screen offers the existing 30-second undo for completion. The persistent menu
@@ -75,7 +73,7 @@ Two save modes are available:
 - `Сохранить всё` creates suggested projects and uses existing ones;
 - `Без новых проектов` still uses matching existing projects, but routes new/uncertain groupings to `INBOX`.
 
-The import is lossless by design. If Google Tasks or iCloud is unavailable or fails during import, or a reminder time is incomplete, the item is preserved as an internal Inbox task instead of being dropped.
+The import is lossless by design. If an external calendar is unavailable during import, or a reminder time is incomplete, the item is preserved internally instead of being dropped.
 
 Voice transcription requires Gemini. The resulting transcript can still be classified by DeepSeek if the Gemini classification request fails.
 
@@ -145,8 +143,6 @@ Set `ASSISTANT_INSTANT_CAPTURE=0` to restore confirmation cards for all ordinary
 
 ## Integration variables
 
-- `GTASKS_PERSONAL_LIST`
-- `GTASKS_IDEAS_LIST`
 - `ICLOUD_APPLE_ID`
 - `ICLOUD_APP_PASSWORD`
 - `ICLOUD_CALENDAR_URL_WORK`
@@ -195,7 +191,8 @@ Render Free remains a compromise platform. Cold starts can delay reminders; dela
 
 ## Data model highlights
 
-- `tasks` — internal work/Inbox tasks;
+- `tasks` — internal work, Inbox and personal tasks;
+- `ideas` — lightweight non-actionable captures;
 - `reminders` — durable queue, retry and delivery state;
 - `pending_actions` — persisted execution records and event drafts;
 - `conversation_state` — restart-safe follow-up and bulk state;

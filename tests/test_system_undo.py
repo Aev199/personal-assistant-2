@@ -29,7 +29,7 @@ class _Conn:
 
 
 class SystemUndoTests(unittest.IsolatedAsyncioTestCase):
-    async def test_undo_last_personal_task_deletes_gtask_and_clears_payload(self) -> None:
+    async def test_legacy_google_personal_undo_does_not_touch_external_service(self) -> None:
         conn = _Conn()
         pool = _Pool(conn)
         payload_state = {
@@ -60,7 +60,6 @@ class SystemUndoTests(unittest.IsolatedAsyncioTestCase):
 
         deps = SimpleNamespace(
             admin_id=None,
-            gtasks=SimpleNamespace(enabled=lambda: True, delete_task=AsyncMock(return_value=True)),
             icloud=None,
             vault=None,
             tz_name="Europe/Moscow",
@@ -79,7 +78,6 @@ class SystemUndoTests(unittest.IsolatedAsyncioTestCase):
         ):
             await msg_undo_last(message, state, deps, pool)
 
-        deps.gtasks.delete_task.assert_awaited_once_with("personal-list", "gt-1")
         self.assertNotIn("undo", payload_state["ui_payload"])
         self.assertEqual(payload_state["ui_payload"].get("llm_recent"), [])
 

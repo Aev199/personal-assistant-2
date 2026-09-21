@@ -238,14 +238,14 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
 
         task_rows = await conn.fetch(
             """
-            SELECT t.id, t.title, t.deadline, t.status, t.created_at,
+            SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at,
                    p.code AS project_code, COALESCE(tm.name, '') AS assignee
             FROM tasks t
             JOIN projects p ON p.id=t.project_id
             LEFT JOIN team tm ON tm.id=t.assignee_id
             WHERE t.status NOT IN ('done', 'postponed')
               AND t.kind != 'super'
-              AND p.status='active'
+              AND p.status IN ('active', 'system')
             ORDER BY t.created_at ASC, t.id ASC
             LIMIT 200
             """
@@ -282,7 +282,8 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             {
                 "id": int(row["id"]),
                 "title": str(row["title"] or ""),
-                "project": str(row["project_code"] or ""),
+                "project": "" if str(row["kind"] or "task") == "personal" else str(row["project_code"] or ""),
+                "kind": str(row["kind"] or "task"),
                 "assignee": str(row["assignee"] or ""),
                 "status": str(row["status"] or "todo"),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
@@ -349,14 +350,14 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
 
         rows = await conn.fetch(
             """
-            SELECT t.id, t.title, t.deadline, t.status, t.created_at,
+            SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at,
                    p.code AS project_code, COALESCE(tm.name, '') AS assignee
             FROM tasks t
             JOIN projects p ON p.id=t.project_id
             LEFT JOIN team tm ON tm.id=t.assignee_id
             WHERE t.status NOT IN ('done', 'postponed')
               AND t.kind != 'super'
-              AND p.status='active'
+              AND p.status IN ('active', 'system')
             ORDER BY t.created_at ASC, t.id ASC
             LIMIT 500
             """
@@ -380,7 +381,8 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
             {
                 "id": int(row["id"]),
                 "title": str(row["title"] or ""),
-                "project": str(row["project_code"] or ""),
+                "project": "" if str(row["kind"] or "task") == "personal" else str(row["project_code"] or ""),
+                "kind": str(row["kind"] or "task"),
                 "assignee": str(row["assignee"] or ""),
                 "status": str(row["status"] or "todo"),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
@@ -501,6 +503,9 @@ async def handle_task_update(request: web.Request, ctx) -> web.StreamResponse:
 
             project_id = int(row["project_id"])
             project_code = str(row["project_code"] or "")
+            if "project_code" in payload and str(row["kind"] or "task") == "personal":
+                return web.json_response({"ok": False, "error": "personal_task_has_no_project"}, status=409)
+
             if "project_code" in payload:
                 requested = str(payload.get("project_code") or "").strip()
                 if not requested:

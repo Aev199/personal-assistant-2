@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feat/ios-primary-client
     paths-ignore:
       - ".github/workflows/actions-storage-cleanup.yml"
 
@@ -47,7 +48,8 @@ jobs:
             tests/test_onboarding.py \
             tests/test_companion_http.py \
             tests/test_native_intake.py \
-            tests/test_ios_product_contract.py
+            tests/test_ios_product_contract.py \
+            tests/test_google_tasks_retirement.py
 
       - name: Run full suite diagnostic on failure
         if: failure()

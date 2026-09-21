@@ -26,7 +26,8 @@ def _task_rows_without_inbox_label(rows) -> list[dict]:
     result: list[dict] = []
     for raw in rows or []:
         row = dict(raw)
-        if str(row.get("project") or "").strip().upper() == "INBOX":
+        project = str(row.get("project") or "").strip().upper()
+        if project in {"INBOX", "PERSONAL"}:
             row["project"] = ""
         result.append(row)
     return result
@@ -143,7 +144,7 @@ async def ui_render_all_tasks(
                     JOIN projects p ON p.id=t.project_id
                     WHERE t.status NOT IN ('done','postponed')
                       AND t.kind != 'super'
-                      AND p.status='active'
+                      AND p.status IN ('active','system')
                     """
                 )
                 or 0
@@ -160,7 +161,7 @@ async def ui_render_all_tasks(
                 LEFT JOIN team tm ON tm.id=t.assignee_id
                 WHERE t.status NOT IN ('done','postponed')
                   AND t.kind != 'super'
-                  AND p.status='active'
+                  AND p.status IN ('active','system')
                 ORDER BY
                   CASE
                     WHEN t.deadline IS NOT NULL AND t.deadline < $1 THEN 0

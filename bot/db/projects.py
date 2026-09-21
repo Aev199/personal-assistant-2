@@ -39,6 +39,37 @@ async def ensure_inbox_project_id(conn: asyncpg.Connection) -> int:
     return int(pid)
 
 
+async def ensure_personal_project_id(conn: asyncpg.Connection) -> int:
+    """Return the hidden storage project used by personal tasks.
+
+    Personal tasks are first-class Assistant tasks, but the legacy task schema
+    requires a project_id. Keeping this project in status=system prevents it
+    from leaking into normal project pickers and portfolio screens.
+    """
+    pid = await conn.fetchval("SELECT id FROM projects WHERE code='PERSONAL' LIMIT 1")
+    if pid:
+        await conn.execute(
+            "UPDATE projects SET name='Личное', status='system', updated_at=NOW() WHERE id=$1",
+            int(pid),
+        )
+        return int(pid)
+
+    try:
+        pid = await conn.fetchval(
+            """
+            INSERT INTO projects(code, name, status)
+            VALUES('PERSONAL', 'Личное', 'system')
+            RETURNING id
+            """
+        )
+    except Exception:
+        pid = await conn.fetchval("SELECT id FROM projects WHERE code='PERSONAL' LIMIT 1")
+
+    if not pid:
+        raise RuntimeError("Не удалось создать системный контейнер личных задач")
+    return int(pid)
+
+
 async def fetch_portfolio_rows(conn: asyncpg.Connection):
     """Fetch active projects with counts for portfolio / pickers."""
     return await conn.fetch(

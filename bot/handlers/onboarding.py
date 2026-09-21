@@ -502,7 +502,6 @@ async def _save_onboarding(
 
     saved = 0
     errors: list[str] = []
-    gtasks_ready = bool(deps.gtasks is not None and deps.gtasks.enabled())
     icloud_ready = bool(
         os.getenv("ICLOUD_APPLE_ID", "").strip()
         and os.getenv("ICLOUD_APP_PASSWORD", "").strip()
@@ -536,7 +535,7 @@ async def _save_onboarding(
                     },
                     summary=intent.title,
                 )
-            elif intent.action == "personal_task" and gtasks_ready:
+            elif intent.action == "personal_task":
                 due = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
                 await _execute_import_item(
                     message=message,
@@ -546,7 +545,7 @@ async def _save_onboarding(
                     payload={"title": intent.title, "deadline_local": due.isoformat() if due else ""},
                     summary=intent.title,
                 )
-            elif intent.action == "idea" and gtasks_ready:
+            elif intent.action == "idea":
                 idea = intent.idea_text or intent.title
                 await _execute_import_item(
                     message=message,

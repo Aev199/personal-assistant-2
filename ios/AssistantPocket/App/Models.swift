@@ -45,6 +45,7 @@ struct TodayTask: Decodable, Identifiable {
     let id: Int
     let title: String
     let project: String
+    let kind: String?
     let assignee: String
     let status: String?
     let deadline: Date?
@@ -57,6 +58,10 @@ struct TodayTask: Decodable, Identifiable {
 
     var isFocused: Bool {
         focused == true
+    }
+
+    var isPersonal: Bool {
+        kind?.lowercased() == "personal"
     }
 }
 

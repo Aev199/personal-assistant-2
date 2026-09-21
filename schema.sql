@@ -46,6 +46,17 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status)
 CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status);
 
+CREATE TABLE IF NOT EXISTS ideas (
+    id BIGSERIAL PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    text TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    archived_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_ideas_chat_status_created ON ideas(chat_id, status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS reminders (
     id BIGSERIAL PRIMARY KEY,
     chat_id BIGINT,

@@ -26,11 +26,12 @@ class _Pool:
 
 class _TaskConn:
     async def fetchrow(self, query, *_args):
-        if "SELECT t.id, t.title, t.status, t.deadline, t.project_id, t.parent_task_id" in query:
+        if "SELECT t.id, t.title, t.status, t.kind, t.deadline, t.project_id, t.parent_task_id" in query:
             return {
                 "id": 10,
                 "title": "Parent task",
                 "status": "todo",
+                "kind": "task",
                 "deadline": None,
                 "project_id": 20,
                 "parent_task_id": 30,
@@ -80,8 +81,7 @@ class TaskSecondaryMenuTests(unittest.IsolatedAsyncioTestCase):
         rows = [[btn.text for btn in row] for row in kwargs["reply_markup"].inline_keyboard]
         self.assertEqual(rows[0], ["📁 В проект…"])
         self.assertEqual(rows[1], ["🧩 В суперзадачу…", "⛓ Отвязать"])
-        self.assertEqual(rows[2], ["📤 В Google Tasks"])
-        self.assertEqual(rows[3], ["⬅ Назад", "⬅️ Домой"])
+        self.assertEqual(rows[2], ["⬅ Назад", "⬅️ Домой"])
 
     async def test_subtasks_menu_lists_children_without_overloading_primary_card(self) -> None:
         callback = SimpleNamespace(

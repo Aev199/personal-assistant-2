@@ -283,7 +283,9 @@ struct ContentView: View {
     @ViewBuilder
     private func taskMeta(_ task: TodayTask) -> some View {
         HStack(spacing: 6) {
-            if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
+            if task.isPersonal {
+                Text("Личное")
+            } else if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
                 Text(task.project)
             }
 

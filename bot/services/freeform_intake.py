@@ -27,7 +27,6 @@ from bot.db.runtime_state import (
 from bot.deps import AppDeps
 from bot.fsm.states import FreeformFollowup
 from bot.services.background import fire_and_forget
-from bot.services.gtasks_service import due_from_local_date, get_or_create_list_id
 from bot.services.pending_actions import create_pending_preview
 from bot.services.vault_sync import background_project_sync
 from bot.tz import fmt_local, resolve_tz_name, to_db_utc
@@ -411,20 +410,6 @@ def _event_summary(kind: str, title: str, project_code: str | None) -> str:
     return personal_tpl.format(title=title, project="", project_prefix="").strip()
 
 
-def _gtasks_error_toast(kind_label: str, exc: Exception) -> str:
-    raw = _clean(exc)
-    lower = raw.lower()
-    if "authentication failed" in lower or "invalid_grant" in lower:
-        detail = "ошибка авторизации Google Tasks. Проверьте refresh token."
-    elif "not configured" in lower:
-        detail = "Google Tasks не настроен."
-    else:
-        detail = raw or "неизвестная ошибка."
-    if len(detail) > 160:
-        detail = detail[:157].rstrip() + "..."
-    return f"⚠️ Не удалось добавить {kind_label} в Google Tasks: {detail}"
-
-
 async def _render_screen(
     message: Message,
     db_pool: asyncpg.Pool,
@@ -781,12 +766,12 @@ def _intake_system_prompt(
         "- start_at_local: YYYY-MM-DD HH:MM;\n"
         "- duration_min: integer duration in minutes;\n"
         "- project_code/project_name only when the work event clearly belongs to a project.\n"
-        "For action=idea return idea_text with the raw idea to store in Google Tasks.\n"
+        "For action=idea return idea_text with the raw non-actionable thought to store in Assistant.\n"
         "Use action=reply only if the request is not actionable or required data is missing.\n"
         "Prefer reminder when the user explicitly asks to remind. "
         "Prefer event for meetings, calls, appointments, calendar bookings, and time blocks. "
         "Prefer idea for thoughts, concepts, brainstorm items, things to capture without a deadline. "
-        "Prefer personal_task for personal todos, errands, purchases, and household tasks tracked in Google Tasks. "
+        "Prefer personal_task for personal todos, errands, purchases, and household tasks. "
         "Prefer task for actionable work items.\n"
         "If the user prompt includes 'Strong action hint: <action>', follow it unless the request is clearly impossible.\n"
         "Never invent project codes or team members outside the provided lists.\n"
@@ -1240,74 +1225,6 @@ async def _execute_pending_intent(
     return False
 
 
-def _quick_capture_eligible(intent: IntakeIntent, text: str, *, action_hint: str | None) -> bool:
-    """Check if intent qualifies for instant execution (no draft).
-
-    Requirements:
-    - Explicit marker prefix in the original message (идея:, личное:, idea:, personal:)
-    - No deadline present
-    - No missing fields
-    """
-    if intent.needs_followup:
-        return False
-    action = intent.action
-    if action not in {"idea", "personal_task"}:
-        return False
-    # Must have explicit marker (user explicitly opted in)
-    if action_hint not in {"idea", "personal_task"}:
-        return False
-    # No deadline in text
-    lowered = canon(text)
-    deadline_markers = (
-        "сегодня", "завтра", "послезавтра", "через", "к ", "в ",
-        "today", "tomorrow", "next", "by ", "due ",
-    )
-    for marker in deadline_markers:
-        if marker in lowered:
-            return False
-    return True
-
-
-async def _execute_quick_capture(
-    message: Message,
-    *,
-    deps: AppDeps,
-    db_pool: asyncpg.Pool,
-    intent: IntakeIntent,
-    source: str,
-) -> bool:
-    """Execute an idea or personal_task immediately, skipping the draft stage."""
-    gtasks = getattr(deps, "gtasks", None)
-    if gtasks is None or not gtasks.enabled():
-        return False
-
-    try:
-        if intent.action == "idea":
-            ideas_list = os.getenv("GTASKS_IDEAS_LIST", "Идеи")
-            list_id = await get_or_create_list_id(db_pool, gtasks, ideas_list)
-            await gtasks.create_task(list_id, title=intent.idea_text or intent.title)
-            await _rerender_with_toast(
-                message, db_pool, deps,
-                f"💡 Идея сохранена: {intent.idea_text or intent.title}",
-            )
-            return True
-
-        if intent.action == "personal_task":
-            personal_list = os.getenv("GTASKS_PERSONAL_LIST", "Личное")
-            list_id = await get_or_create_list_id(db_pool, gtasks, personal_list)
-            await gtasks.create_task(list_id, title=intent.title)
-            await _rerender_with_toast(
-                message, db_pool, deps,
-                f"✅ Личная задача: {intent.title}",
-            )
-            return True
-    except Exception as exc:
-        logger.exception("quick capture failed")
-        return False  # fall through to normal draft flow
-
-    return False
-
-
 async def handle_freeform_text(
     message: Message,
     *,
@@ -1462,15 +1379,6 @@ async def handle_freeform_text(
             missing_fields=intent.missing_fields,
         )
 
-    # ── Quick capture: idea / personal_task without deadline → execute immediately ──
-    if _quick_capture_eligible(intent, text, action_hint=action_hint):
-        quick_ok = await _execute_quick_capture(
-            message, deps=deps, db_pool=db_pool, intent=intent, source=source,
-        )
-        if quick_ok:
-            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
-            return True
-
     if intent.action == "task":
         if is_solo_mode(persona_mode):
             intent.assignee_name = None
@@ -1563,17 +1471,6 @@ async def handle_freeform_text(
             return False
 
     if intent.action == "personal_task":
-        gtasks = getattr(deps, "gtasks", None)
-        if gtasks is None or not gtasks.enabled():
-            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
-            await _rerender_with_toast(
-                message,
-                db_pool,
-                deps,
-                "\u274c Google Tasks \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d \u0434\u043b\u044f \u043b\u0438\u0447\u043d\u044b\u0445 \u0437\u0430\u0434\u0430\u0447.",
-            )
-            return True
-
         due_local = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
         if intent.deadline_local and due_local is None:
             return await _start_followup(
@@ -1613,7 +1510,12 @@ async def handle_freeform_text(
         except Exception as exc:
             logger.exception("freeform personal task draft failed", extra={"source": source})
             await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
-            await _rerender_with_toast(message, db_pool, deps, _gtasks_error_toast("личную задачу", exc))
+            await _rerender_with_toast(
+                message,
+                db_pool,
+                deps,
+                "⚠️ Не удалось сохранить личную задачу. Попробуйте ещё раз.",
+            )
             return True
 
     if intent.action == "event":
@@ -1761,18 +1663,6 @@ async def handle_freeform_text(
             return False
 
     if intent.action == "idea":
-        gtasks = getattr(deps, "gtasks", None)
-        if gtasks is None or not gtasks.enabled():
-            await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
-            await _rerender_with_toast(
-                message,
-                db_pool,
-                deps,
-                "\u274c Google Tasks \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d \u0434\u043b\u044f \u0438\u0434\u0435\u0439.",
-            )
-            return True
-
-        ideas_list = os.getenv("GTASKS_IDEAS_LIST", "\u0418\u0434\u0435\u0438")
         try:
             idea_fingerprint = _llm_fingerprint("idea", idea_text=intent.idea_text)
             duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), idea_fingerprint)
@@ -1795,7 +1685,12 @@ async def handle_freeform_text(
         except Exception as exc:
             logger.exception("freeform idea draft failed", extra={"source": source})
             await _clear_followup_state(state, db_pool=db_pool, chat_id=int(message.chat.id))
-            await _rerender_with_toast(message, db_pool, deps, _gtasks_error_toast("идею", exc))
+            await _rerender_with_toast(
+                message,
+                db_pool,
+                deps,
+                "⚠️ Не удалось сохранить идею. Попробуйте ещё раз.",
+            )
             return True
 
     if intent.action == "reminder":

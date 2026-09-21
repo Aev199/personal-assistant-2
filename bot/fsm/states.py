@@ -38,7 +38,7 @@ class AddEventWizard(StatesGroup):
 
 
 class QuickIdeaWizard(StatesGroup):
-    """Quick capture for personal ideas into Google Tasks."""
+    """Quick capture for non-actionable ideas stored in Assistant."""
 
     entering_text = State()
 

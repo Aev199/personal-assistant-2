@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
-private struct WidgetTask: Decodable, Identifiable {
+private struct WidgetTask: Codable, Identifiable {
     let id: Int
     let title: String
     let project: String
@@ -16,15 +16,51 @@ private struct WidgetTask: Decodable, Identifiable {
     }
 }
 
-private struct WidgetReminder: Decodable, Identifiable {
+private struct WidgetReminder: Codable, Identifiable {
     let id: Int
     let text: String
     let at: Date?
 }
 
-private struct WidgetTodayResponse: Decodable {
-    let tasks: [WidgetTask]
-    let reminders: [WidgetReminder]
+private struct WidgetTodayResponse: Codable {
+    var tasks: [WidgetTask]
+    var reminders: [WidgetReminder]
+}
+
+private enum WidgetCodec {
+    static func decodeToday(_ data: Data) -> WidgetTodayResponse? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(WidgetTodayResponse.self, from: data)
+    }
+
+    static func encodeToday(_ value: WidgetTodayResponse) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return try? encoder.encode(value)
+    }
+
+    static func cachedEntry() -> AssistantWidgetEntry? {
+        guard let data = WidgetSharedSettings.cachedTodayData,
+              let today = decodeToday(data) else {
+            return nil
+        }
+        return AssistantWidgetEntry(
+            date: .now,
+            tasks: today.tasks,
+            reminders: today.reminders,
+            error: nil
+        )
+    }
+
+    static func cacheWithoutTask(_ taskID: Int) -> Data? {
+        guard let data = WidgetSharedSettings.cachedTodayData,
+              var today = decodeToday(data) else {
+            return nil
+        }
+        today.tasks.removeAll { $0.id == taskID }
+        return encodeToday(today)
+    }
 }
 
 private enum WidgetNetwork {
@@ -39,18 +75,13 @@ private enum WidgetNetwork {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 8
+        request.timeoutInterval = 6
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data("{}".utf8)
 
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 8
-        config.timeoutIntervalForResource = 10
-        config.waitsForConnectivity = false
-
-        let (_, response) = try await URLSession(configuration: config).data(for: request)
+        let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse,
               200..<300 ~= http.statusCode else {
             throw URLError(.badServerResponse)
@@ -73,9 +104,27 @@ struct MarkTaskDoneIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        try await WidgetNetwork.markDone(taskID: taskID)
-        WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        return .result()
+        let originalCache = WidgetSharedSettings.cachedTodayData
+
+        if let optimisticCache = WidgetCodec.cacheWithoutTask(taskID) {
+            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        }
+
+        do {
+            try await WidgetNetwork.markDone(taskID: taskID)
+            return .result()
+        } catch {
+            if let originalCache {
+                WidgetSharedSettings.writeCachedTodayData(originalCache)
+            } else {
+                WidgetSharedSettings.clearCachedTodayData()
+            }
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            throw error
+        }
     }
 }
 
@@ -119,6 +168,11 @@ private struct AssistantWidgetProvider: TimelineProvider {
             return
         }
 
+        if let cached = WidgetCodec.cachedEntry() {
+            completion(cached)
+            return
+        }
+
         Task {
             completion(await load())
         }
@@ -126,7 +180,15 @@ private struct AssistantWidgetProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<AssistantWidgetEntry>) -> Void) {
         Task {
-            let entry = await load()
+            let entry: AssistantWidgetEntry
+
+            if WidgetSharedSettings.consumeCachedTodayOnce(),
+               let cached = WidgetCodec.cachedEntry() {
+                entry = cached
+            } else {
+                entry = await load()
+            }
+
             let retry = entry.error == nil ? 15 * 60 : 60
             completion(
                 Timeline(
@@ -153,16 +215,11 @@ private struct AssistantWidgetProvider: TimelineProvider {
 
         do {
             var request = URLRequest(url: url)
-            request.timeoutInterval = 8
+            request.timeoutInterval = 6
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-            let config = URLSessionConfiguration.ephemeral
-            config.timeoutIntervalForRequest = 8
-            config.timeoutIntervalForResource = 10
-            config.waitsForConnectivity = false
-
-            let (data, response) = try await URLSession(configuration: config).data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 throw URLError(.badServerResponse)
             }
@@ -180,9 +237,10 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 throw URLError(.badServerResponse)
             }
 
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let today = try decoder.decode(WidgetTodayResponse.self, from: data)
+            guard let today = WidgetCodec.decodeToday(data) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            WidgetSharedSettings.writeCachedTodayData(data)
 
             return AssistantWidgetEntry(
                 date: .now,
@@ -191,6 +249,9 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 error: nil
             )
         } catch {
+            if let cached = WidgetCodec.cachedEntry() {
+                return cached
+            }
             return AssistantWidgetEntry(
                 date: .now,
                 tasks: [],

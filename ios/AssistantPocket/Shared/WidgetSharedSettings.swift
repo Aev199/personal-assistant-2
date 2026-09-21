@@ -7,6 +7,8 @@ enum WidgetSharedSettings {
     private static let baseURLAccount = "base-url"
     private static let tokenAccount = "token"
     private static let captureRequestAccount = "capture-request"
+    private static let todayCacheAccount = "today-cache"
+    private static let preferTodayCacheAccount = "prefer-today-cache"
 
     static var baseURL: String {
         read(baseURLAccount)
@@ -18,6 +20,12 @@ enum WidgetSharedSettings {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    static var cachedTodayData: Data? {
+        let encoded = read(todayCacheAccount)
+        guard !encoded.isEmpty else { return nil }
+        return Data(base64Encoded: encoded)
+    }
+
     static func write(baseURL: String, token: String) {
         writeValue(
             baseURL.trimmingCharacters(in: CharacterSet(charactersIn: " /\n\t")),
@@ -27,6 +35,24 @@ enum WidgetSharedSettings {
             token.trimmingCharacters(in: .whitespacesAndNewlines),
             account: tokenAccount
         )
+    }
+
+    static func writeCachedTodayData(_ data: Data) {
+        writeValue(data.base64EncodedString(), account: todayCacheAccount)
+    }
+
+    static func clearCachedTodayData() {
+        delete(todayCacheAccount)
+    }
+
+    static func requestCachedTodayOnce() {
+        writeValue("1", account: preferTodayCacheAccount)
+    }
+
+    static func consumeCachedTodayOnce() -> Bool {
+        guard read(preferTodayCacheAccount) == "1" else { return false }
+        delete(preferTodayCacheAccount)
+        return true
     }
 
     static func requestCaptureLaunch() {

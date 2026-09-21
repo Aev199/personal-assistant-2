@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import WidgetKit
 
 struct ContentView: View {
     @EnvironmentObject private var settings: AppSettings

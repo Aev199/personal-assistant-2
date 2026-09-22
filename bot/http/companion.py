@@ -27,6 +27,7 @@ from bot.db.runtime_state import get_conversation_state, set_conversation_state,
 MAX_CAPTURE_LEN = 2000
 ATTENTION_TASK_LIMIT = 5
 ATTENTION_URGENT_LIMIT = 3
+ATTENTION_DISMISSED_EVENTS_FLOW = "attention_dismissed_events"
 
 
 def _configured_token() -> str:
@@ -95,6 +96,49 @@ async def _calendar_snapshot_with_budget(
 
     task.add_done_callback(_consume_result)
     return TodayCalendarSnapshot(events=(), unavailable=False)
+
+
+def _parse_client_datetime(value: object, *, tz: ZoneInfo) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz)
+    return parsed.astimezone(timezone.utc)
+
+
+def _active_dismissed_event_items(
+    state: dict | None,
+    *,
+    now_utc: datetime,
+) -> list[dict[str, str]]:
+    payload = (state or {}).get("payload") or {}
+    raw_items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(raw_items, list):
+        return []
+
+    active: list[dict[str, str]] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        event_id = str(item.get("id") or "").strip()
+        until_raw = str(item.get("until") or "").strip()
+        if not event_id or not until_raw:
+            continue
+        try:
+            until = datetime.fromisoformat(until_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        until = until.astimezone(timezone.utc)
+        if until > now_utc:
+            active.append({"id": event_id, "until": until.isoformat()})
+    return active
 
 
 def _utc_aware(value: datetime | None) -> datetime | None:
@@ -226,6 +270,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
+    async def _dismiss_event(request: web.Request) -> web.StreamResponse:
+        return await handle_event_dismiss(request, ctx)
+
     # Canonical client API.
     app.router.add_get("/api/v1/today", _today)
     app.router.add_get("/api/v1/tasks", _tasks)
@@ -241,6 +288,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
     app.router.add_post("/api/v1/tasks/{task_id}/focus", _focus)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
+    app.router.add_post("/api/v1/attention/dismiss-event", _dismiss_event)
 
     # Compatibility for already installed companion builds.
     app.router.add_get("/api/v1/companion/today", _today)
@@ -288,6 +336,19 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 focus_task_id = int((focus_state.get("payload") or {}).get("task_id"))
             except (TypeError, ValueError):
                 focus_task_id = None
+
+        dismissed_event_state = await get_conversation_state(
+            conn,
+            int(ctx.deps.admin_id or 0),
+            ATTENTION_DISMISSED_EVENTS_FLOW,
+        )
+        dismissed_event_ids = {
+            item["id"]
+            for item in _active_dismissed_event_items(
+                dismissed_event_state,
+                now_utc=now_utc,
+            )
+        }
 
         task_rows = await conn.fetch(
             """
@@ -392,6 +453,9 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
         if not event_id:
             event_id = f"{calendar_kind}:{int(event_start_utc.timestamp())}:{str(event.summary or '')[:80]}"
 
+        if event_id in dismissed_event_ids:
+            continue
+
         events.append(
             {
                 "id": event_id,
@@ -413,6 +477,69 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             "reminders": reminders,
             "events": events,
             "calendar_unavailable": bool(calendar_snapshot.unavailable),
+        }
+    )
+
+
+async def handle_event_dismiss(request: web.Request, ctx) -> web.StreamResponse:
+    """Hide a calendar event from attention surfaces without deleting it."""
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+
+    event_id = str(payload.get("event_id") or "").strip()
+    if not event_id or len(event_id) > 1024:
+        return web.json_response({"ok": False, "error": "invalid_event_id"}, status=400)
+
+    tz = ZoneInfo(resolve_tz_name(ctx.deps.tz_name))
+    now_utc = datetime.now(timezone.utc)
+    until_utc = _parse_client_datetime(payload.get("until"), tz=tz)
+    if until_utc is None:
+        return web.json_response({"ok": False, "error": "invalid_until"}, status=400)
+
+    # Dismissal is an attention preference, not a permanent calendar mutation.
+    # Bound stale/bogus client values so one tap cannot hide a UID indefinitely.
+    until_utc = min(until_utc, now_utc + timedelta(days=2))
+    if until_utc <= now_utc:
+        return web.json_response({"ok": True, "status": "expired"})
+
+    chat_id = int(ctx.deps.admin_id or 0)
+    async with pool.acquire() as conn:
+        state = await get_conversation_state(
+            conn,
+            chat_id,
+            ATTENTION_DISMISSED_EVENTS_FLOW,
+        )
+        items = _active_dismissed_event_items(state, now_utc=now_utc)
+        items = [item for item in items if item["id"] != event_id]
+        items.append({"id": event_id, "until": until_utc.isoformat()})
+        items = items[-50:]
+
+        await set_conversation_state(
+            conn,
+            chat_id,
+            ATTENTION_DISMISSED_EVENTS_FLOW,
+            step="active",
+            payload={"items": items},
+            ttl_sec=2 * 24 * 3600,
+        )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "status": "dismissed",
+            "event_id": event_id,
+            "until": until_utc.isoformat(),
         }
     )
 

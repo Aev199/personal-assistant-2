@@ -269,6 +269,15 @@ struct ContentView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 24)
+                .onEnded { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    guard dx > 70, abs(dx) > abs(dy) * 1.4 else { return }
+                    Task { await dismiss(event) }
+                }
+        )
     }
 
     private func reminderFocusCard(_ reminder: TodayReminder) -> some View {
@@ -361,6 +370,15 @@ struct ContentView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 5)
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 24)
+                .onEnded { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    guard dx > 70, abs(dx) > abs(dy) * 1.4 else { return }
+                    Task { await dismiss(event) }
+                }
+        )
     }
 
     private func compactReminderRow(_ reminder: TodayReminder) -> some View {
@@ -701,6 +719,21 @@ struct ContentView: View {
             withAnimation {
                 pendingIntake.removeAll { $0.id == pending.id }
             }
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func dismiss(_ event: TodayEvent) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.dismissEvent(eventID: event.id, until: event.end)
+            withAnimation {
+                events.removeAll { $0.id == event.id }
+            }
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)
         }

@@ -40,6 +40,7 @@ targets:
       - path: AssistantPocket/Widget
       - path: AssistantPocket/Shared/WidgetSharedSettings.swift
       - path: AssistantPocket/Shared/CaptureIntents.swift
+      - path: AssistantPocket/Shared/TaskDeadlineFormatting.swift
     info:
       path: AssistantPocket/Widget/Info.plist
       properties:

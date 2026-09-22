@@ -71,6 +71,17 @@ private enum WidgetCodec {
         today.tasks.removeAll { $0.id == taskID }
         return encodeToday(today)
     }
+
+    static func cacheWithoutEvent(_ eventID: String) -> Data? {
+        guard let data = WidgetSharedSettings.cachedTodayData,
+              var today = decodeToday(data) else {
+            return nil
+        }
+        var events = today.events ?? []
+        events.removeAll { $0.id == eventID }
+        today.events = events
+        return encodeToday(today)
+    }
 }
 
 private enum WidgetNetwork {
@@ -87,6 +98,26 @@ private enum WidgetNetwork {
             legacyPath: "/api/v1/companion/tasks/\(taskID)/done",
             method: "POST",
             body: Data("{}".utf8)
+        )
+
+        guard 200..<300 ~= response.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    static func dismissEvent(eventID: String, until: Date) async throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let body = try JSONSerialization.data(
+            withJSONObject: [
+                "event_id": eventID,
+                "until": formatter.string(from: until),
+            ]
+        )
+        let (_, response) = try await send(
+            path: "/api/v1/attention/dismiss-event",
+            method: "POST",
+            body: body
         )
 
         guard 200..<300 ~= response.statusCode else {
@@ -166,6 +197,49 @@ struct MarkTaskDoneIntent: AppIntent {
 
         do {
             try await WidgetNetwork.markDone(taskID: taskID)
+            return .result()
+        } catch {
+            if let originalCache {
+                WidgetSharedSettings.writeCachedTodayData(originalCache)
+            } else {
+                WidgetSharedSettings.clearCachedTodayData()
+            }
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            throw error
+        }
+    }
+}
+
+struct DismissCalendarEventIntent: AppIntent {
+    static var title: LocalizedStringResource = "Скрыть встречу"
+    static var description = IntentDescription("Убирает встречу из внимания до её окончания.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Event ID")
+    var eventID: String
+
+    @Parameter(title: "Event end")
+    var eventEnd: Date
+
+    init() {}
+
+    init(eventID: String, eventEnd: Date) {
+        self.eventID = eventID
+        self.eventEnd = eventEnd
+    }
+
+    func perform() async throws -> some IntentResult {
+        let originalCache = WidgetSharedSettings.cachedTodayData
+
+        if let optimisticCache = WidgetCodec.cacheWithoutEvent(eventID) {
+            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        }
+
+        do {
+            try await WidgetNetwork.dismissEvent(eventID: eventID, until: eventEnd)
             return .result()
         } catch {
             if let originalCache {
@@ -480,7 +554,7 @@ private struct AssistantWidgetView: View {
             Spacer(minLength: 0)
 
             if let deadline = task.deadline {
-                Text(deadline, format: .dateTime.hour().minute())
+                Text(taskDeadlineText(deadline))
                     .font(.caption2)
                     .foregroundStyle(task.overdue ? .red : .secondary)
             }
@@ -495,7 +569,7 @@ private struct AssistantWidgetView: View {
             }
 
             if let deadline = task.deadline {
-                Text(deadline, format: .dateTime.hour().minute())
+                Text(taskDeadlineText(deadline))
                     .foregroundStyle(task.overdue ? .red : .secondary)
             }
 
@@ -508,18 +582,30 @@ private struct AssistantWidgetView: View {
     }
 
     private func focusEventView(_ event: WidgetEvent) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label("Календарь", systemImage: "calendar")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Календарь", systemImage: "calendar")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            Text(event.title)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
+                Text(event.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
 
-            Text(event.start, format: .dateTime.hour().minute())
-                + Text("–")
-                + Text(event.end, format: .dateTime.hour().minute())
+                Text(event.start, format: .dateTime.hour().minute())
+                    + Text("–")
+                    + Text(event.end, format: .dateTime.hour().minute())
+            }
+
+            Spacer(minLength: 0)
+
+            Button(intent: DismissCalendarEventIntent(eventID: event.id, eventEnd: event.end)) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Убрать встречу из внимания")
         }
     }
 

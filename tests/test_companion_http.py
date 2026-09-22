@@ -27,6 +27,7 @@ def test_assistant_routes_include_canonical_and_legacy_aliases():
     assert ("POST", "/api/v1/intake/{pending_action_id}/cancel") in routes
     assert ("POST", "/api/v1/tasks/{task_id}/focus") in routes
     assert ("POST", "/api/v1/tasks/{task_id}/done") in routes
+    assert ("POST", "/api/v1/attention/dismiss-event") in routes
 
     assert ("GET", "/api/v1/companion/today") in routes
     assert ("POST", "/api/v1/companion/capture") in routes
@@ -165,3 +166,21 @@ def test_calendar_snapshot_budget_does_not_block_today():
         assert await task == expected
 
     asyncio.run(scenario())
+
+
+def test_dismissed_event_items_drop_expired_values():
+    now = datetime(2026, 9, 22, 9, 0, tzinfo=timezone.utc)
+    state = {
+        "payload": {
+            "items": [
+                {"id": "keep", "until": "2026-09-22T10:00:00+00:00"},
+                {"id": "expired", "until": "2026-09-22T08:59:00+00:00"},
+                {"id": "", "until": "2026-09-22T10:00:00+00:00"},
+                {"id": "bad", "until": "not-a-date"},
+            ]
+        }
+    }
+
+    items = companion._active_dismissed_event_items(state, now_utc=now)
+
+    assert items == [{"id": "keep", "until": "2026-09-22T10:00:00+00:00"}]

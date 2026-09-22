@@ -205,6 +205,11 @@ struct CapturedTask: Decodable {
     let project: String
 }
 
+struct AttentionMutationResponse: Decodable {
+    let ok: Bool
+    let status: String
+}
+
 struct DoneResponse: Decodable {
     let ok: Bool
     let taskId: Int

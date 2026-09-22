@@ -220,6 +220,24 @@ struct APIClient {
         return try decode(DoneResponse.self, data: data, response: response)
     }
 
+    func dismissEvent(eventID: String, until: Date) async throws -> AttentionMutationResponse {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let body = try JSONSerialization.data(
+            withJSONObject: [
+                "event_id": eventID,
+                "until": formatter.string(from: until),
+            ]
+        )
+        let req = try request(
+            path: "/api/v1/attention/dismiss-event",
+            method: "POST",
+            body: body
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(AttentionMutationResponse.self, data: data, response: response)
+    }
+
     func markDone(taskID: Int) async throws -> DoneResponse {
         let body = Data("{}".utf8)
         let (data, response) = try await send(

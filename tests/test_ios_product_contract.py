@@ -134,6 +134,31 @@ def test_reminder_delivery_and_widget_state_do_not_compete():
     assert "now.addingTimeInterval(60)" in widget
 
 
+def test_voice_capture_is_fast_shared_and_loss_resistant():
+    home = _read("App/ContentView.swift")
+    api = _read("App/APIClient.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+    recorder = _read("App/VoiceRecorder.swift")
+    outbox = _read("App/VoiceCaptureOutbox.swift")
+    project = (ROOT / "ios" / "project.yml").read_text(encoding="utf-8")
+
+    assert '"mic.fill"' in home
+    assert "voiceIntake(" in home
+    assert "VoiceCaptureOutbox.enqueue" in home
+    assert "flushVoiceOutbox()" in home
+    assert 'mode == "voice"' in home
+
+    assert "/api/v1/intake/audio" in api
+    assert "multipart/form-data" in api
+    assert "assistantpocket://capture?mode=voice" in widget
+    assert '"mic.circle.fill"' in widget
+
+    assert "AVAudioRecorder" in recorder
+    assert "AVAudioApplication.requestRecordPermission" in recorder
+    assert "applicationSupportDirectory" in outbox
+    assert "NSMicrophoneUsageDescription" in project
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

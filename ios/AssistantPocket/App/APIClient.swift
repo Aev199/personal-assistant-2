@@ -173,6 +173,45 @@ struct APIClient {
         return try decode(NativeIntakeResponse.self, data: data, response: response)
     }
 
+    func voiceIntake(
+        audioData: Data,
+        context: String? = nil,
+        clientID: UUID
+    ) async throws -> NativeIntakeResponse {
+        let boundary = "AssistantVoice-\(UUID().uuidString)"
+        var body = Data()
+
+        func append(_ value: String) {
+            body.append(Data(value.utf8))
+        }
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"client_id\"\r\n\r\n")
+        append(clientID.uuidString.lowercased())
+        append("\r\n")
+
+        if let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"context\"\r\n\r\n")
+            append(context)
+            append("\r\n")
+        }
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"audio\"; filename=\"voice.m4a\"\r\n")
+        append("Content-Type: audio/mp4\r\n\r\n")
+        body.append(audioData)
+        append("\r\n--\(boundary)--\r\n")
+
+        var req = try request(path: "/api/v1/intake/audio", method: "POST")
+        req.timeoutInterval = 60
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(NativeIntakeResponse.self, data: data, response: response)
+    }
+
     func loadPendingIntake() async throws -> NativePendingListResponse {
         let req = try request(path: "/api/v1/intake/pending")
         let (data, response) = try await URLSession.shared.data(for: req)

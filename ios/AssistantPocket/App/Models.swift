@@ -123,9 +123,10 @@ struct NativeIntakeResponse: Decodable {
     let needsInput: [NativeIntakeNeedInput]
     let pending: [NativeIntakePending]
     let context: String?
+    let transcript: String?
 
     enum CodingKeys: String, CodingKey {
-        case ok, status, message, saved, pending, context
+        case ok, status, message, saved, pending, context, transcript
         case captureId = "capture_id"
         case needsInput = "needs_input"
     }

@@ -15,6 +15,7 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 ## ADHD-first rules
 
 - Capture must survive bad network, VPN changes, app suspension and accidental interruption.
+- Voice capture is a first-class capture path, not a separate feature: it is transcribed by the backend Gemini path and then enters the same intake pipeline as text. Recorded audio stays in a local outbox until the backend accepts it.
 - An unfinished capture must survive relaunch.
 - There is one explicit current focus. Choosing a new focus must not require reorganizing the backlog. A manual choice overrides automatic calendar/reminder focus until that task is completed or changed.
 - A reminder that is due or within 15 minutes may temporarily take **Сейчас**; it must not be buried behind ordinary tasks.
@@ -47,7 +48,7 @@ Free-form input is sent to the backend intake service, which uses the same Gemin
 
 ## Channel roles
 
-- **Widget:** glance, Quick Done, refresh, quick capture.
+- **Widget:** glance, Quick Done, refresh, text capture and one-tap entry into voice capture.
 - **iOS:** today, capture, choose focus, correct a task, browse/search active work, review saved ideas secondarily.
 - **Telegram:** conversational commands, bulk operations and richer interaction while at a PC.
 - **Backend:** canonical state, attention ordering, intake, mutations and integrations.

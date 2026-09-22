@@ -19,6 +19,9 @@ struct ContentView: View {
     @AppStorage("assistant.clarificationPrompt") private var clarificationPrompt = ""
     @State private var pendingIntake: [NativeIntakePending] = []
     @State private var isFlushingOutbox = false
+    @State private var isFlushingVoiceOutbox = false
+    @State private var isVoiceSending = false
+    @StateObject private var voiceRecorder = VoiceRecorder()
     @State private var editingTask: TodayTask?
     @State private var showAllTasks = false
     @State private var showFocusPicker = false
@@ -153,6 +156,7 @@ struct ContentView: View {
                     await loadToday()
                     await loadPendingIntake()
                     await flushOutbox()
+                    await flushVoiceOutbox()
                 } else {
                     showSettings = true
                 }
@@ -160,7 +164,15 @@ struct ContentView: View {
             }
             .onOpenURL { url in
                 guard url.scheme == "assistantpocket", url.host == "capture" else { return }
-                activateCapture()
+                let mode = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?
+                    .first(where: { $0.name == "mode" })?
+                    .value
+                if mode == "voice" {
+                    activateVoiceCapture()
+                } else {
+                    activateCapture()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: CaptureLaunchSignal.notification)) { _ in
                 activateCapture()
@@ -171,6 +183,7 @@ struct ContentView: View {
                     Task {
                         await loadPendingIntake()
                         await flushOutbox()
+                        await flushVoiceOutbox()
                     }
                 }
             }
@@ -490,7 +503,13 @@ struct ContentView: View {
                 .font(.headline)
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextField(clarificationPrompt.isEmpty ? "Написать или надиктовать…" : "Уточнить…", text: $captureText, axis: .vertical)
+                TextField(
+                    voiceRecorder.isRecording
+                        ? "Говорите…"
+                        : (clarificationPrompt.isEmpty ? "Написать или надиктовать…" : "Уточнить…"),
+                    text: $captureText,
+                    axis: .vertical
+                )
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
                     .focused($captureFocused)
@@ -501,6 +520,30 @@ struct ContentView: View {
                     .onSubmit {
                         Task { await capture() }
                     }
+                    .disabled(voiceRecorder.isRecording || isVoiceSending)
+
+                Button {
+                    Task {
+                        if voiceRecorder.isRecording {
+                            await finishVoiceCapture()
+                        } else {
+                            await startVoiceCapture()
+                        }
+                    }
+                } label: {
+                    if isVoiceSending {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 22, height: 22)
+                    } else {
+                        Image(systemName: voiceRecorder.isRecording ? "stop.fill" : "mic.fill")
+                            .font(.headline)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
+                .disabled(isSending || isVoiceSending)
+                .accessibilityLabel(voiceRecorder.isRecording ? "Остановить и отправить" : "Записать голосом")
 
                 Button {
                     Task { await capture() }
@@ -516,7 +559,12 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.circle)
-                .disabled(captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
+                .disabled(
+                    captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || isSending
+                    || isVoiceSending
+                    || voiceRecorder.isRecording
+                )
                 .accessibilityLabel("Сохранить")
             }
 
@@ -573,6 +621,19 @@ struct ContentView: View {
         activateCapture()
     }
 
+    private func activateVoiceCapture() {
+        confirmation = nil
+        errorMessage = nil
+        guard settings.isConfigured else {
+            showSettings = true
+            return
+        }
+        captureFocused = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            Task { await startVoiceCapture() }
+        }
+    }
+
     private func activateCapture() {
         confirmation = nil
         errorMessage = nil
@@ -611,6 +672,124 @@ struct ContentView: View {
             pendingIntake = try await client.loadPendingIntake().pending
         } catch {
             // A background restore failure should not interrupt the Today surface.
+        }
+    }
+
+    @MainActor
+    private func startVoiceCapture() async {
+        guard settings.isConfigured else {
+            showSettings = true
+            return
+        }
+        guard !voiceRecorder.isRecording, !isVoiceSending else { return }
+
+        confirmation = nil
+        errorMessage = nil
+        captureFocused = false
+
+        do {
+            try await voiceRecorder.start()
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func finishVoiceCapture() async {
+        guard let recordingURL = voiceRecorder.stop() else { return }
+        let context = clarificationContext.isEmpty ? nil : clarificationContext
+
+        do {
+            let queued = try VoiceCaptureOutbox.enqueue(
+                recordingURL: recordingURL,
+                context: context
+            )
+            await sendVoiceCapture(queued)
+        } catch {
+            try? FileManager.default.removeItem(at: recordingURL)
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func sendVoiceCapture(_ queued: QueuedVoiceCapture) async {
+        guard settings.isConfigured else { return }
+
+        isVoiceSending = true
+        errorMessage = nil
+        confirmation = nil
+        defer { isVoiceSending = false }
+
+        do {
+            let audioData = try VoiceCaptureOutbox.data(for: queued)
+            let client = APIClient(
+                baseURL: settings.normalizedBaseURL,
+                token: settings.token
+            )
+            let response = try await client.voiceIntake(
+                audioData: audioData,
+                context: queued.context,
+                clientID: queued.id
+            )
+
+            VoiceCaptureOutbox.remove(queued.id)
+
+            if response.status == "stored" {
+                confirmation = "Голос записан, разберу позже"
+                return
+            }
+
+            await applyIntakeResponse(
+                response,
+                originalText: response.transcript ?? "Голосовая запись"
+            )
+        } catch {
+            if isRetryable(error) {
+                confirmation = "Голос сохранён на телефоне"
+                return
+            }
+
+            // Keep the recording in the outbox even for an unexpected backend
+            // error. A capture must never disappear silently.
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func flushVoiceOutbox() async {
+        guard settings.isConfigured, !isFlushingVoiceOutbox, !voiceRecorder.isRecording else {
+            return
+        }
+
+        let queued = VoiceCaptureOutbox.all()
+        guard !queued.isEmpty else { return }
+
+        isFlushingVoiceOutbox = true
+        defer { isFlushingVoiceOutbox = false }
+
+        let client = APIClient(
+            baseURL: settings.normalizedBaseURL,
+            token: settings.token
+        )
+
+        for item in queued {
+            do {
+                let response = try await client.voiceIntake(
+                    audioData: VoiceCaptureOutbox.data(for: item),
+                    context: item.context,
+                    clientID: item.id
+                )
+                VoiceCaptureOutbox.remove(item.id)
+
+                if response.status != "stored" {
+                    await applyIntakeResponse(
+                        response,
+                        originalText: response.transcript ?? "Голосовая запись"
+                    )
+                }
+            } catch {
+                break
+            }
         }
     }
 

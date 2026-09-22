@@ -607,6 +607,12 @@ private struct AssistantWidgetView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Обновить")
 
+            Link(destination: URL(string: "assistantpocket://capture?mode=voice")!) {
+                Image(systemName: "mic.circle.fill")
+                    .font(.title3)
+            }
+            .accessibilityLabel("Записать голосом")
+
             Link(destination: URL(string: "assistantpocket://capture")!) {
                 Image(systemName: "plus.circle.fill")
                     .font(.title3)

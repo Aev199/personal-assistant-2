@@ -4,7 +4,7 @@ The native iOS app is a primary mobile surface of Personal Assistant, not a comp
 
 ## Product roles
 
-- **Widget** — the lowest-friction daily surface: see what matters now, Quick Done, refresh, quick capture.
+- **Widget** — the lowest-friction daily surface: see what matters now, Quick Done, refresh, text capture and one-tap voice capture.
 - **iOS app** — Today + capture + calendar context + one second-level active-task list. Ideas sit one level deeper from that list. No tab bar, no chat clone, no project-management dashboard.
 - **Telegram** — conversational / command interface to the same backend, especially useful while working on a PC.
 - **Backend** — source of truth and owner of attention ordering, tasks, reminders and mutations.
@@ -33,6 +33,7 @@ Canonical native-client routes:
 - POST /api/v1/ideas/{id}/promote
 - POST /api/v1/ideas/{id}/archive
 - POST /api/v1/capture with a JSON text field
+- POST /api/v1/intake/audio with multipart AAC/M4A voice data
 - POST /api/v1/tasks/{id}/done
 
 Legacy /api/v1/companion/... routes remain as compatibility aliases. Current iOS builds try the canonical route first and fall back to legacy routes where possible, so the app can survive a rolling backend upgrade.
@@ -40,6 +41,8 @@ Legacy /api/v1/companion/... routes remain as compatibility aliases. Current iOS
 Authentication uses Bearer tokens. ASSISTANT_API_TOKEN is the preferred full-client environment variable. Existing COMPANION_API_TOKEN remains supported as a fallback. COMPANION_WIDGET_TOKEN remains supported only for older widget builds with restricted read/done scope.
 
 Free-form capture uses the backend intake service shared with Telegram. Swift does not classify intent. Work tasks, personal tasks, reminders and ideas are persisted by the backend; ideas remain non-actionable until explicitly promoted.
+
+Voice recording itself happens only in the foreground app because WidgetKit cannot access the microphone. The widget microphone deep-links directly into recording mode; after microphone permission has been granted once, the app starts recording immediately after opening. Audio is kept in a local outbox until upload succeeds, transcribed by Gemini on the backend, and then processed by the same native intake pipeline as text.
 
 ## Widget sharing and sideload signing
 

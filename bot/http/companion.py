@@ -26,6 +26,7 @@ from bot.db.runtime_state import get_conversation_state, set_conversation_state,
 
 
 MAX_CAPTURE_LEN = 2000
+MAX_VOICE_BYTES = 8 * 1024 * 1024
 ATTENTION_TASK_LIMIT = 5
 ATTENTION_URGENT_LIMIT = 3
 ATTENTION_DISMISSED_EVENTS_FLOW = "attention_dismissed_events"
@@ -256,6 +257,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _intake(request: web.Request) -> web.StreamResponse:
         return await handle_intake(request, ctx)
 
+    async def _voice_intake(request: web.Request) -> web.StreamResponse:
+        return await handle_voice_intake(request, ctx)
+
     async def _intake_pending(request: web.Request) -> web.StreamResponse:
         return await handle_intake_pending(request, ctx)
 
@@ -287,6 +291,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_patch("/api/v1/tasks/{task_id}", _task_update)
     app.router.add_post("/api/v1/capture", _capture)
     app.router.add_post("/api/v1/intake", _intake)
+    app.router.add_post("/api/v1/intake/audio", _voice_intake)
     app.router.add_get("/api/v1/intake/pending", _intake_pending)
     app.router.add_post("/api/v1/intake/{pending_action_id}/confirm", _intake_confirm)
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
@@ -942,6 +947,90 @@ async def handle_task_update(request: web.Request, ctx) -> web.StreamResponse:
             )
 
     return web.json_response({"ok": True, "task_id": task_id, "status": "updated"})
+
+
+async def handle_voice_intake(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    llm = getattr(ctx.deps, "llm", None)
+    if llm is None or not getattr(llm, "enabled", False):
+        return web.json_response({"ok": False, "error": "voice_unavailable"}, status=503)
+
+    if not request.content_type.startswith("multipart/"):
+        return web.json_response({"ok": False, "error": "multipart_required"}, status=400)
+
+    try:
+        reader = await request.multipart()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_multipart"}, status=400)
+
+    audio = bytearray()
+    filename = "voice.m4a"
+    mime_type = "audio/mp4"
+    context: str | None = None
+    client_id: str | None = None
+
+    async for part in reader:
+        name = str(part.name or "")
+        if name == "audio":
+            filename = str(part.filename or filename)
+            mime_type = str(part.headers.get("Content-Type") or mime_type)
+            while True:
+                chunk = await part.read_chunk(size=64 * 1024)
+                if not chunk:
+                    break
+                audio.extend(chunk)
+                if len(audio) > MAX_VOICE_BYTES:
+                    return web.json_response(
+                        {"ok": False, "error": "audio_too_large", "max_bytes": MAX_VOICE_BYTES},
+                        status=413,
+                    )
+        elif name == "context":
+            context = (await part.text()).strip() or None
+        elif name == "client_id":
+            client_id = (await part.text()).strip() or None
+
+    if not audio:
+        return web.json_response({"ok": False, "error": "empty_audio"}, status=400)
+
+    if client_id is not None:
+        if len(client_id) > 64 or not all(ch.isalnum() or ch in "-_" for ch in client_id):
+            return web.json_response({"ok": False, "error": "invalid_client_id"}, status=400)
+
+    if context is not None and len(context) > MAX_CAPTURE_LEN * 4:
+        return web.json_response({"ok": False, "error": "context_too_long"}, status=413)
+
+    try:
+        transcript = await llm.transcribe_audio(
+            audio_bytes=bytes(audio),
+            filename=filename,
+            mime_type=mime_type,
+        )
+    except Exception:
+        return web.json_response({"ok": False, "error": "transcription_failed"}, status=502)
+
+    transcript = str(transcript or "").strip()
+    if not transcript:
+        return web.json_response({"ok": False, "error": "empty_transcript"}, status=422)
+    if len(transcript) > MAX_CAPTURE_LEN:
+        transcript = transcript[:MAX_CAPTURE_LEN]
+
+    result = await process_native_capture(
+        text=transcript,
+        deps=ctx.deps,
+        db_pool=pool,
+        chat_id=int(ctx.deps.admin_id or 0),
+        prepend_text=context,
+        source="ios_voice",
+        capture_id=client_id,
+    )
+    result["transcript"] = transcript
+    return web.json_response(result, status=200 if result.get("ok") else 400)
 
 
 async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:

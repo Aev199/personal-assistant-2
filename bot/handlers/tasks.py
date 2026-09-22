@@ -227,7 +227,7 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
 
         rows = await conn.fetch(
             """
-            SELECT t.id, t.title, t.status, t.deadline, COALESCE(tm.name,'—') AS assignee
+            SELECT t.id, t.title, t.status, t.kind, t.deadline, COALESCE(tm.name,'—') AS assignee
             FROM tasks t
             LEFT JOIN team tm ON tm.id=t.assignee_id
             WHERE t.parent_task_id=$1 AND t.kind != 'super' AND t.status != 'done'
@@ -278,7 +278,8 @@ async def show_super_task_card(msg: Message, db_pool: asyncpg.Pool, task_id: int
         assignee = (r.get("assignee") or "—").strip()
         dl_local = to_local(r.get("deadline"), tz)
         meta: list[str] = []
-        if not is_personal and not is_solo_mode(persona_mode) and assignee and assignee != "—":
+        child_is_personal = str(r.get("kind") or "task").lower() == "personal"
+        if not child_is_personal and not is_solo_mode(persona_mode) and assignee and assignee != "—":
             meta.append(assignee)
         if dl_local:
             meta.append(dl_local.strftime("%d.%m %H:%M"))

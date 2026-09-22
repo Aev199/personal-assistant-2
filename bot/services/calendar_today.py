@@ -27,7 +27,7 @@ class TodayCalendarSnapshot:
     unavailable: bool = False
 
 
-_CACHE: dict[tuple[str, str, tuple[str, ...]], tuple[float, TodayCalendarSnapshot]] = {}
+_CACHE: dict[tuple[int, str, str, tuple[str, ...]], tuple[float, TodayCalendarSnapshot]] = {}
 
 
 def _dedupe_events(events: list[ICloudVisibleEvent]) -> tuple[ICloudVisibleEvent, ...]:
@@ -85,7 +85,7 @@ async def fetch_today_calendar(
         return TodayCalendarSnapshot(events=(), unavailable=True)
 
     now_local = datetime.now(tz)
-    key = (getattr(tz, "key", str(tz)), now_local.date().isoformat(), urls)
+    key = (id(icloud), getattr(tz, "key", str(tz)), now_local.date().isoformat(), urls)
     cached = _CACHE.get(key)
     now_mono = time.monotonic()
     if cached and cached[0] > now_mono:

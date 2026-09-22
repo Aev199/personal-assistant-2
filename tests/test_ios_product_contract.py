@@ -56,7 +56,8 @@ def test_due_reminders_can_take_attention_without_growing_today():
     assert "15 * 60" in widget
     assert "focusReminder" in home
     assert "focusReminder" in widget
-    assert "4 - nextTasks.count" in home
+    assert "reservedTimed" in home
+    assert "4 - reservedTimed" in home
 
 
 def test_calendar_context_stays_attention_first():

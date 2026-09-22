@@ -39,6 +39,7 @@ jobs:
             tests/test_main_menu_keyboard.py \
             tests/test_home_screen_contract.py \
             tests/test_secondary_surfaces_contract.py \
+            tests/test_deep_navigation_contracts.py \
             tests/test_simple_daily_ui.py \
             tests/test_ideas.py \
             tests/test_freeform_intake.py \
@@ -49,6 +50,7 @@ jobs:
             tests/test_llm_router.py \
             tests/test_onboarding.py \
             tests/test_calendar_today.py \
+            tests/test_today_screen_contract.py \
             tests/test_companion_http.py \
             tests/test_native_intake.py \
             tests/test_ios_product_contract.py \

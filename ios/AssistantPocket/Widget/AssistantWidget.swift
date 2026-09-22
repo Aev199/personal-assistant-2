@@ -7,7 +7,7 @@ private struct WidgetTask: Codable, Identifiable {
     let id: Int
     let title: String
     let project: String
-    let status: String?
+    var status: String?
     let deadline: Date?
     let overdue: Bool
     var focused: Bool? = nil
@@ -83,7 +83,11 @@ private enum WidgetCodec {
             return nil
         }
         for index in today.tasks.indices {
-            today.tasks[index].focused = today.tasks[index].id == taskID
+            let isTarget = today.tasks[index].id == taskID
+            today.tasks[index].focused = isTarget
+            if isTarget {
+                today.tasks[index].status = "in_progress"
+            }
         }
         return encodeToday(today)
     }

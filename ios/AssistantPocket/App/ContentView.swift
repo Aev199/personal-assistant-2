@@ -282,30 +282,36 @@ struct ContentView: View {
     }
 
     private func eventFocusCard(_ event: TodayEvent) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label("Календарь", systemImage: "calendar")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Text(event.title)
-                .font(.title3.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-            Text(event.start, format: .dateTime.hour().minute())
-                + Text("–")
-                + Text(event.end, format: .dateTime.hour().minute())
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 7) {
+                Label("Календарь", systemImage: "calendar")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Text(event.title)
+                    .font(.title3.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(event.start, format: .dateTime.hour().minute())
+                    + Text("–")
+                    + Text(event.end, format: .dateTime.hour().minute())
+            }
+            .font(.subheadline)
+
+            Spacer(minLength: 8)
+
+            Button {
+                Task { await dismiss(event) }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Убрать встречу из внимания")
         }
-        .font(.subheadline)
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 24)
-                .onEnded { value in
-                    let dx = value.translation.width
-                    let dy = value.translation.height
-                    guard dx > 70, abs(dx) > abs(dy) * 1.4 else { return }
-                    Task { await dismiss(event) }
-                }
-        )
     }
 
     private func reminderFocusCard(_ reminder: TodayReminder) -> some View {
@@ -419,17 +425,18 @@ struct ContentView: View {
             .foregroundStyle(.secondary)
 
             Spacer(minLength: 0)
+
+            Button {
+                Task { await dismiss(event) }
+            } label: {
+                Image(systemName: "xmark.circle")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Убрать встречу из внимания")
         }
         .padding(.vertical, 5)
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 24)
-                .onEnded { value in
-                    let dx = value.translation.width
-                    let dy = value.translation.height
-                    guard dx > 70, abs(dx) > abs(dy) * 1.4 else { return }
-                    Task { await dismiss(event) }
-                }
-        )
     }
 
     private func compactReminderRow(_ reminder: TodayReminder) -> some View {

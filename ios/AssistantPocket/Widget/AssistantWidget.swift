@@ -77,6 +77,17 @@ private enum WidgetCodec {
         return encodeToday(today)
     }
 
+    static func cacheFocusedTask(_ taskID: Int) -> Data? {
+        guard let data = WidgetSharedSettings.cachedTodayData,
+              var today = decodeToday(data) else {
+            return nil
+        }
+        for index in today.tasks.indices {
+            today.tasks[index].focused = today.tasks[index].id == taskID
+        }
+        return encodeToday(today)
+    }
+
     static func cacheWithoutEvent(_ eventID: String) -> Data? {
         guard let data = WidgetSharedSettings.cachedTodayData,
               var today = decodeToday(data) else {
@@ -110,6 +121,18 @@ private enum WidgetNetwork {
         let (_, response) = try await send(
             path: "/api/v1/tasks/\(taskID)/done",
             legacyPath: "/api/v1/companion/tasks/\(taskID)/done",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+
+        guard 200..<300 ~= response.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    static func focusTask(taskID: Int) async throws {
+        let (_, response) = try await send(
+            path: "/api/v1/tasks/\(taskID)/focus",
             method: "POST",
             body: Data("{}".utf8)
         )
@@ -224,6 +247,45 @@ struct MarkTaskDoneIntent: AppIntent {
 
         do {
             try await WidgetNetwork.markDone(taskID: taskID)
+            return .result()
+        } catch {
+            if let originalCache {
+                WidgetSharedSettings.writeCachedTodayData(originalCache)
+            } else {
+                WidgetSharedSettings.clearCachedTodayData()
+            }
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            throw error
+        }
+    }
+}
+
+struct FocusTaskIntent: AppIntent {
+    static var title: LocalizedStringResource = "Сделать текущей"
+    static var description = IntentDescription("Назначает задачу текущим фокусом Personal Assistant.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Task ID")
+    var taskID: Int
+
+    init() {}
+
+    init(taskID: Int) {
+        self.taskID = taskID
+    }
+
+    func perform() async throws -> some IntentResult {
+        let originalCache = WidgetSharedSettings.cachedTodayData
+
+        if let optimisticCache = WidgetCodec.cacheFocusedTask(taskID) {
+            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        }
+
+        do {
+            try await WidgetNetwork.focusTask(taskID: taskID)
             return .result()
         } catch {
             if let originalCache {
@@ -662,6 +724,13 @@ private struct AssistantWidgetView: View {
                     .font(.caption2)
                     .foregroundStyle(task.overdue ? .red : .secondary)
             }
+
+            Button(intent: FocusTaskIntent(taskID: task.id)) {
+                Image(systemName: "play.fill")
+                    .font(.caption2)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Сейчас")
         }
     }
 

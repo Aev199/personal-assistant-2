@@ -97,7 +97,8 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
     project = (ROOT / "ios" / "project.yml").read_text(encoding="utf-8")
 
     assert "dismissEvent(eventID: event.id, until: event.end)" in home
-    assert "dx > 70" in home
+    assert "DragGesture" not in home
+    assert 'accessibilityLabel("Убрать встречу из внимания")' in home
     assert "/api/v1/attention/dismiss-event" in api
     assert "DismissCalendarEventIntent" in widget
     assert "xmark.circle.fill" in widget
@@ -127,6 +128,16 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert "manualFocusTask" in widget
     assert "focused == true" in widget
     assert 'Text("+15")' in widget
+
+
+def test_widget_can_promote_visible_next_task_to_now():
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "FocusTaskIntent" in widget
+    assert "WidgetNetwork.focusTask" in widget
+    assert "cacheFocusedTask" in widget
+    assert 'Image(systemName: "play.fill")' in widget
+    assert 'accessibilityLabel("Сейчас")' in widget
 
 
 def test_reminder_delivery_and_widget_state_do_not_compete():

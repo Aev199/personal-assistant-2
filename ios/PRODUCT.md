@@ -22,7 +22,7 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 - A due reminder has one default escape hatch: **+15 мин**. More complex rescheduling stays off the primary surface.
 - Telegram is the reminder delivery channel for now; iOS and the widget are attention/state surfaces. A delivered reminder disappears from native Today on refresh. Native snooze makes the previously delivered Telegram alert inactive instead of leaving two live controls for the same reminder.
 - A meeting that is already in progress, or starts within 15 minutes, may take **Сейчас**. Calendar context stays compact rather than becoming a full calendar screen.
-- Acknowledging a calendar event hides it from attention until the event ends; it never deletes or edits the source calendar event. The app uses a swipe on the event card, while the widget uses a compact dismiss button because WidgetKit does not expose arbitrary row swipe gestures.
+- Acknowledging a calendar event hides it from attention until the event ends; it never deletes or edits the source calendar event. Both the app and widget use a compact explicit dismiss control; the primary surface does not depend on hidden gestures.
 - **Дальше** stays deliberately short: at most four rows on the main screen.
 - Safe capture actions happen without a confirmation ceremony.
 - Ask one concrete follow-up only when required information is genuinely missing.
@@ -48,7 +48,7 @@ Free-form input is sent to the backend intake service, which uses the same Gemin
 
 ## Channel roles
 
-- **Widget:** glance, Quick Done, refresh, text capture and one-tap entry into voice capture.
+- **Widget:** glance, Quick Done, one-tap **Сейчас** for visible next tasks, refresh, text capture and one-tap entry into voice capture.
 - **iOS:** today, capture, choose focus, correct a task, browse/search active work, review saved ideas secondarily.
 - **Telegram:** conversational commands, bulk operations and richer interaction while at a PC.
 - **Backend:** canonical state, attention ordering, intake, mutations and integrations.

@@ -83,7 +83,8 @@ def test_today_uses_explicit_attention_navigation_and_relative_dates():
     assert 'Button("Изменить")' in home
     assert 'Button("Все задачи")' in home
     assert "navigationDestination(isPresented: $showAllTasks)" in home
-    assert "dx < -70" not in home
+    assert "DragGesture(minimumDistance: 28)" in home
+    assert "dx < -90" in home
     assert "taskDeadlineText(deadline)" in home
     assert "taskDeadlineText(deadline)" in tasks
     assert '"сегодня' in deadline
@@ -97,8 +98,8 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
     project = (ROOT / "ios" / "project.yml").read_text(encoding="utf-8")
 
     assert "dismissEvent(eventID: event.id, until: event.end)" in home
-    assert "DragGesture" not in home
     assert 'accessibilityLabel("Убрать встречу из внимания")' in home
+    assert "dx > 70" not in home
     assert "/api/v1/attention/dismiss-event" in api
     assert "DismissCalendarEventIntent" in widget
     assert "xmark.circle.fill" in widget
@@ -164,6 +165,8 @@ def test_voice_capture_is_fast_shared_and_loss_resistant():
     assert 'mode == "voice"' in home
 
     assert "/api/v1/intake/audio" in api
+    assert "/api/v1/companion/intake/audio" in api
+    assert "Сервер Assistant не обновлён" in api
     assert "multipart/form-data" in api
     assert "assistantpocket://capture?mode=voice" in widget
     assert '"mic.circle.fill"' in widget

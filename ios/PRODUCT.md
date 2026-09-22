@@ -33,7 +33,7 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 ## Interface rules
 
 - No permanent tab bar unless real usage proves one is necessary.
-- Important navigation is explicit, not gesture-only: **Изменить** beside **Сейчас** opens a searchable list of all active tasks, and **Все задачи** beside **Дальше** opens the backlog. Swipes are optional accelerators for local row actions only.
+- Important navigation is explicit, not gesture-only: **Изменить** beside **Сейчас** opens a searchable list of all active tasks, and **Все задачи** beside **Дальше** opens the backlog. A deliberate left swipe on **Сегодня** is also a fast accelerator into the backlog; local meeting actions stay explicit rather than gesture-only.
 - Task deadlines always include day context: today/tomorrow or an explicit calendar date.
 - No chat clone in the native app.
 - No model picker, AI badge, “thinking” copy, generated summaries of obvious UI state, or decorative assistant persona.

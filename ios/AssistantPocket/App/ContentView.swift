@@ -138,6 +138,16 @@ struct ContentView: View {
                 }
                 .environmentObject(settings)
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 28)
+                    .onEnded { value in
+                        guard !captureFocused else { return }
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        guard dx < -90, abs(dx) > abs(dy) * 1.6 else { return }
+                        showAllTasks = true
+                    }
+            )
             .refreshable {
                 await loadToday()
             }

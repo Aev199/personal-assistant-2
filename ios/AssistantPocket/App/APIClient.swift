@@ -203,13 +203,40 @@ struct APIClient {
         body.append(audioData)
         append("\r\n--\(boundary)--\r\n")
 
-        var req = try request(path: "/api/v1/intake/audio", method: "POST")
-        req.timeoutInterval = 60
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        req.httpBody = body
+        func voiceRequest(path: String) throws -> URLRequest {
+            var req = try request(path: path, method: "POST")
+            req.timeoutInterval = 60
+            req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            req.httpBody = body
+            return req
+        }
 
-        let (data, response) = try await URLSession.shared.data(for: req)
-        return try decode(NativeIntakeResponse.self, data: data, response: response)
+        let primary = try voiceRequest(path: "/api/v1/intake/audio")
+        let (primaryData, primaryResponse) = try await URLSession.shared.data(for: primary)
+
+        if let http = primaryResponse as? HTTPURLResponse, http.statusCode == 404 {
+            let legacy = try voiceRequest(path: "/api/v1/companion/intake/audio")
+            let (legacyData, legacyResponse) = try await URLSession.shared.data(for: legacy)
+
+            if let legacyHTTP = legacyResponse as? HTTPURLResponse, legacyHTTP.statusCode == 404 {
+                throw APIClientError.http(
+                    404,
+                    "Сервер Assistant не обновлён: голосовой ввод ещё не поддерживается."
+                )
+            }
+
+            return try decode(
+                NativeIntakeResponse.self,
+                data: legacyData,
+                response: legacyResponse
+            )
+        }
+
+        return try decode(
+            NativeIntakeResponse.self,
+            data: primaryData,
+            response: primaryResponse
+        )
     }
 
     func loadPendingIntake() async throws -> NativePendingListResponse {

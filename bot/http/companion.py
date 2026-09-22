@@ -303,6 +303,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     # Compatibility for already installed companion builds.
     app.router.add_get("/api/v1/companion/today", _today)
     app.router.add_post("/api/v1/companion/capture", _capture)
+    app.router.add_post("/api/v1/companion/intake/audio", _voice_intake)
     app.router.add_post("/api/v1/companion/tasks/{task_id}/done", _done)
 
 

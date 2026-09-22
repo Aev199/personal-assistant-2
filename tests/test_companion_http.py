@@ -33,6 +33,7 @@ def test_assistant_routes_include_canonical_and_legacy_aliases():
 
     assert ("GET", "/api/v1/companion/today") in routes
     assert ("POST", "/api/v1/companion/capture") in routes
+    assert ("POST", "/api/v1/companion/intake/audio") in routes
     assert ("POST", "/api/v1/companion/tasks/{task_id}/done") in routes
 
 

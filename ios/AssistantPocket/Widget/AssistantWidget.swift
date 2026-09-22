@@ -10,9 +10,14 @@ private struct WidgetTask: Codable, Identifiable {
     let status: String?
     let deadline: Date?
     let overdue: Bool
+    var focused: Bool? = nil
 
     var inProgress: Bool {
         status?.lowercased() == "in_progress"
+    }
+
+    var isFocused: Bool {
+        focused == true
     }
 }
 
@@ -82,6 +87,15 @@ private enum WidgetCodec {
         today.events = events
         return encodeToday(today)
     }
+
+    static func cacheWithoutReminder(_ reminderID: Int) -> Data? {
+        guard let data = WidgetSharedSettings.cachedTodayData,
+              var today = decodeToday(data) else {
+            return nil
+        }
+        today.reminders.removeAll { $0.id == reminderID }
+        return encodeToday(today)
+    }
 }
 
 private enum WidgetNetwork {
@@ -116,6 +130,19 @@ private enum WidgetNetwork {
         )
         let (_, response) = try await send(
             path: "/api/v1/attention/dismiss-event",
+            method: "POST",
+            body: body
+        )
+
+        guard 200..<300 ~= response.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    static func snoozeReminder(reminderID: Int) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["minutes": 15])
+        let (_, response) = try await send(
+            path: "/api/v1/reminders/\(reminderID)/snooze",
             method: "POST",
             body: body
         )
@@ -240,6 +267,45 @@ struct DismissCalendarEventIntent: AppIntent {
 
         do {
             try await WidgetNetwork.dismissEvent(eventID: eventID, until: eventEnd)
+            return .result()
+        } catch {
+            if let originalCache {
+                WidgetSharedSettings.writeCachedTodayData(originalCache)
+            } else {
+                WidgetSharedSettings.clearCachedTodayData()
+            }
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            throw error
+        }
+    }
+}
+
+struct SnoozeReminderIntent: AppIntent {
+    static var title: LocalizedStringResource = "Отложить напоминание"
+    static var description = IntentDescription("Откладывает напоминание на 15 минут.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Reminder ID")
+    var reminderID: Int
+
+    init() {}
+
+    init(reminderID: Int) {
+        self.reminderID = reminderID
+    }
+
+    func perform() async throws -> some IntentResult {
+        let originalCache = WidgetSharedSettings.cachedTodayData
+
+        if let optimisticCache = WidgetCodec.cacheWithoutReminder(reminderID) {
+            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        }
+
+        do {
+            try await WidgetNetwork.snoozeReminder(reminderID: reminderID)
             return .result()
         } catch {
             if let originalCache {
@@ -393,11 +459,17 @@ private struct AssistantWidgetView: View {
         family == .systemLarge ? 5 : 3
     }
 
+    private var manualFocusTask: WidgetTask? {
+        entry.tasks.first(where: { $0.isFocused })
+    }
+
     private var activeEvent: WidgetEvent? {
-        entry.events.first { $0.start <= entry.date && $0.end > entry.date }
+        guard manualFocusTask == nil else { return nil }
+        return entry.events.first { $0.start <= entry.date && $0.end > entry.date }
     }
 
     private var dueSoonReminder: WidgetReminder? {
+        guard manualFocusTask == nil else { return nil }
         let cutoff = entry.date.addingTimeInterval(15 * 60)
         return entry.reminders.first(where: { reminder in
             guard let at = reminder.at else { return false }
@@ -406,7 +478,7 @@ private struct AssistantWidgetView: View {
     }
 
     private var upcomingEvent: WidgetEvent? {
-        guard activeEvent == nil, dueSoonReminder == nil else { return nil }
+        guard manualFocusTask == nil, activeEvent == nil, dueSoonReminder == nil else { return nil }
         let cutoff = entry.date.addingTimeInterval(15 * 60)
         return entry.events.first { $0.end > entry.date && $0.start <= cutoff }
     }
@@ -414,14 +486,17 @@ private struct AssistantWidgetView: View {
     private var focusEvent: WidgetEvent? {
         if let activeEvent { return activeEvent }
         if let upcomingEvent { return upcomingEvent }
-        if entry.tasks.isEmpty && entry.reminders.isEmpty { return entry.events.first }
         return nil
     }
 
     private var focusReminder: WidgetReminder? {
-        guard activeEvent == nil else { return nil }
-        if let dueSoonReminder { return dueSoonReminder }
-        return focusEvent == nil && entry.tasks.isEmpty ? entry.reminders.first : nil
+        guard manualFocusTask == nil, activeEvent == nil else { return nil }
+        return dueSoonReminder
+    }
+
+    private var focusTaskItem: WidgetTask? {
+        if let manualFocusTask { return manualFocusTask }
+        return focusEvent == nil && focusReminder == nil ? entry.tasks.first : nil
     }
 
     var body: some View {
@@ -460,10 +535,10 @@ private struct AssistantWidgetView: View {
                 }
 
                 Spacer(minLength: 0)
-            } else if let focus = entry.tasks.first {
+            } else if let focus = focusTaskItem {
                 focusTask(focus)
 
-                let rest = Array(entry.tasks.dropFirst().prefix(max(0, visibleTaskCount - 1)))
+                let rest = Array(entry.tasks.filter { $0.id != focus.id }.prefix(max(0, visibleTaskCount - 1)))
                 if !rest.isEmpty {
                     Text("Дальше")
                         .font(.caption2.weight(.semibold))
@@ -480,12 +555,6 @@ private struct AssistantWidgetView: View {
                     compactReminder(reminder)
                 }
 
-                Spacer(minLength: 0)
-            } else if let reminder = entry.reminders.first {
-                focusReminderView(reminder)
-                Spacer(minLength: 0)
-            } else if let event = entry.events.first {
-                focusEventView(event)
                 Spacer(minLength: 0)
             } else {
                 emptyState
@@ -628,20 +697,31 @@ private struct AssistantWidgetView: View {
     }
 
     private func focusReminderView(_ reminder: WidgetReminder) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label("Напоминание", systemImage: "bell.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Text(reminder.text)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-
-            if let at = reminder.at {
-                Text(at, format: .dateTime.hour().minute())
-                    .font(.caption2)
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Напоминание", systemImage: "bell.fill")
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
+
+                Text(reminder.text)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+
+                if let at = reminder.at {
+                    Text(at, format: .dateTime.hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
+
+            Spacer(minLength: 0)
+
+            Button(intent: SnoozeReminderIntent(reminderID: reminder.id)) {
+                Text("+15")
+                    .font(.caption2.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Отложить на 15 минут")
         }
     }
 
@@ -662,6 +742,13 @@ private struct AssistantWidgetView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+
+            Button(intent: SnoozeReminderIntent(reminderID: reminder.id)) {
+                Text("+15")
+                    .font(.caption2.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Отложить на 15 минут")
         }
     }
 

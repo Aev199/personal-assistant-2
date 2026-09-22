@@ -21,6 +21,7 @@ from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
 from bot.services.calendar_today import TodayCalendarSnapshot, fetch_today_calendar
+from bot.services.reminders import snooze_reminder
 from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
 
 
@@ -273,6 +274,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _dismiss_event(request: web.Request) -> web.StreamResponse:
         return await handle_event_dismiss(request, ctx)
 
+    async def _snooze_reminder(request: web.Request) -> web.StreamResponse:
+        return await handle_reminder_snooze(request, ctx)
+
     # Canonical client API.
     app.router.add_get("/api/v1/today", _today)
     app.router.add_get("/api/v1/tasks", _tasks)
@@ -289,6 +293,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/tasks/{task_id}/focus", _focus)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
     app.router.add_post("/api/v1/attention/dismiss-event", _dismiss_event)
+    app.router.add_post("/api/v1/reminders/{reminder_id}/snooze", _snooze_reminder)
 
     # Compatibility for already installed companion builds.
     app.router.add_get("/api/v1/companion/today", _today)
@@ -477,6 +482,59 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             "reminders": reminders,
             "events": events,
             "calendar_unavailable": bool(calendar_snapshot.unavailable),
+        }
+    )
+
+
+async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        reminder_id = int(request.match_info["reminder_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_reminder_id"}, status=400)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    try:
+        minutes = int(payload.get("minutes", 15))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_minutes"}, status=400)
+    if minutes != 15:
+        return web.json_response({"ok": False, "error": "unsupported_minutes"}, status=400)
+
+    async with pool.acquire() as conn:
+        result = await snooze_reminder(
+            conn,
+            reminder_id=reminder_id,
+            minutes=minutes,
+            fallback_chat_id=int(ctx.deps.admin_id or 0),
+            tz_name=ctx.deps.tz_name,
+            store_tz=bool(getattr(ctx.deps, "db_reminders_remind_at_timestamptz", False)),
+        )
+
+    if result is None:
+        return web.json_response({"ok": False, "error": "reminder_not_found"}, status=404)
+
+    new_id, new_time, _label = result
+    return web.json_response(
+        {
+            "ok": True,
+            "status": "snoozed",
+            "reminder_id": reminder_id,
+            "new_reminder_id": new_id,
+            "at": new_time.isoformat(),
+            "minutes": minutes,
         }
     )
 

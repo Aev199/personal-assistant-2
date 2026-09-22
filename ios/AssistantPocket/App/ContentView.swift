@@ -21,14 +21,21 @@ struct ContentView: View {
     @State private var isFlushingOutbox = false
     @State private var editingTask: TodayTask?
     @State private var showAllTasks = false
+    @State private var showFocusPicker = false
     @FocusState private var captureFocused: Bool
 
+    private var manualFocusTask: TodayTask? {
+        tasks.first(where: { $0.isFocused })
+    }
+
     private var activeEvent: TodayEvent? {
+        guard manualFocusTask == nil else { return nil }
         let now = Date()
         return events.first { $0.start <= now && $0.end > now }
     }
 
     private var dueSoonReminder: TodayReminder? {
+        guard manualFocusTask == nil else { return nil }
         let cutoff = Date().addingTimeInterval(15 * 60)
         return reminders.first(where: { reminder in
             guard let at = reminder.at else { return false }
@@ -37,7 +44,7 @@ struct ContentView: View {
     }
 
     private var upcomingEvent: TodayEvent? {
-        guard activeEvent == nil, dueSoonReminder == nil else { return nil }
+        guard manualFocusTask == nil, activeEvent == nil, dueSoonReminder == nil else { return nil }
         let now = Date()
         let cutoff = now.addingTimeInterval(15 * 60)
         return events.first { $0.end > now && $0.start <= cutoff }
@@ -46,22 +53,22 @@ struct ContentView: View {
     private var focusEvent: TodayEvent? {
         if let activeEvent { return activeEvent }
         if let upcomingEvent { return upcomingEvent }
-        if tasks.isEmpty && reminders.isEmpty { return events.first }
         return nil
     }
 
     private var focusReminder: TodayReminder? {
-        guard activeEvent == nil else { return nil }
-        if let dueSoonReminder { return dueSoonReminder }
-        return focusEvent == nil && tasks.isEmpty ? reminders.first : nil
+        guard manualFocusTask == nil, activeEvent == nil else { return nil }
+        return dueSoonReminder
     }
 
     private var focusTask: TodayTask? {
-        focusEvent == nil && focusReminder == nil ? tasks.first : nil
+        if let manualFocusTask { return manualFocusTask }
+        return focusEvent == nil && focusReminder == nil ? tasks.first : nil
     }
 
     private var remainingTasks: [TodayTask] {
-        focusTask == nil ? tasks : Array(tasks.dropFirst())
+        guard let focusTask else { return tasks }
+        return tasks.filter { $0.id != focusTask.id }
     }
 
     private var remainingReminders: [TodayReminder] {
@@ -186,8 +193,23 @@ struct ContentView: View {
     private var focusSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Сейчас")
-                    .font(.headline)
+                Button {
+                    if !tasks.isEmpty {
+                        showFocusPicker = true
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text("Сейчас")
+                            .font(.headline)
+                        if !tasks.isEmpty {
+                            Image(systemName: "chevron.down")
+                                .font(.caption2.weight(.semibold))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Изменить текущую задачу")
+
                 Spacer()
                 if isLoading {
                     ProgressView()
@@ -215,6 +237,18 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+        }
+        .confirmationDialog(
+            "Что сейчас?",
+            isPresented: $showFocusPicker,
+            titleVisibility: .visible
+        ) {
+            ForEach(Array(tasks.prefix(5))) { task in
+                Button(task.isFocused ? "✓ \(task.title)" : task.title) {
+                    Task { await setFocus(task) }
+                }
+            }
+            Button("Отмена", role: .cancel) {}
         }
     }
 
@@ -281,17 +315,28 @@ struct ContentView: View {
     }
 
     private func reminderFocusCard(_ reminder: TodayReminder) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label("Напоминание", systemImage: "bell.fill")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Text(reminder.text)
-                .font(.title3.weight(.semibold))
-            if let at = reminder.at {
-                Text(at, format: .dateTime.hour().minute())
-                    .font(.subheadline)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 7) {
+                Label("Напоминание", systemImage: "bell.fill")
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                Text(reminder.text)
+                    .font(.title3.weight(.semibold))
+                if let at = reminder.at {
+                    Text(at, format: .dateTime.hour().minute())
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
+
+            Spacer(minLength: 0)
+
+            Button("+15") {
+                Task { await snooze(reminder) }
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .accessibilityLabel("Отложить на 15 минут")
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -400,6 +445,14 @@ struct ContentView: View {
             }
 
             Spacer(minLength: 0)
+
+            Button("+15") {
+                Task { await snooze(reminder) }
+            }
+            .buttonStyle(.plain)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Отложить на 15 минут")
         }
         .padding(.vertical, 5)
     }
@@ -719,6 +772,35 @@ struct ContentView: View {
             withAnimation {
                 pendingIntake.removeAll { $0.id == pending.id }
             }
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func setFocus(_ task: TodayTask) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.focusTask(taskID: task.id)
+            await loadToday()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func snooze(_ reminder: TodayReminder) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.snoozeReminder(reminderID: reminder.id, minutes: 15)
+            withAnimation {
+                reminders.removeAll { $0.id == reminder.id }
+            }
+            confirmation = "Отложено на 15 минут"
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)
         }

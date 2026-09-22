@@ -22,6 +22,11 @@ class _Conn:
     async def execute(self, _query, *_args):
         return "OK"
 
+    async def fetchval(self, query, *_args):
+        if "INSERT INTO reminders" in query:
+            return 99
+        raise AssertionError(f"Unexpected fetchval query: {query}")
+
     def transaction(self):
         return _Tx()
 

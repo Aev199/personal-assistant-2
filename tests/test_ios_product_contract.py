@@ -106,6 +106,25 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
     assert "Shared/TaskDeadlineFormatting.swift" in project
 
 
+def test_now_can_be_changed_and_reminders_can_be_snoozed():
+    home = _read("App/ContentView.swift")
+    api = _read("App/APIClient.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert 'confirmationDialog(' in home
+    assert '"Что сейчас?"' in home
+    assert "manualFocusTask" in home
+    assert "focusTask(taskID: task.id)" in home
+    assert "snoozeReminder(reminderID: reminder.id, minutes: 15)" in home
+    assert "/api/v1/reminders/\\(reminderID)/snooze" in api
+
+    assert "SnoozeReminderIntent" in widget
+    assert "cacheWithoutReminder" in widget
+    assert "manualFocusTask" in widget
+    assert "focused == true" in widget
+    assert 'Text("+15")' in widget
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

@@ -28,6 +28,7 @@ def test_assistant_routes_include_canonical_and_legacy_aliases():
     assert ("POST", "/api/v1/tasks/{task_id}/focus") in routes
     assert ("POST", "/api/v1/tasks/{task_id}/done") in routes
     assert ("POST", "/api/v1/attention/dismiss-event") in routes
+    assert ("POST", "/api/v1/reminders/{reminder_id}/snooze") in routes
 
     assert ("GET", "/api/v1/companion/today") in routes
     assert ("POST", "/api/v1/companion/capture") in routes

@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.db.runtime_state import record_action_journal
 from bot.deps import AppDeps
+from bot.services.reminders import reschedule_reminder
 from bot.tz import to_db_utc, resolve_tz_name
 from zoneinfo import ZoneInfo
 from bot.ui.state import ui_get_state, _ui_payload_get, ui_payload_with_toast, ui_set_state
@@ -89,13 +90,6 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
         if journal_id is None:
             return await callback.answer("Уже обработано")
 
-        row = await conn.fetchrow(
-            "SELECT text, chat_id FROM reminders WHERE id=$1",
-            int(rem_id),
-        )
-        if not row:
-            return await callback.answer("Напоминание не найдено", show_alert=True)
-
         now_utc = datetime.now(timezone.utc)
         tz = ZoneInfo(resolve_tz_name(deps.tz_name or "Europe/Moscow"))
         now_local = now_utc.astimezone(tz)
@@ -123,41 +117,16 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
                 snooze_text = f"{hours} ч" if mins % 60 == 0 else f"{hours} ч {mins % 60} мин"
             else:
                 snooze_text = f"{mins} мин"
-        new_time_db = to_db_utc(
-            new_time,
+        new_id = await reschedule_reminder(
+            conn,
+            reminder_id=rem_id,
+            new_time_utc=new_time,
+            fallback_chat_id=int(callback.message.chat.id),
             tz_name=deps.tz_name,
             store_tz=bool(getattr(deps, "db_reminders_remind_at_timestamptz", False)),
         )
-        async with conn.transaction():
-            await conn.execute(
-                """
-                UPDATE reminders
-                SET status='cancelled',
-                    cancelled_at_utc=NOW(),
-                    claim_token=NULL,
-                    claimed_at_utc=NULL
-                WHERE id=$1
-                """,
-                int(rem_id),
-            )
-            await conn.execute(
-                """
-                INSERT INTO reminders (
-                    chat_id,
-                    text,
-                    remind_at,
-                    repeat,
-                    status,
-                    next_attempt_at_utc,
-                    is_sent
-                )
-                VALUES ($1, $2, $3, 'none', 'pending', $4, FALSE)
-                """,
-                int(row["chat_id"] or callback.message.chat.id),
-                str(row["text"] or ""),
-                new_time_db,
-                new_time,
-            )
+        if new_id is None:
+            return await callback.answer("Напоминание не найдено", show_alert=True)
 
         ui_state = await ui_get_state(conn, int(callback.message.chat.id))
         payload = _ui_payload_get(ui_state)

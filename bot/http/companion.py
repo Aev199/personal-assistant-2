@@ -20,7 +20,7 @@ from bot.db import db_add_event, ensure_inbox_project_id
 from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
-from bot.services.calendar_today import fetch_today_calendar
+from bot.services.calendar_today import TodayCalendarSnapshot, fetch_today_calendar
 from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
 
 
@@ -68,6 +68,33 @@ def _auth_error(*, allow_widget: bool = False) -> web.Response:
 
 def _utc_naive(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+async def _calendar_snapshot_with_budget(
+    task: asyncio.Task,
+    *,
+    timeout_sec: float = 1.0,
+) -> TodayCalendarSnapshot:
+    """Keep /today responsive even when CalDAV is cold.
+
+    The unfinished task is deliberately left running so it can populate the
+    short calendar cache for the next app/widget refresh.
+    """
+    done, _pending = await asyncio.wait({task}, timeout=max(0.0, float(timeout_sec)))
+    if task in done:
+        try:
+            return task.result()
+        except Exception:
+            return TodayCalendarSnapshot(events=(), unavailable=True)
+
+    def _consume_result(completed: asyncio.Task) -> None:
+        try:
+            completed.result()
+        except Exception:
+            pass
+
+    task.add_done_callback(_consume_result)
+    return TodayCalendarSnapshot(events=(), unavailable=False)
 
 
 def _utc_aware(value: datetime | None) -> datetime | None:
@@ -330,7 +357,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             }
         )
 
-    calendar_snapshot = await calendar_task
+    calendar_snapshot = await _calendar_snapshot_with_budget(calendar_task)
     events = []
     for event in calendar_snapshot.events:
         event_start_utc = _utc_aware(event.dtstart_utc)

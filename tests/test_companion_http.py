@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -145,3 +146,22 @@ def test_attention_selector_keeps_explicit_focus_first():
     )
 
     assert [row["id"] for row in selected][:2] == [21, 20]
+
+
+def test_calendar_snapshot_budget_does_not_block_today():
+    async def scenario():
+        expected = companion.TodayCalendarSnapshot(events=(), unavailable=False)
+
+        async def slow_calendar():
+            await asyncio.sleep(0.02)
+            return expected
+
+        task = asyncio.create_task(slow_calendar())
+        immediate = await companion._calendar_snapshot_with_budget(task, timeout_sec=0)
+
+        assert immediate.events == ()
+        assert immediate.unavailable is False
+        assert task.cancelled() is False
+        assert await task == expected
+
+    asyncio.run(scenario())

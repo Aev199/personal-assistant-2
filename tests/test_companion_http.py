@@ -83,6 +83,22 @@ def test_widget_token_does_not_grant_capture_scope(monkeypatch):
     assert companion._authorized(request, allow_widget=True) is True
 
 
+def test_focus_endpoint_allows_widget_scope():
+    source = companion.handle_task_focus.__code__
+    names = set(source.co_names)
+
+    assert "_authorized" in names
+    assert "_auth_error" in names
+
+    focus_source = open(companion.__file__, encoding="utf-8").read()
+    start = focus_source.index("async def handle_task_focus")
+    end = focus_source.index("async def handle_task_done", start)
+    focus_block = focus_source[start:end]
+
+    assert "_authorized(request, allow_widget=True)" in focus_block
+    assert "_auth_error(allow_widget=True)" in focus_block
+
+
 def test_utc_aware_normalizes_naive_and_aware_values():
     naive = datetime(2026, 9, 12, 10, 30)
     aware = datetime(2026, 9, 12, 12, 30, tzinfo=timezone.utc)

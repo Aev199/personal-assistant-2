@@ -1225,8 +1225,8 @@ async def handle_capture(request: web.Request, ctx) -> web.StreamResponse:
 
 
 async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request):
-        return _auth_error()
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:

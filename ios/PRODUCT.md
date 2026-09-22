@@ -17,6 +17,8 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 - Capture must survive bad network, VPN changes, app suspension and accidental interruption.
 - An unfinished capture must survive relaunch.
 - There is one explicit current focus. Choosing a new focus must not require reorganizing the backlog.
+- A reminder that is due or within 15 minutes may temporarily take **Сейчас**; it must not be buried behind ordinary tasks.
+- **Дальше** stays deliberately short: at most four rows on the main screen.
 - Safe capture actions happen without a confirmation ceremony.
 - Ask one concrete follow-up only when required information is genuinely missing.
 - Calendar creation is confirmed because it is an external side effect.

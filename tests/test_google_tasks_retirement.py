@@ -59,3 +59,16 @@ def test_google_export_is_not_offered_in_task_relations():
     tasks = _read("bot/handlers/tasks.py")
     assert "📤 В Google Tasks" not in tasks
     assert "🔄 Обновить Google Tasks" not in tasks
+
+
+def test_retired_google_tasks_files_are_removed():
+    retired = [
+        "bot/adapters/google_tasks_adapter.py",
+        "bot/services/gtasks_service.py",
+        "scripts/get_google_refresh_token.py",
+        "scripts/get_google_refresh_token.exe",
+        "scripts/get_google_refresh_token.dist",
+        "tests/test_google_tasks_adapter.py",
+    ]
+    for relative in retired:
+        assert not (ROOT / relative).exists(), relative

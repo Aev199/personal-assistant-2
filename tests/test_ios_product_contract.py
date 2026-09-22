@@ -48,6 +48,17 @@ def test_widget_shared_keychain_does_not_hardcode_app_group_as_access_group():
     assert 'service = "com.aev199.assistantpocket.widget-shared"' in source
 
 
+def test_due_reminders_can_take_attention_without_growing_today():
+    home = _read("App/ContentView.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "15 * 60" in home
+    assert "15 * 60" in widget
+    assert "focusReminder" in home
+    assert "focusReminder" in widget
+    assert "4 - nextTasks.count" in home
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

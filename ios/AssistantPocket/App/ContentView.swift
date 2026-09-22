@@ -21,8 +21,39 @@ struct ContentView: View {
     @State private var editingTask: TodayTask?
     @FocusState private var captureFocused: Bool
 
-    private var focusTask: TodayTask? { tasks.first }
-    private var nextTasks: [TodayTask] { Array(tasks.dropFirst()) }
+    private var focusReminder: TodayReminder? {
+        let cutoff = Date().addingTimeInterval(15 * 60)
+        if let dueSoon = reminders.first(where: { reminder in
+            guard let at = reminder.at else { return false }
+            return at <= cutoff
+        }) {
+            return dueSoon
+        }
+        return tasks.isEmpty ? reminders.first : nil
+    }
+
+    private var focusTask: TodayTask? {
+        focusReminder == nil ? tasks.first : nil
+    }
+
+    private var remainingTasks: [TodayTask] {
+        focusTask == nil ? tasks : Array(tasks.dropFirst())
+    }
+
+    private var remainingReminders: [TodayReminder] {
+        guard let focusReminder else { return reminders }
+        return reminders.filter { $0.id != focusReminder.id }
+    }
+
+    private var nextTasks: [TodayTask] {
+        let limit = remainingReminders.isEmpty ? 4 : 3
+        return Array(remainingTasks.prefix(limit))
+    }
+
+    private var nextReminders: [TodayReminder] {
+        let slots = max(0, 4 - nextTasks.count)
+        return Array(remainingReminders.prefix(slots))
+    }
 
     var body: some View {
         NavigationStack {
@@ -126,17 +157,14 @@ struct ContentView: View {
                 }
             }
 
-            if let task = focusTask {
-                focusTaskCard(task)
-            } else if let reminder = reminders.first {
+            if let reminder = focusReminder {
                 reminderFocusCard(reminder)
+            } else if let task = focusTask {
+                focusTaskCard(task)
             } else if settings.isConfigured && !isLoading {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("Ничего обязательного")
                         .font(.title3.weight(.semibold))
-                    Text("Можно спокойно выбрать следующее дело или быстро записать новое.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -179,11 +207,6 @@ struct ContentView: View {
                 .accessibilityLabel("Выполнено")
             }
 
-            if task.inProgress {
-                Label("В работе", systemImage: "play.fill")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -210,9 +233,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var nextSection: some View {
-        let visibleReminders = focusTask == nil ? Array(reminders.dropFirst()) : reminders
-
-        if !nextTasks.isEmpty || !visibleReminders.isEmpty {
+        if !nextTasks.isEmpty || !nextReminders.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Дальше")
                     .font(.headline)
@@ -221,7 +242,7 @@ struct ContentView: View {
                     compactTaskRow(task)
                 }
 
-                ForEach(visibleReminders) { reminder in
+                ForEach(nextReminders) { reminder in
                     compactReminderRow(reminder)
                 }
             }

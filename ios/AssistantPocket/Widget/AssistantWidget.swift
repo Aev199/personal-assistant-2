@@ -303,12 +303,38 @@ private struct AssistantWidgetView: View {
         family == .systemLarge ? 5 : 3
     }
 
+    private var focusReminder: WidgetReminder? {
+        let cutoff = entry.date.addingTimeInterval(15 * 60)
+        if let dueSoon = entry.reminders.first(where: { reminder in
+            guard let at = reminder.at else { return false }
+            return at <= cutoff
+        }) {
+            return dueSoon
+        }
+        return entry.tasks.isEmpty ? entry.reminders.first : nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: family == .systemLarge ? 10 : 7) {
             header
 
             if let error = entry.error {
                 errorState(error)
+            } else if let reminder = focusReminder {
+                focusReminderView(reminder)
+
+                let rest = Array(entry.tasks.prefix(max(0, visibleTaskCount - 1)))
+                if !rest.isEmpty {
+                    Text("Дальше")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(rest) { task in
+                        compactTask(task)
+                    }
+                }
+
+                Spacer(minLength: 0)
             } else if let focus = entry.tasks.first {
                 focusTask(focus)
 
@@ -329,7 +355,7 @@ private struct AssistantWidgetView: View {
 
                 Spacer(minLength: 0)
             } else if let reminder = entry.reminders.first {
-                focusReminder(reminder)
+                focusReminderView(reminder)
                 Spacer(minLength: 0)
             } else {
                 emptyState
@@ -425,7 +451,7 @@ private struct AssistantWidgetView: View {
         .foregroundStyle(.secondary)
     }
 
-    private func focusReminder(_ reminder: WidgetReminder) -> some View {
+    private func focusReminderView(_ reminder: WidgetReminder) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Label("Напоминание", systemImage: "bell.fill")
                 .font(.caption2.weight(.semibold))

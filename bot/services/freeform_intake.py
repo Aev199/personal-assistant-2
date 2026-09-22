@@ -1114,9 +1114,6 @@ async def _execute_pending_intent(
         )
 
     if action == "personal_task":
-        gtasks = getattr(deps, "gtasks", None)
-        if gtasks is None or not gtasks.enabled():
-            return False
         due_local = _parse_local_dt(intent.deadline_local, tz_name) if intent.deadline_local else None
 
         personal_fingerprint = _llm_fingerprint("personal_task", title=intent.title, due=due_local)
@@ -1191,9 +1188,6 @@ async def _execute_pending_intent(
         )
 
     if action == "idea":
-        gtasks = getattr(deps, "gtasks", None)
-        if gtasks is None or not gtasks.enabled():
-            return False
         idea_fingerprint = _llm_fingerprint("idea", idea_text=intent.idea_text)
         duplicate = await _find_recent_duplicate(db_pool, int(message.chat.id), idea_fingerprint)
         if duplicate:

@@ -33,8 +33,6 @@ def task_card_kb(
     parent_task_id: int | None,
     status: str,
     *,
-    in_gtasks: bool = False,
-    gtasks_dirty: bool = False,
     expanded: bool = False,
     subtasks: list[tuple[int, str]] | None = None,
     is_inbox: bool = False,
@@ -45,7 +43,7 @@ def task_card_kb(
     is_personal: bool = False,
 ) -> InlineKeyboardMarkup:
     """Keep daily task actions small; legacy capabilities stay in handlers."""
-    del in_gtasks, gtasks_dirty, subtasks, is_inbox
+    del subtasks, is_inbox
 
     status = (status or "todo").lower()
     fallback_back_cb = f"task:{int(parent_task_id)}" if parent_task_id else f"proj:{int(project_id)}"

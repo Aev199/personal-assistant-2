@@ -56,7 +56,6 @@ def make_on_startup(
     *,
     dp: Dispatcher,
     cloud,
-    gtasks,
     icloud,
     llm,
     database_url: str,
@@ -323,7 +322,7 @@ def make_on_startup(
     return _on_startup
 
 
-def make_on_shutdown(*, dp: Dispatcher, cloud, gtasks, icloud, llm):
+def make_on_shutdown(*, dp: Dispatcher, cloud, icloud, llm):
     async def _on_shutdown(bot: Bot) -> None:
         log = _get_log(dp)
 

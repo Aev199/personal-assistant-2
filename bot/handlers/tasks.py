@@ -479,8 +479,6 @@ async def build_task_card(
         int(row["project_id"]),
         int(row["parent_task_id"]) if row.get("parent_task_id") else None,
         str(status),
-        in_gtasks=False,
-        gtasks_dirty=False,
         expanded=expanded,
         subtasks=active_subs,
         is_inbox=(str(row.get("project_code") or "").upper() == "INBOX"),
@@ -1014,12 +1012,6 @@ async def cb_task(
         if await _advance_inbox_triage_after_action(callback.message, db_pool, deps, task_id=task_id):
             return
         return await show_task_card(callback.message, db_pool, task_id, deps=deps)
-
-    # Legacy callback compatibility. The UI no longer exposes this action.
-    if action == "gtasks":
-        await callback.answer("Google Tasks больше не используется.", show_alert=True)
-        return await show_task_card(callback.message, db_pool, task_id, deps=deps)
-
 
     # -----------------
     # Status updates

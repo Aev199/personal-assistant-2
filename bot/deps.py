@@ -7,7 +7,6 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 
 import asyncpg
 
-from bot.adapters.google_tasks_adapter import GoogleTasksAdapter
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter
 from bot.adapters.llm_router import ResilientLLMAdapter
 from bot.adapters.webdav_adapter import WebDavAdapter
@@ -30,7 +29,6 @@ class AppDeps:
 
     cloud: WebDavAdapter
     vault: VaultManager
-    gtasks: GoogleTasksAdapter
     icloud: ICloudCalDAVAdapter
     llm: ResilientLLMAdapter | None = None
     config: Optional["Config"] = None

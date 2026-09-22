@@ -65,13 +65,10 @@ def create_app_webhook() -> web.Application:
     tz_name = (cfg.bot.timezone or "Europe/Moscow")
     admin_id = _admin_id(cfg.bot.admin_id)
 
-    bot, dp, cloud, vault, gtasks, icloud, llm = build_core(
+    bot, dp, cloud, vault, icloud, llm = build_core(
         bot_token=cfg.bot.token,
         admin_id=admin_id,
         tz_name=tz_name,
-        google_client_id="",
-        google_client_secret="",
-        google_refresh_token="",
         icloud_apple_id=os.getenv("ICLOUD_APPLE_ID", ""),
         icloud_app_password=os.getenv("ICLOUD_APP_PASSWORD", ""),
     )
@@ -133,7 +130,6 @@ def create_app_webhook() -> web.Application:
         make_on_startup(
             dp=dp,
             cloud=cloud,
-            gtasks=gtasks,
             icloud=icloud,
             llm=llm,
             database_url=database_url,
@@ -144,7 +140,7 @@ def create_app_webhook() -> web.Application:
             maybe_refresh_webhook=maybe_refresh_webhook,
         )
     )
-    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud, llm=llm))
+    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, icloud=icloud, llm=llm))
 
     app = web.Application()
 
@@ -207,13 +203,10 @@ def create_app_polling_web() -> web.Application:
     tz_name = (cfg.bot.timezone or "Europe/Moscow")
     admin_id = _admin_id(cfg.bot.admin_id)
 
-    bot, dp, cloud, vault, gtasks, icloud, llm = build_core(
+    bot, dp, cloud, vault, icloud, llm = build_core(
         bot_token=cfg.bot.token,
         admin_id=admin_id,
         tz_name=tz_name,
-        google_client_id="",
-        google_client_secret="",
-        google_refresh_token="",
         icloud_apple_id=os.getenv("ICLOUD_APPLE_ID", ""),
         icloud_app_password=os.getenv("ICLOUD_APP_PASSWORD", ""),
     )
@@ -247,7 +240,6 @@ def create_app_polling_web() -> web.Application:
         make_on_startup(
             dp=dp,
             cloud=cloud,
-            gtasks=gtasks,
             icloud=icloud,
             llm=llm,
             database_url=database_url,
@@ -258,7 +250,7 @@ def create_app_polling_web() -> web.Application:
             maybe_refresh_webhook=_noop_async,
         )
     )
-    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud, llm=llm))
+    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, icloud=icloud, llm=llm))
 
     app = web.Application()
 
@@ -330,13 +322,10 @@ async def run_polling() -> None:
     tz_name = (cfg.bot.timezone or "Europe/Moscow")
     admin_id = _admin_id(cfg.bot.admin_id)
 
-    bot, dp, cloud, vault, gtasks, icloud, llm = build_core(
+    bot, dp, cloud, vault, icloud, llm = build_core(
         bot_token=cfg.bot.token,
         admin_id=admin_id,
         tz_name=tz_name,
-        google_client_id="",
-        google_client_secret="",
-        google_refresh_token="",
         icloud_apple_id=os.getenv("ICLOUD_APPLE_ID", ""),
         icloud_app_password=os.getenv("ICLOUD_APP_PASSWORD", ""),
     )
@@ -363,7 +352,6 @@ async def run_polling() -> None:
         make_on_startup(
             dp=dp,
             cloud=cloud,
-            gtasks=gtasks,
             icloud=icloud,
             llm=llm,
             database_url=database_url,
@@ -374,7 +362,7 @@ async def run_polling() -> None:
             maybe_refresh_webhook=_noop_async,
         )
     )
-    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, gtasks=gtasks, icloud=icloud, llm=llm))
+    dp.shutdown.register(make_on_shutdown(dp=dp, cloud=cloud, icloud=icloud, llm=llm))
 
     try:
         await bot.delete_webhook(drop_pending_updates=False)

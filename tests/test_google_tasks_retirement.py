@@ -15,6 +15,7 @@ def test_google_tasks_is_not_in_active_capture_or_mutation_paths():
         "bot/handlers/wizards.py",
         "bot/handlers/system.py",
         "bot/handlers/tasks.py",
+        "bot/ui/task_card.py",
     ]
     for path in active_paths:
         source = _read(path)
@@ -27,12 +28,18 @@ def test_google_tasks_is_not_in_active_capture_or_mutation_paths():
 def test_legacy_google_credentials_cannot_activate_runtime():
     runtime = _read("bot/runtime.py")
     lifecycle = _read("bot/lifecycle.py")
+    bootstrap = _read("bot/bootstrap.py")
+    deps = _read("bot/deps.py")
 
     assert 'os.getenv("GOOGLE_CLIENT_ID"' not in runtime
     assert 'os.getenv("GOOGLE_CLIENT_SECRET"' not in runtime
     assert 'os.getenv("GOOGLE_REFRESH_TOKEN"' not in runtime
-    assert "gtasks.startup()" not in lifecycle
-    assert "gtasks.close()" not in lifecycle
+    assert "gtasks" not in runtime
+    assert "gtasks" not in lifecycle
+    assert "GoogleTasksAdapter" not in bootstrap
+    assert "gtasks" not in bootstrap
+    assert "GoogleTasksAdapter" not in deps
+    assert "gtasks" not in deps
 
 
 def test_personal_tasks_and_ideas_are_internal():

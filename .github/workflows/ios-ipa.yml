@@ -2,6 +2,9 @@ name: iOS IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/ios-primary-client
 
 permissions:
   contents: read

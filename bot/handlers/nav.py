@@ -36,6 +36,7 @@ from bot.ui.screens import (
     ensure_main_menu,
 )
 from bot.ui.state import ui_get_state, ui_payload_with_toast, _ui_payload_get, ui_set_state
+from bot.ui.simple_daily import ui_render_ideas, ui_render_idea
 
 
 def _parse_nav_all_callback(data: str | None) -> tuple[str, int]:
@@ -104,6 +105,34 @@ async def _rerender_current_screen(
     tz_name = deps.tz_name
     if screen == "secondary":
         return await ui_render_home_more(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)
+    if screen == "ideas":
+        page = max(0, int(payload.get("page") or 0))
+        return await ui_render_ideas(
+            message,
+            db_pool,
+            page=page,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
+    if screen == "idea":
+        page = max(0, int(payload.get("page") or 0))
+        idea_id = int(payload.get("idea_id") or 0)
+        if idea_id > 0:
+            return await ui_render_idea(
+                message,
+                db_pool,
+                idea_id=idea_id,
+                page=page,
+                preferred_message_id=preferred_message_id,
+                force_new=False,
+            )
+        return await ui_render_ideas(
+            message,
+            db_pool,
+            page=page,
+            preferred_message_id=preferred_message_id,
+            force_new=False,
+        )
     if screen == "help":
         return await ui_render_help(message, db_pool, preferred_message_id=preferred_message_id, force_new=False)
     if screen == "today":
@@ -260,6 +289,33 @@ async def cb_nav_home_more(callback: CallbackQuery, state: FSMContext, db_pool: 
 
 async def cb_nav_secondary(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     return await cb_nav_home_more(callback, state, db_pool, deps)
+
+
+async def cb_nav_ideas(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    if deps.admin_id and callback.from_user and callback.from_user.id != deps.admin_id:
+        return await callback.answer("Недоступно", show_alert=True)
+    await callback.answer()
+    page = 0
+    try:
+        parts = (callback.data or "").split(":")
+        if len(parts) >= 3 and parts[2].isdigit():
+            page = max(0, int(parts[2]))
+    except Exception:
+        page = 0
+    wizard_chat_id, preferred_message_id, stale_wizard_msg_id = await _callback_wizard_context(callback, state)
+    await state.clear()
+    final_id = await ui_render_ideas(
+        callback.message,
+        db_pool,
+        page=page,
+        preferred_message_id=preferred_message_id,
+    )
+    await cleanup_stale_wizard_message(
+        callback.bot,
+        chat_id=wizard_chat_id,
+        stale_message_id=stale_wizard_msg_id,
+        final_message_id=final_id,
+    )
 
 
 async def cb_nav_close_inline(callback: CallbackQuery, state: FSMContext, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
@@ -569,6 +625,7 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_nav_home, F.data == "nav:home")
     dp.callback_query.register(cb_nav_home_more, F.data == "nav:home_more")
     dp.callback_query.register(cb_nav_secondary, F.data == "nav:secondary")
+    dp.callback_query.register(cb_nav_ideas, F.data.regexp(r"^nav:ideas(?::\d+)?$"))
     dp.callback_query.register(cb_nav_stats, F.data == "home:stats")
     dp.callback_query.register(cb_nav_add, F.data == "nav:add")
     dp.callback_query.register(cb_nav_help, F.data == "nav:help")

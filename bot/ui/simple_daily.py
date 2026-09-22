@@ -451,7 +451,10 @@ async def ui_render_home_more(
                 InlineKeyboardButton(text="Проекты", callback_data="nav:projects"),
                 InlineKeyboardButton(text="Напоминания", callback_data="nav:reminders:0"),
             ],
-            [InlineKeyboardButton(text="Помощь", callback_data="nav:help")],
+            [
+                InlineKeyboardButton(text="Идеи", callback_data="nav:ideas:0"),
+                InlineKeyboardButton(text="Помощь", callback_data="nav:help"),
+            ],
             [InlineKeyboardButton(text="Дела", callback_data="nav:home")],
         ]
     )
@@ -462,6 +465,152 @@ async def ui_render_home_more(
         text="\n".join(lines),
         reply_markup=kb,
         screen="secondary",
+        fallback_message=message,
+        preferred_message_id=preferred_message_id,
+        force_new=force_new,
+        parse_mode="HTML",
+    )
+
+
+async def ui_render_ideas(
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    page: int = 0,
+    toast: str | None = None,
+    preferred_message_id: int | None = None,
+    force_new: bool = False,
+) -> int:
+    """Secondary idea inbox: thoughts stay outside the task attention queue."""
+    from bot.services.ideas import list_active_ideas
+
+    chat_id = int(message.chat.id)
+    page_size = 8
+    try:
+        page = max(0, int(page or 0))
+    except Exception:
+        page = 0
+
+    async with db_pool.acquire() as conn:
+        total, rows = await list_active_ideas(
+            conn,
+            chat_id=chat_id,
+            limit=page_size,
+            offset=page * page_size,
+        )
+
+    if total:
+        max_page = max(0, (int(total) - 1) // page_size)
+        if page > max_page:
+            page = max_page
+            async with db_pool.acquire() as conn:
+                total, rows = await list_active_ideas(
+                    conn,
+                    chat_id=chat_id,
+                    limit=page_size,
+                    offset=page * page_size,
+                )
+
+    lines: list[str] = ["<b>Идеи</b>", "<i>Мысли, а не обязательства.</i>"]
+    if toast:
+        lines = [h(toast), ""] + lines
+
+    rows = list(rows or [])
+    if not rows:
+        lines.extend(["", "Здесь пока пусто. Напишите «идея: …», когда захочется что-то сохранить."])
+    else:
+        lines.append("")
+        for number, row in enumerate(rows, page * page_size + 1):
+            text_value = _short_task_title(row["text"], limit=90)
+            lines.append(f"<b>{number}.</b> {h(text_value)}")
+
+    kb: list[list[InlineKeyboardButton]] = []
+    number_buttons = [
+        InlineKeyboardButton(
+            text=str(page * page_size + idx + 1),
+            callback_data=f"idea:{int(row['id'])}:open:{page}",
+        )
+        for idx, row in enumerate(rows)
+    ]
+    kb.extend(number_buttons[i:i + 4] for i in range(0, len(number_buttons), 4))
+
+    page_row: list[InlineKeyboardButton] = []
+    if page > 0:
+        page_row.append(InlineKeyboardButton(text="←", callback_data=f"nav:ideas:{page-1}"))
+    if (page + 1) * page_size < int(total or 0):
+        page_row.append(InlineKeyboardButton(text="→", callback_data=f"nav:ideas:{page+1}"))
+    if page_row:
+        kb.append(page_row)
+
+    kb.append([InlineKeyboardButton(text="⬅ Ещё", callback_data="nav:secondary")])
+    return await ui_render(
+        bot=message.bot,
+        db_pool=db_pool,
+        chat_id=chat_id,
+        text="\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        screen="ideas",
+        payload={"page": page},
+        fallback_message=message,
+        preferred_message_id=preferred_message_id,
+        force_new=force_new,
+        parse_mode="HTML",
+    )
+
+
+async def ui_render_idea(
+    message: Message,
+    db_pool: asyncpg.Pool,
+    *,
+    idea_id: int,
+    page: int = 0,
+    preferred_message_id: int | None = None,
+    force_new: bool = False,
+) -> int:
+    chat_id = int(message.chat.id)
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, text
+            FROM ideas
+            WHERE id=$1 AND chat_id=$2 AND status='active'
+            """,
+            int(idea_id),
+            chat_id,
+        )
+
+    if not row:
+        return await ui_render_ideas(
+            message,
+            db_pool,
+            page=page,
+            toast="Идея уже обработана.",
+            preferred_message_id=preferred_message_id,
+            force_new=force_new,
+        )
+
+    return await ui_render(
+        bot=message.bot,
+        db_pool=db_pool,
+        chat_id=chat_id,
+        text=f"<b>Идея</b>\n\n{h(str(row['text'] or ''))}",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="В задачу",
+                        callback_data=f"idea:{int(idea_id)}:promote:{int(page)}",
+                    ),
+                    InlineKeyboardButton(
+                        text="Архив",
+                        callback_data=f"idea:{int(idea_id)}:archive:{int(page)}",
+                    ),
+                ],
+                [InlineKeyboardButton(text="⬅ Идеи", callback_data=f"nav:ideas:{int(page)}")],
+            ]
+        ),
+        screen="idea",
+        payload={"idea_id": int(idea_id), "page": int(page)},
         fallback_message=message,
         preferred_message_id=preferred_message_id,
         force_new=force_new,

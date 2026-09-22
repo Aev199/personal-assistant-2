@@ -1,7 +1,7 @@
 """Bootstrap helpers.
 
 This module centralizes creation of the aiogram Bot/Dispatcher and wiring of
-external integrations (WebDAV/Obsidian vault, Google Tasks, iCloud CalDAV).
+external integrations (WebDAV/Obsidian vault and iCloud CalDAV).
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from bot.handlers import (  # noqa: E402
     register_errors,
     register_events,
     register_inbox,
+    register_ideas,
     register_nav,
     register_onboarding,
     register_pending_actions,
@@ -90,6 +91,7 @@ def build_core(
     register_projects(dp)
     register_tasks(dp)
     register_inbox(dp)
+    register_ideas(dp)
     register_bulk(dp)
     register_wizards(dp)
     register_events(dp)

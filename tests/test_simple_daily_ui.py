@@ -112,7 +112,7 @@ class SimpleDailyUiTests(unittest.IsolatedAsyncioTestCase):
             for row in render.await_args.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        self.assertEqual(callbacks, ["nav:projects", "nav:reminders:0", "nav:help", "nav:home"])
+        self.assertEqual(callbacks, ["nav:projects", "nav:reminders:0", "nav:ideas:0", "nav:help", "nav:home"])
         for hidden in ("nav:inbox:0", "nav:work:0", "nav:overdue:0", "home:stats", "sync:status", "nav:team"):
             self.assertNotIn(hidden, callbacks)
 

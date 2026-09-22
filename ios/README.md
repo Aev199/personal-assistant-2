@@ -5,7 +5,7 @@ The native iOS app is a primary mobile surface of Personal Assistant, not a comp
 ## Product roles
 
 - **Widget** — the lowest-friction daily surface: see what matters now, Quick Done, refresh, quick capture.
-- **iOS app** — Today + capture + one second-level active-task list. No tab bar, no chat clone, no project-management dashboard.
+- **iOS app** — Today + capture + one second-level active-task list. Ideas sit one level deeper from that list. No tab bar, no chat clone, no project-management dashboard.
 - **Telegram** — conversational / command interface to the same backend, especially useful while working on a PC.
 - **Backend** — source of truth and owner of attention ordering, tasks, reminders and mutations.
 
@@ -19,7 +19,7 @@ The main screen remains deliberately small:
 2. **Дальше** — a short continuation, not the whole backlog.
 3. **Запомнить** — fast Inbox capture.
 
-The toolbar contains one second-level **Задачи** screen with the complete active backlog, local search and Quick Done. This screen is intentionally not a permanent tab.
+The toolbar contains one second-level **Задачи** screen with the complete active backlog, local search and Quick Done. **Идеи** are reachable from there and stay outside the attention queue until explicitly promoted to a task. Neither screen is a permanent tab.
 
 The Home Screen widget uses StaticConfiguration; configurable AppIntentConfiguration is intentionally avoided because it fails after the current ESign sideload resigning flow.
 
@@ -29,6 +29,9 @@ Canonical native-client routes:
 
 - GET /api/v1/today
 - GET /api/v1/tasks?limit=100
+- GET /api/v1/ideas
+- POST /api/v1/ideas/{id}/promote
+- POST /api/v1/ideas/{id}/archive
 - POST /api/v1/capture with a JSON text field
 - POST /api/v1/tasks/{id}/done
 
@@ -36,7 +39,7 @@ Legacy /api/v1/companion/... routes remain as compatibility aliases. Current iOS
 
 Authentication uses Bearer tokens. ASSISTANT_API_TOKEN is the preferred full-client environment variable. Existing COMPANION_API_TOKEN remains supported as a fallback. COMPANION_WIDGET_TOKEN remains supported only for older widget builds with restricted read/done scope.
 
-Capture currently stores literal text in the existing INBOX. Natural-language classification must eventually move into a UI-independent backend intake service shared by Telegram and iOS rather than being duplicated in Swift.
+Free-form capture uses the backend intake service shared with Telegram. Swift does not classify intent. Work tasks, personal tasks, reminders and ideas are persisted by the backend; ideas remain non-actionable until explicitly promoted.
 
 ## Widget sharing and sideload signing
 

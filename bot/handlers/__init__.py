@@ -13,6 +13,7 @@ from .system import register as register_system
 from .inbox import register as register_inbox
 from .errors import register as register_errors
 from .pending_actions import register as register_pending_actions
+from .ideas import register as register_ideas
 
 __all__ = [
     "register_nav",
@@ -28,4 +29,5 @@ __all__ = [
     "register_inbox",
     "register_errors",
     "register_pending_actions",
+    "register_ideas",
 ]

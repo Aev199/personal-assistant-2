@@ -66,6 +66,22 @@ struct AllTasksView: View {
         }
         .navigationTitle("Задачи")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    IdeasView {
+                        Task {
+                            await load()
+                            onChanged()
+                        }
+                    }
+                    .environmentObject(settings)
+                } label: {
+                    Image(systemName: "lightbulb")
+                }
+                .accessibilityLabel("Идеи")
+            }
+        }
         .searchable(text: $searchText, prompt: "Найти задачу")
         .task {
             await load()

@@ -92,6 +92,33 @@ struct APIClient {
         return try decode(TasksResponse.self, data: data, response: response)
     }
 
+    func loadIdeas(limit: Int = 100) async throws -> IdeasResponse {
+        let safeLimit = max(1, min(200, limit))
+        let req = try request(path: "/api/v1/ideas?limit=\(safeLimit)")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(IdeasResponse.self, data: data, response: response)
+    }
+
+    func promoteIdea(ideaID: Int) async throws -> IdeaMutationResponse {
+        let req = try request(
+            path: "/api/v1/ideas/\(ideaID)/promote",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(IdeaMutationResponse.self, data: data, response: response)
+    }
+
+    func archiveIdea(ideaID: Int) async throws -> IdeaMutationResponse {
+        let req = try request(
+            path: "/api/v1/ideas/\(ideaID)/archive",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(IdeaMutationResponse.self, data: data, response: response)
+    }
+
     func loadProjects() async throws -> ProjectsResponse {
         let req = try request(path: "/api/v1/projects")
         let (data, response) = try await URLSession.shared.data(for: req)

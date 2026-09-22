@@ -28,6 +28,18 @@ def test_ios_does_not_embed_model_or_classifier_logic():
     assert "llm" not in lowered
 
 
+def test_ideas_stay_off_the_default_attention_surface():
+    home = _read("App/ContentView.swift")
+    backlog = _read("App/AllTasksView.swift")
+    ideas = _read("App/IdeasView.swift")
+
+    assert "IdeasView" not in home
+    assert "IdeasView" in backlog
+    assert 'navigationTitle("Идеи")' in ideas
+    assert "swipeActions" in ideas
+    assert "TabView" not in ideas
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

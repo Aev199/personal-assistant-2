@@ -15,6 +15,9 @@ def test_assistant_routes_include_canonical_and_legacy_aliases():
     assert ("GET", "/api/v1/today") in routes
     assert ("GET", "/api/v1/tasks") in routes
     assert ("GET", "/api/v1/projects") in routes
+    assert ("GET", "/api/v1/ideas") in routes
+    assert ("POST", "/api/v1/ideas/{idea_id}/promote") in routes
+    assert ("POST", "/api/v1/ideas/{idea_id}/archive") in routes
     assert ("PATCH", "/api/v1/tasks/{task_id}") in routes
     assert ("POST", "/api/v1/capture") in routes
     assert ("POST", "/api/v1/intake") in routes

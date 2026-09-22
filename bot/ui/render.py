@@ -41,6 +41,8 @@ _BREADCRUMBS: dict[str, str] = {
     "help": "🏠 › 🛠 Справка",
     "reminders": "🏠 › 🔔 Напоминания",
     "secondary": "🏠 › ⋯ Ещё",
+    "ideas": "🏠 › ⋯ Ещё › 💡 Идеи",
+    "idea": "🏠 › ⋯ Ещё › 💡 Идеи",
     "global_tails": "🏠 › 🧺 Хвосты",
     "tails_pick": "🏠 › 🧺 Хвосты",
     "sync_status": "🏠 › 🔄 Синхронизация",

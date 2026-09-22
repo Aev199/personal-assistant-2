@@ -10,7 +10,7 @@ The Home Screen widget and **Сегодня** answer only three questions:
 2. **Дальше** — what is next, in a deliberately short list?
 3. **Запомнить** — how do I get a thought out of my head immediately?
 
-The full backlog is one level deeper. Projects are context, not navigation.
+The full backlog is one level deeper. Ideas are deeper still and never enter the attention queue until promoted. Projects are context, not navigation.
 
 ## ADHD-first rules
 
@@ -40,7 +40,7 @@ Free-form input is sent to the backend intake service, which uses the same Gemin
 ## Channel roles
 
 - **Widget:** glance, Quick Done, refresh, quick capture.
-- **iOS:** today, capture, choose focus, correct a task, browse/search active work.
+- **iOS:** today, capture, choose focus, correct a task, browse/search active work, review saved ideas secondarily.
 - **Telegram:** conversational commands, bulk operations and richer interaction while at a PC.
 - **Backend:** canonical state, attention ordering, intake, mutations and integrations.
 

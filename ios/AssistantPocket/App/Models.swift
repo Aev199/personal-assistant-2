@@ -14,6 +14,29 @@ struct TasksResponse: Decodable {
     let tasks: [TodayTask]
 }
 
+struct IdeasResponse: Decodable {
+    let ok: Bool
+    let ideas: [AssistantIdea]
+}
+
+struct AssistantIdea: Decodable, Identifiable {
+    let id: Int
+    let text: String
+}
+
+struct IdeaMutationResponse: Decodable {
+    let ok: Bool
+    let ideaId: Int
+    let taskId: Int?
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok, status
+        case ideaId = "idea_id"
+        case taskId = "task_id"
+    }
+}
+
 struct ProjectsResponse: Decodable {
     let ok: Bool
     let projects: [AssistantProject]

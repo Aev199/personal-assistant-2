@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feat/ios-primary-client
     paths-ignore:
       - ".github/workflows/actions-storage-cleanup.yml"
 
@@ -38,6 +39,8 @@ jobs:
             tests/test_main_menu_keyboard.py \
             tests/test_home_screen_contract.py \
             tests/test_secondary_surfaces_contract.py \
+            tests/test_simple_daily_ui.py \
+            tests/test_ideas.py \
             tests/test_freeform_intake.py \
             tests/test_capture_spa.py \
             tests/test_system_freeform_route.py \

@@ -18,6 +18,7 @@ from aiohttp import web
 from bot.db import db_add_event, ensure_inbox_project_id
 from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
+from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
 from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
 
 
@@ -163,6 +164,15 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _projects(request: web.Request) -> web.StreamResponse:
         return await handle_projects(request, ctx)
 
+    async def _ideas(request: web.Request) -> web.StreamResponse:
+        return await handle_ideas(request, ctx)
+
+    async def _idea_promote(request: web.Request) -> web.StreamResponse:
+        return await handle_idea_promote(request, ctx)
+
+    async def _idea_archive(request: web.Request) -> web.StreamResponse:
+        return await handle_idea_archive(request, ctx)
+
     async def _task_update(request: web.Request) -> web.StreamResponse:
         return await handle_task_update(request, ctx)
 
@@ -191,6 +201,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_get("/api/v1/today", _today)
     app.router.add_get("/api/v1/tasks", _tasks)
     app.router.add_get("/api/v1/projects", _projects)
+    app.router.add_get("/api/v1/ideas", _ideas)
+    app.router.add_post("/api/v1/ideas/{idea_id}/promote", _idea_promote)
+    app.router.add_post("/api/v1/ideas/{idea_id}/archive", _idea_archive)
     app.router.add_patch("/api/v1/tasks/{task_id}", _task_update)
     app.router.add_post("/api/v1/capture", _capture)
     app.router.add_post("/api/v1/intake", _intake)
@@ -397,6 +410,101 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
             "timezone": tz_name,
             "tasks": tasks,
         }
+    )
+
+
+async def handle_ideas(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        limit = max(1, min(200, int(request.query.get("limit", "100"))))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_limit"}, status=400)
+
+    async with pool.acquire() as conn:
+        _total, rows = await list_active_ideas(
+            conn,
+            chat_id=int(ctx.deps.admin_id or 0),
+            limit=limit,
+            offset=0,
+        )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "ideas": [
+                {
+                    "id": int(row["id"]),
+                    "text": str(row["text"] or ""),
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                }
+                for row in rows
+            ],
+        }
+    )
+
+
+async def handle_idea_promote(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        idea_id = int(request.match_info["idea_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_idea_id"}, status=400)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await promote_idea(
+                conn,
+                chat_id=int(ctx.deps.admin_id or 0),
+                idea_id=idea_id,
+            )
+
+    if result is None:
+        return web.json_response({"ok": False, "error": "idea_not_active"}, status=404)
+
+    task_id, _text = result
+    return web.json_response(
+        {"ok": True, "idea_id": idea_id, "task_id": int(task_id), "status": "promoted"}
+    )
+
+
+async def handle_idea_archive(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        idea_id = int(request.match_info["idea_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_idea_id"}, status=400)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            text_value = await archive_idea(
+                conn,
+                chat_id=int(ctx.deps.admin_id or 0),
+                idea_id=idea_id,
+            )
+
+    if text_value is None:
+        return web.json_response({"ok": False, "error": "idea_not_active"}, status=404)
+
+    return web.json_response(
+        {"ok": True, "idea_id": idea_id, "status": "archived"}
     )
 
 

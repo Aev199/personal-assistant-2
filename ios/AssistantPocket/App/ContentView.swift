@@ -183,6 +183,12 @@ struct ContentView: View {
                 SettingsView()
                     .environmentObject(settings)
             }
+            .sheet(isPresented: $showFocusPicker) {
+                FocusPickerView(currentTaskID: manualFocusTask?.id) {
+                    Task { await loadToday() }
+                }
+                .environmentObject(settings)
+            }
             .sheet(item: $editingTask) { task in
                 TaskEditView(task: task) {
                     Task { await loadToday() }
@@ -237,18 +243,6 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
-        }
-        .confirmationDialog(
-            "Что сейчас?",
-            isPresented: $showFocusPicker,
-            titleVisibility: .visible
-        ) {
-            ForEach(Array(tasks.prefix(5))) { task in
-                Button(task.isFocused ? "✓ \(task.title)" : task.title) {
-                    Task { await setFocus(task) }
-                }
-            }
-            Button("Отмена", role: .cancel) {}
         }
     }
 
@@ -950,19 +944,6 @@ struct ContentView: View {
             withAnimation {
                 pendingIntake.removeAll { $0.id == pending.id }
             }
-        } catch {
-            present(error)
-        }
-    }
-
-    @MainActor
-    private func setFocus(_ task: TodayTask) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.focusTask(taskID: task.id)
-            await loadToday()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)
         }

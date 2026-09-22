@@ -108,13 +108,17 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
 
 def test_now_can_be_changed_and_reminders_can_be_snoozed():
     home = _read("App/ContentView.swift")
+    focus_picker = _read("App/FocusPickerView.swift")
     api = _read("App/APIClient.swift")
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert 'confirmationDialog(' in home
-    assert '"Что сейчас?"' in home
+    assert "FocusPickerView" in home
     assert "manualFocusTask" in home
-    assert "focusTask(taskID: task.id)" in home
+    assert "tasks.prefix(5)" not in home
+    assert 'navigationTitle("Что сейчас?")' in focus_picker
+    assert "client.loadTasks()" in focus_picker
+    assert ".searchable(" in focus_picker
+    assert "focusTask(taskID: task.id)" in focus_picker
     assert "snoozeReminder(reminderID: reminder.id, minutes: 15)" in home
     assert "/api/v1/reminders/\\(reminderID)/snooze" in api
 

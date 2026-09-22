@@ -81,6 +81,7 @@ def test_widget_keeps_esign_safe_static_configuration():
     assert "StaticConfiguration" in source
     assert "AppIntentConfiguration" not in source
     assert "WidgetSharedSettings" in source
+    assert "reminders: [],\n                error:" not in source
 
 
 def test_capture_is_loss_resistant():

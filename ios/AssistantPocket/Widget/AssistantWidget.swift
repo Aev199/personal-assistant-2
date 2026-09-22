@@ -262,6 +262,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 date: .now,
                 tasks: [],
                 reminders: [],
+                events: [],
                 error: "Откройте Assistant и сохраните настройки"
             )
         }
@@ -303,6 +304,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 date: .now,
                 tasks: [],
                 reminders: [],
+                events: [],
                 error: "Нет связи"
             )
         }

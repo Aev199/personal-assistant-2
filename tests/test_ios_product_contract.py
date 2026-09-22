@@ -78,7 +78,7 @@ def test_calendar_context_stays_attention_first():
 def test_today_uses_swipe_for_backlog_and_shows_relative_task_dates():
     home = _read("App/ContentView.swift")
     tasks = _read("App/AllTasksView.swift")
-    deadline = _read("App/TaskDeadlineFormatting.swift")
+    deadline = _read("Shared/TaskDeadlineFormatting.swift")
 
     assert 'Image(systemName: "list.bullet")' not in home
     assert "DragGesture(minimumDistance: 24)" in home

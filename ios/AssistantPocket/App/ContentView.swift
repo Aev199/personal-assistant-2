@@ -138,16 +138,6 @@ struct ContentView: View {
                 }
                 .environmentObject(settings)
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 24)
-                    .onEnded { value in
-                        guard !captureFocused else { return }
-                        let dx = value.translation.width
-                        let dy = value.translation.height
-                        guard dx < -70, abs(dx) > abs(dy) * 1.4 else { return }
-                        showAllTasks = true
-                    }
-            )
             .refreshable {
                 await loadToday()
             }
@@ -206,24 +196,21 @@ struct ContentView: View {
     private var focusSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Button {
-                    if !tasks.isEmpty {
-                        showFocusPicker = true
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Text("Сейчас")
-                            .font(.headline)
-                        if !tasks.isEmpty {
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Изменить текущую задачу")
+                Text("Сейчас")
+                    .font(.headline)
 
                 Spacer()
+
+                if !tasks.isEmpty {
+                    Button("Изменить") {
+                        showFocusPicker = true
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Изменить текущую задачу")
+                }
+
                 if isLoading {
                     ProgressView()
                         .controlSize(.small)
@@ -360,8 +347,20 @@ struct ContentView: View {
     private var nextSection: some View {
         if !nextTasks.isEmpty || nextEvent != nil || nextReminder != nil {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Дальше")
-                    .font(.headline)
+                HStack {
+                    Text("Дальше")
+                        .font(.headline)
+
+                    Spacer()
+
+                    Button("Все задачи") {
+                        showAllTasks = true
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Открыть все задачи")
+                }
 
                 if let event = nextEvent {
                     compactEventRow(event)

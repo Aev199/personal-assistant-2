@@ -9,6 +9,7 @@ struct ContentView: View {
     @AppStorage("assistant.captureDraft") private var captureText = ""
     @State private var tasks: [TodayTask] = []
     @State private var reminders: [TodayReminder] = []
+    @State private var events: [TodayEvent] = []
     @State private var isLoading = false
     @State private var isSending = false
     @State private var errorMessage: String?
@@ -21,19 +22,41 @@ struct ContentView: View {
     @State private var editingTask: TodayTask?
     @FocusState private var captureFocused: Bool
 
-    private var focusReminder: TodayReminder? {
+    private var activeEvent: TodayEvent? {
+        let now = Date()
+        return events.first { $0.start <= now && $0.end > now }
+    }
+
+    private var dueSoonReminder: TodayReminder? {
         let cutoff = Date().addingTimeInterval(15 * 60)
-        if let dueSoon = reminders.first(where: { reminder in
+        return reminders.first(where: { reminder in
             guard let at = reminder.at else { return false }
             return at <= cutoff
-        }) {
-            return dueSoon
-        }
-        return tasks.isEmpty ? reminders.first : nil
+        })
+    }
+
+    private var upcomingEvent: TodayEvent? {
+        guard activeEvent == nil, dueSoonReminder == nil else { return nil }
+        let now = Date()
+        let cutoff = now.addingTimeInterval(15 * 60)
+        return events.first { $0.end > now && $0.start <= cutoff }
+    }
+
+    private var focusEvent: TodayEvent? {
+        if let activeEvent { return activeEvent }
+        if let upcomingEvent { return upcomingEvent }
+        if tasks.isEmpty && reminders.isEmpty { return events.first }
+        return nil
+    }
+
+    private var focusReminder: TodayReminder? {
+        guard activeEvent == nil else { return nil }
+        if let dueSoonReminder { return dueSoonReminder }
+        return focusEvent == nil && tasks.isEmpty ? reminders.first : nil
     }
 
     private var focusTask: TodayTask? {
-        focusReminder == nil ? tasks.first : nil
+        focusEvent == nil && focusReminder == nil ? tasks.first : nil
     }
 
     private var remainingTasks: [TodayTask] {
@@ -45,14 +68,22 @@ struct ContentView: View {
         return reminders.filter { $0.id != focusReminder.id }
     }
 
-    private var nextTasks: [TodayTask] {
-        let limit = remainingReminders.isEmpty ? 4 : 3
-        return Array(remainingTasks.prefix(limit))
+    private var remainingEvents: [TodayEvent] {
+        guard let focusEvent else { return events }
+        return events.filter { $0.id != focusEvent.id }
     }
 
-    private var nextReminders: [TodayReminder] {
-        let slots = max(0, 4 - nextTasks.count)
-        return Array(remainingReminders.prefix(slots))
+    private var nextEvent: TodayEvent? {
+        remainingEvents.first
+    }
+
+    private var nextReminder: TodayReminder? {
+        remainingReminders.first
+    }
+
+    private var nextTasks: [TodayTask] {
+        let reservedTimed = (nextEvent == nil ? 0 : 1) + (nextReminder == nil ? 0 : 1)
+        return Array(remainingTasks.prefix(max(0, 4 - reservedTimed)))
     }
 
     var body: some View {
@@ -157,7 +188,9 @@ struct ContentView: View {
                 }
             }
 
-            if let reminder = focusReminder {
+            if let event = focusEvent {
+                eventFocusCard(event)
+            } else if let reminder = focusReminder {
                 reminderFocusCard(reminder)
             } else if let task = focusTask {
                 focusTaskCard(task)
@@ -213,6 +246,24 @@ struct ContentView: View {
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
     }
 
+    private func eventFocusCard(_ event: TodayEvent) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label("Календарь", systemImage: "calendar")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(event.title)
+                .font(.title3.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            Text(event.start, format: .dateTime.hour().minute())
+                + Text("–")
+                + Text(event.end, format: .dateTime.hour().minute())
+        }
+        .font(.subheadline)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+    }
+
     private func reminderFocusCard(_ reminder: TodayReminder) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Label("Напоминание", systemImage: "bell.fill")
@@ -233,17 +284,21 @@ struct ContentView: View {
 
     @ViewBuilder
     private var nextSection: some View {
-        if !nextTasks.isEmpty || !nextReminders.isEmpty {
+        if !nextTasks.isEmpty || nextEvent != nil || nextReminder != nil {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Дальше")
                     .font(.headline)
 
-                ForEach(nextTasks) { task in
-                    compactTaskRow(task)
+                if let event = nextEvent {
+                    compactEventRow(event)
                 }
 
-                ForEach(nextReminders) { reminder in
+                if let reminder = nextReminder {
                     compactReminderRow(reminder)
+                }
+
+                ForEach(nextTasks) { task in
+                    compactTaskRow(task)
                 }
             }
         }
@@ -272,6 +327,29 @@ struct ContentView: View {
             .onTapGesture {
                 editingTask = task
             }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func compactEventRow(_ event: TodayEvent) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "calendar")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.body)
+                    .lineLimit(2)
+                Text(event.start, format: .dateTime.hour().minute())
+                    + Text("–")
+                    + Text(event.end, format: .dateTime.hour().minute())
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             Spacer(minLength: 0)
         }
@@ -441,6 +519,7 @@ struct ContentView: View {
             let response = try await client.loadToday()
             tasks = response.tasks
             reminders = response.reminders
+            events = response.events ?? []
         } catch {
             present(error)
         }

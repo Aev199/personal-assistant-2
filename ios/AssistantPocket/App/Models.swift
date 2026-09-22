@@ -6,6 +6,21 @@ struct TodayResponse: Decodable {
     let timezone: String
     let tasks: [TodayTask]
     let reminders: [TodayReminder]
+    let events: [TodayEvent]?
+    let calendarUnavailable: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, date, timezone, tasks, reminders, events
+        case calendarUnavailable = "calendar_unavailable"
+    }
+}
+
+struct TodayEvent: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let start: Date
+    let end: Date
+    let kind: String
 }
 
 struct TasksResponse: Decodable {

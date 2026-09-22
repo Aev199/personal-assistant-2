@@ -5,11 +5,11 @@ The native iOS app is a primary mobile surface of Personal Assistant, not a comp
 ## Product roles
 
 - **Widget** — the lowest-friction daily surface: see what matters now, Quick Done, refresh, quick capture.
-- **iOS app** — Today + capture + one second-level active-task list. Ideas sit one level deeper from that list. No tab bar, no chat clone, no project-management dashboard.
+- **iOS app** — Today + capture + calendar context + one second-level active-task list. Ideas sit one level deeper from that list. No tab bar, no chat clone, no project-management dashboard.
 - **Telegram** — conversational / command interface to the same backend, especially useful while working on a PC.
 - **Backend** — source of truth and owner of attention ordering, tasks, reminders and mutations.
 
-The same Task/Reminder data is used by every client.
+The same Task/Reminder data is used by every client. Calendar events are supplied by the backend with a short cache; only current and upcoming timed events enter the native attention surface.
 
 ## Native UI scope
 

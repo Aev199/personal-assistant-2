@@ -22,9 +22,18 @@ private struct WidgetReminder: Codable, Identifiable {
     let at: Date?
 }
 
+private struct WidgetEvent: Codable, Identifiable {
+    let id: String
+    let title: String
+    let start: Date
+    let end: Date
+    let kind: String
+}
+
 private struct WidgetTodayResponse: Codable {
     var tasks: [WidgetTask]
     var reminders: [WidgetReminder]
+    var events: [WidgetEvent]?
 }
 
 private enum WidgetCodec {
@@ -49,6 +58,7 @@ private enum WidgetCodec {
             date: .now,
             tasks: today.tasks,
             reminders: today.reminders,
+            events: today.events ?? [],
             error: nil
         )
     }
@@ -187,6 +197,7 @@ private struct AssistantWidgetEntry: TimelineEntry {
     let date: Date
     let tasks: [WidgetTask]
     let reminders: [WidgetReminder]
+    let events: [WidgetEvent]
     let error: String?
 }
 
@@ -200,6 +211,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 WidgetTask(id: 3, title: "Подготовить замечания", project: "", status: "todo", deadline: nil, overdue: false),
             ],
             reminders: [],
+            events: [],
             error: nil
         )
     }
@@ -262,6 +274,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                     date: .now,
                     tasks: [],
                     reminders: [],
+                    events: [],
                     error: "Неверный код доступа"
                 )
             }
@@ -279,6 +292,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 date: .now,
                 tasks: today.tasks,
                 reminders: today.reminders,
+                events: today.events ?? [],
                 error: nil
             )
         } catch {
@@ -303,15 +317,35 @@ private struct AssistantWidgetView: View {
         family == .systemLarge ? 5 : 3
     }
 
-    private var focusReminder: WidgetReminder? {
+    private var activeEvent: WidgetEvent? {
+        entry.events.first { $0.start <= entry.date && $0.end > entry.date }
+    }
+
+    private var dueSoonReminder: WidgetReminder? {
         let cutoff = entry.date.addingTimeInterval(15 * 60)
-        if let dueSoon = entry.reminders.first(where: { reminder in
+        return entry.reminders.first(where: { reminder in
             guard let at = reminder.at else { return false }
             return at <= cutoff
-        }) {
-            return dueSoon
-        }
-        return entry.tasks.isEmpty ? entry.reminders.first : nil
+        })
+    }
+
+    private var upcomingEvent: WidgetEvent? {
+        guard activeEvent == nil, dueSoonReminder == nil else { return nil }
+        let cutoff = entry.date.addingTimeInterval(15 * 60)
+        return entry.events.first { $0.end > entry.date && $0.start <= cutoff }
+    }
+
+    private var focusEvent: WidgetEvent? {
+        if let activeEvent { return activeEvent }
+        if let upcomingEvent { return upcomingEvent }
+        if entry.tasks.isEmpty && entry.reminders.isEmpty { return entry.events.first }
+        return nil
+    }
+
+    private var focusReminder: WidgetReminder? {
+        guard activeEvent == nil else { return nil }
+        if let dueSoonReminder { return dueSoonReminder }
+        return focusEvent == nil && entry.tasks.isEmpty ? entry.reminders.first : nil
     }
 
     var body: some View {
@@ -320,6 +354,21 @@ private struct AssistantWidgetView: View {
 
             if let error = entry.error {
                 errorState(error)
+            } else if let event = focusEvent {
+                focusEventView(event)
+
+                let rest = Array(entry.tasks.prefix(max(0, visibleTaskCount - 1)))
+                if !rest.isEmpty {
+                    Text("Дальше")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(rest) { task in
+                        compactTask(task)
+                    }
+                }
+
+                Spacer(minLength: 0)
             } else if let reminder = focusReminder {
                 focusReminderView(reminder)
 
@@ -349,13 +398,18 @@ private struct AssistantWidgetView: View {
                     }
                 }
 
-                if family == .systemLarge, let reminder = entry.reminders.first {
+                if family == .systemLarge, let event = entry.events.first {
+                    compactEvent(event)
+                } else if family == .systemLarge, let reminder = entry.reminders.first {
                     compactReminder(reminder)
                 }
 
                 Spacer(minLength: 0)
             } else if let reminder = entry.reminders.first {
                 focusReminderView(reminder)
+                Spacer(minLength: 0)
+            } else if let event = entry.events.first {
+                focusEventView(event)
                 Spacer(minLength: 0)
             } else {
                 emptyState
@@ -449,6 +503,40 @@ private struct AssistantWidgetView: View {
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
+    }
+
+    private func focusEventView(_ event: WidgetEvent) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("Календарь", systemImage: "calendar")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(event.title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+
+            Text(event.start, format: .dateTime.hour().minute())
+                + Text("–")
+                + Text(event.end, format: .dateTime.hour().minute())
+        }
+    }
+
+    private func compactEvent(_ event: WidgetEvent) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "calendar")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Text(event.title)
+                .font(.caption)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            Text(event.start, format: .dateTime.hour().minute())
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func focusReminderView(_ reminder: WidgetReminder) -> some View {

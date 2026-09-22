@@ -7,6 +7,7 @@ as compatibility aliases while native clients move to canonical /api/v1 routes.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from bot.db import db_add_event, ensure_inbox_project_id
 from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
+from bot.services.calendar_today import fetch_today_calendar
 from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
 
 
@@ -236,6 +238,17 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
     end_utc = _utc_naive(end_local)
     now_utc = datetime.now(timezone.utc)
 
+    work_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_WORK") or "").strip()
+    personal_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_PERSONAL") or "").strip()
+    bitrix_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_BITRIX") or "").strip()
+    calendar_task = asyncio.create_task(
+        fetch_today_calendar(
+            tz=tz,
+            calendar_urls=[work_calendar_url, personal_calendar_url, bitrix_calendar_url],
+            icloud=getattr(ctx.deps, "icloud", None),
+        )
+    )
+
     focus_task_id: int | None = None
     async with pool.acquire() as conn:
         focus_state = await get_conversation_state(
@@ -317,6 +330,53 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             }
         )
 
+    calendar_snapshot = await calendar_task
+    events = []
+    for event in calendar_snapshot.events:
+        event_start_utc = _utc_aware(event.dtstart_utc)
+        event_end_utc = _utc_aware(event.dtend_utc)
+        if event_start_utc is None or event_end_utc is None or event_end_utc <= now_utc:
+            continue
+
+        start_local_event = event_start_utc.astimezone(tz)
+        end_local_event = event_end_utc.astimezone(tz)
+        duration_sec = max(0.0, (event_end_utc - event_start_utc).total_seconds())
+        looks_all_day = (
+            duration_sec >= 23 * 3600
+            and start_local_event.hour == 0
+            and start_local_event.minute == 0
+            and end_local_event.hour == 0
+            and end_local_event.minute == 0
+        )
+        if looks_all_day:
+            continue
+
+        calendar_url = str(event.calendar_url or "")
+        if work_calendar_url and calendar_url.rstrip("/") == work_calendar_url.rstrip("/"):
+            calendar_kind = "work"
+        elif bitrix_calendar_url and calendar_url.rstrip("/") == bitrix_calendar_url.rstrip("/"):
+            calendar_kind = "work"
+        elif personal_calendar_url and calendar_url.rstrip("/") == personal_calendar_url.rstrip("/"):
+            calendar_kind = "personal"
+        else:
+            calendar_kind = "calendar"
+
+        event_id = str(event.uid or "").strip()
+        if not event_id:
+            event_id = f"{calendar_kind}:{int(event_start_utc.timestamp())}:{str(event.summary or '')[:80]}"
+
+        events.append(
+            {
+                "id": event_id,
+                "title": str(event.summary or "Без названия"),
+                "start": start_local_event.isoformat(),
+                "end": end_local_event.isoformat(),
+                "kind": calendar_kind,
+            }
+        )
+        if len(events) >= 8:
+            break
+
     return web.json_response(
         {
             "ok": True,
@@ -324,6 +384,8 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             "timezone": tz_name,
             "tasks": tasks,
             "reminders": reminders,
+            "events": events,
+            "calendar_unavailable": bool(calendar_snapshot.unavailable),
         }
     )
 

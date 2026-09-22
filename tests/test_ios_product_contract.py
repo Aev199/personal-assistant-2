@@ -59,6 +59,21 @@ def test_due_reminders_can_take_attention_without_growing_today():
     assert "4 - nextTasks.count" in home
 
 
+def test_calendar_context_stays_attention_first():
+    home = _read("App/ContentView.swift")
+    models = _read("App/Models.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "TodayEvent" in models
+    assert "let events: [TodayEvent]?" in models
+    assert "activeEvent" in home
+    assert "upcomingEvent" in home
+    assert "eventFocusCard" in home
+    assert "WidgetEvent" in widget
+    assert "focusEventView" in widget
+    assert "15 * 60" in widget
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

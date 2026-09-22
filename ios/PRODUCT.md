@@ -18,6 +18,7 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 - An unfinished capture must survive relaunch.
 - There is one explicit current focus. Choosing a new focus must not require reorganizing the backlog.
 - A reminder that is due or within 15 minutes may temporarily take **Сейчас**; it must not be buried behind ordinary tasks.
+- A meeting that is already in progress, or starts within 15 minutes, may take **Сейчас**. Calendar context stays compact rather than becoming a full calendar screen.
 - **Дальше** stays deliberately short: at most four rows on the main screen.
 - Safe capture actions happen without a confirmation ceremony.
 - Ask one concrete follow-up only when required information is genuinely missing.

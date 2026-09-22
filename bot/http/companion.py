@@ -21,7 +21,7 @@ from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
 from bot.services.calendar_today import TodayCalendarSnapshot, fetch_today_calendar
-from bot.services.reminders import snooze_reminder
+from bot.services.reminders import mark_telegram_reminder_snoozed, snooze_reminder
 from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
 
 
@@ -513,7 +513,16 @@ async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamRespons
     if minutes != 15:
         return web.json_response({"ok": False, "error": "unsupported_minutes"}, status=400)
 
+    delivery = None
     async with pool.acquire() as conn:
+        delivery = await conn.fetchrow(
+            """
+            SELECT text, chat_id, telegram_message_id
+            FROM reminders
+            WHERE id=$1
+            """,
+            reminder_id,
+        )
         result = await snooze_reminder(
             conn,
             reminder_id=reminder_id,
@@ -527,6 +536,16 @@ async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamRespons
         return web.json_response({"ok": False, "error": "reminder_not_found"}, status=404)
 
     new_id, new_time, _label = result
+
+    if delivery and delivery["telegram_message_id"]:
+        await mark_telegram_reminder_snoozed(
+            bot=ctx.bot,
+            chat_id=int(delivery["chat_id"] or ctx.deps.admin_id or 0),
+            message_id=int(delivery["telegram_message_id"]),
+            text=str(delivery["text"] or ""),
+            label="15 минут",
+        )
+
     return web.json_response(
         {
             "ok": True,

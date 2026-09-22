@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     attempt_count INTEGER NOT NULL DEFAULT 0,
     cancelled_at_utc TIMESTAMPTZ,
     error_code TEXT,
+    telegram_message_id BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(is_sent, remind_at);

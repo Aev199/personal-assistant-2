@@ -183,6 +183,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
             attempt_count INTEGER NOT NULL DEFAULT 0,
             cancelled_at_utc TIMESTAMPTZ,
             error_code TEXT,
+            telegram_message_id BIGINT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
@@ -208,6 +209,7 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
         "ALTER TABLE reminders ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE reminders ADD COLUMN IF NOT EXISTS cancelled_at_utc TIMESTAMPTZ",
         "ALTER TABLE reminders ADD COLUMN IF NOT EXISTS error_code TEXT",
+        "ALTER TABLE reminders ADD COLUMN IF NOT EXISTS telegram_message_id BIGINT",
         # Older bootstrap versions had chat_id/task_id with NOT NULL constraints.
         "ALTER TABLE reminders ALTER COLUMN chat_id DROP NOT NULL",
         "ALTER TABLE reminders ALTER COLUMN task_id DROP NOT NULL",

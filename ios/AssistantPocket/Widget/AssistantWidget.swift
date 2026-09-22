@@ -383,14 +383,43 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 entry = await load()
             }
 
-            let retry = entry.error == nil ? 15 * 60 : 60
+            let nextRefresh: Date
+            if entry.error != nil {
+                nextRefresh = Date().addingTimeInterval(60)
+            } else {
+                nextRefresh = nextRefreshDate(for: entry)
+            }
+
             completion(
                 Timeline(
                     entries: [entry],
-                    policy: .after(Date().addingTimeInterval(TimeInterval(retry)))
+                    policy: .after(nextRefresh)
                 )
             )
         }
+    }
+
+    private func nextRefreshDate(for entry: AssistantWidgetEntry) -> Date {
+        let now = Date()
+        var candidates: [Date] = [now.addingTimeInterval(15 * 60)]
+
+        for reminder in entry.reminders {
+            guard let at = reminder.at else { continue }
+
+            if at <= now {
+                candidates.append(now.addingTimeInterval(60))
+                continue
+            }
+
+            let attentionStart = at.addingTimeInterval(-15 * 60)
+            if attentionStart > now {
+                candidates.append(attentionStart)
+            } else {
+                candidates.append(at.addingTimeInterval(5))
+            }
+        }
+
+        return candidates.min() ?? now.addingTimeInterval(15 * 60)
     }
 
     private func load() async -> AssistantWidgetEntry {

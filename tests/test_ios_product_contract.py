@@ -125,6 +125,15 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert 'Text("+15")' in widget
 
 
+def test_reminder_delivery_and_widget_state_do_not_compete():
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "nextRefreshDate(for entry:" in widget
+    assert "attentionStart = at.addingTimeInterval(-15 * 60)" in widget
+    assert "at.addingTimeInterval(5)" in widget
+    assert "now.addingTimeInterval(60)" in widget
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

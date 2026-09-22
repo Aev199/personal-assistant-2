@@ -19,6 +19,7 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 - There is one explicit current focus. Choosing a new focus must not require reorganizing the backlog. A manual choice overrides automatic calendar/reminder focus until that task is completed or changed.
 - A reminder that is due or within 15 minutes may temporarily take **Сейчас**; it must not be buried behind ordinary tasks.
 - A due reminder has one default escape hatch: **+15 мин**. More complex rescheduling stays off the primary surface.
+- Telegram is the reminder delivery channel for now; iOS and the widget are attention/state surfaces. A delivered reminder disappears from native Today on refresh. Native snooze makes the previously delivered Telegram alert inactive instead of leaving two live controls for the same reminder.
 - A meeting that is already in progress, or starts within 15 minutes, may take **Сейчас**. Calendar context stays compact rather than becoming a full calendar screen.
 - Acknowledging a calendar event hides it from attention until the event ends; it never deletes or edits the source calendar event. The app uses a swipe on the event card, while the widget uses a compact dismiss button because WidgetKit does not expose arbitrary row swipe gestures.
 - **Дальше** stays deliberately short: at most four rows on the main screen.

@@ -79,6 +79,7 @@ async def _ack_sent(
     repeat: str,
     remind_at,
     tz_name: str,
+    telegram_message_id: int,
 ) -> None:
     rep = (repeat or "none").strip().lower()
     if rep != "none":
@@ -100,7 +101,8 @@ async def _ack_sent(
                     claimed_at_utc=NULL,
                     claim_token=NULL,
                     is_sent=FALSE,
-                    error_code=NULL
+                    error_code=NULL,
+                    telegram_message_id=NULL
                 WHERE id=$1 AND claim_token=$2::uuid
                 """,
                 int(reminder_id),
@@ -118,11 +120,13 @@ async def _ack_sent(
             claimed_at_utc=NULL,
             claim_token=NULL,
             is_sent=TRUE,
-            error_code=NULL
+            error_code=NULL,
+            telegram_message_id=$3
         WHERE id=$1 AND claim_token=$2::uuid
         """,
         int(reminder_id),
         str(claim_token),
+        int(telegram_message_id),
     )
 
 
@@ -213,7 +217,7 @@ async def do_tick(
         for record in records:
             reminder_id = int(record["id"])
             claim_token = str(record["claim_token"])
-            ok = await send_reminder(
+            telegram_message_id = await send_reminder(
                 bot=bot,
                 chat_id=int(record["chat_id"] or admin_id),
                 reminder_id=reminder_id,
@@ -222,7 +226,7 @@ async def do_tick(
                 action_token=claim_token,
             )
             async with pool.acquire() as conn:
-                if ok:
+                if telegram_message_id is not None:
                     await _ack_sent(
                         conn,
                         reminder_id=reminder_id,
@@ -230,6 +234,7 @@ async def do_tick(
                         repeat=str(record["repeat"] or "none"),
                         remind_at=record["remind_at"],
                         tz_name=tz_name,
+                        telegram_message_id=int(telegram_message_id),
                     )
                     delivered += 1
                 else:

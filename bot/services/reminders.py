@@ -41,8 +41,8 @@ async def send_reminder(
     text: str,
     send_timeout_sec: float = 10.0,
     action_token: str = "",
-) -> bool:
-    """Send reminder with timeout and inline buttons; return True if sent."""
+) -> int | None:
+    """Send reminder and return Telegram message_id when delivery succeeds."""
 
     token = (action_token or "").replace("-", "")[:16]
     snooze_15 = f"rem:snooze:15:{reminder_id}:{token}" if token else f"rem:snooze:15:{reminder_id}"
@@ -66,7 +66,7 @@ async def send_reminder(
 
     for attempt in range(3):
         try:
-            await asyncio.wait_for(
+            message = await asyncio.wait_for(
                 bot.send_message(
                     chat_id=chat_id,
                     text=f"🔔 Напоминание:\n{text}",
@@ -74,7 +74,7 @@ async def send_reminder(
                 ),
                 timeout=send_timeout_sec,
             )
-            return True
+            return int(message.message_id)
         except TelegramRetryAfter as e:
             await asyncio.sleep(float(getattr(e, "retry_after", 1.0)) + 0.1)
         except Exception as e:
@@ -85,8 +85,38 @@ async def send_reminder(
                 reminder_id=reminder_id,
                 chat_id=chat_id,
             )
-            return False
-    return False
+            return None
+    return None
+
+
+async def mark_telegram_reminder_snoozed(
+    *,
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    label: str = "15 минут",
+) -> None:
+    """Best-effort: make a delivered Telegram reminder visibly inactive."""
+    try:
+        await bot.edit_message_text(
+            chat_id=int(chat_id),
+            message_id=int(message_id),
+            text=f"🔕 Отложено на {label}\n{text}",
+            reply_markup=None,
+        )
+        return
+    except Exception:
+        pass
+
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=int(chat_id),
+            message_id=int(message_id),
+            reply_markup=None,
+        )
+    except Exception:
+        pass
 
 
 def next_repeat_time_utc_naive(remind_at_dt: datetime, repeat: str, *, tz_name: str) -> datetime | None:
@@ -139,7 +169,7 @@ async def reschedule_reminder(
 ) -> int | None:
     """Cancel one reminder and replace it with a single new pending reminder."""
     row = await conn.fetchrow(
-        "SELECT text, chat_id FROM reminders WHERE id=$1",
+        "SELECT text, chat_id FROM reminders WHERE id=$1 AND cancelled_at_utc IS NULL",
         int(reminder_id),
     )
     if not row:

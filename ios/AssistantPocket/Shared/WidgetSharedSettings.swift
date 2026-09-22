@@ -3,7 +3,6 @@ import Security
 
 enum WidgetSharedSettings {
     private static let service = "com.aev199.assistantpocket.widget-shared"
-    private static let accessGroup = "group.0ee1e5aa54499877.1"
     private static let baseURLAccount = "base-url"
     private static let tokenAccount = "token"
     private static let captureRequestAccount = "capture-request"
@@ -70,7 +69,6 @@ enum WidgetSharedSettings {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -90,7 +88,6 @@ enum WidgetSharedSettings {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: data,
@@ -111,7 +108,6 @@ enum WidgetSharedSettings {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: accessGroup,
         ]
         SecItemDelete(query as CFDictionary)
     }

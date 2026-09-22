@@ -40,6 +40,14 @@ def test_ideas_stay_off_the_default_attention_surface():
     assert "TabView" not in ideas
 
 
+def test_widget_shared_keychain_does_not_hardcode_app_group_as_access_group():
+    source = _read("Shared/WidgetSharedSettings.swift")
+
+    assert "kSecAttrAccessGroup" not in source
+    assert "group.0ee1e5aa54499877" not in source
+    assert 'service = "com.aev199.assistantpocket.widget-shared"' in source
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

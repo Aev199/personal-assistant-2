@@ -43,9 +43,9 @@ Free-form capture uses the backend intake service shared with Telegram. Swift do
 
 ## Widget sharing and sideload signing
 
-The current ESign profile gives the app and widget the same keychain access group. The app writes the server URL and token to that shared Keychain; the widget reads them automatically.
+The current ESign flow re-signs the app and widget with the same code-sign entitlements and therefore the same default Keychain access group. `WidgetSharedSettings` intentionally does not hard-code an App Group as `kSecAttrAccessGroup`: App Groups and Keychain Access Groups are different entitlements.
 
-This avoids a second widget-configuration flow. Quick Done uses an optimistic local cache so the widget can redraw before waiting for a second Today round-trip.
+The app writes the server URL and token to a dedicated Keychain service using that signer-provided default group; the widget reads the same service automatically. This avoids a second widget-configuration flow and remains compatible with the current third-party re-signing profile. Quick Done uses an optimistic local cache so the widget can redraw before waiting for a second Today round-trip.
 
 ## System quick capture
 

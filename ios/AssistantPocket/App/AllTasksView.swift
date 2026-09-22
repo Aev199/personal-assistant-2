@@ -9,8 +9,8 @@ private enum TaskScope: String, CaseIterable, Identifiable {
 
     var emptyTitle: String {
         switch self {
-        case .work: "Рабочих задач нет"
-        case .personal: "Личных задач нет"
+        case .work: return "Рабочих задач нет"
+        case .personal: return "Личных задач нет"
         }
     }
 }

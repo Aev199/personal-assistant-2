@@ -29,6 +29,8 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 ## Interface rules
 
 - No permanent tab bar unless real usage proves one is necessary.
+- A left swipe from Today opens the full active backlog; do not spend permanent toolbar space on a task-list button.
+- Task deadlines always include day context: today/tomorrow or an explicit calendar date.
 - No chat clone in the native app.
 - No model picker, AI badge, “thinking” copy, generated summaries of obvious UI state, or decorative assistant persona.
 - Prefer normal iOS controls and short factual copy.

@@ -124,7 +124,7 @@ struct AllTasksView: View {
                     }
 
                     if let deadline = task.deadline {
-                        Text(deadline, format: .dateTime.day().month().hour().minute())
+                        Text(taskDeadlineText(deadline))
                             .foregroundStyle(task.overdue ? .red : .secondary)
                     }
 

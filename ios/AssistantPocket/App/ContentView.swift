@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var pendingIntake: [NativeIntakePending] = []
     @State private var isFlushingOutbox = false
     @State private var editingTask: TodayTask?
+    @State private var showAllTasks = false
     @FocusState private var captureFocused: Bool
 
     private var activeEvent: TodayEvent? {
@@ -112,17 +113,7 @@ struct ContentView: View {
             }
             .navigationTitle("Сегодня")
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    NavigationLink {
-                        AllTasksView {
-                            Task { await loadToday() }
-                        }
-                        .environmentObject(settings)
-                    } label: {
-                        Image(systemName: "list.bullet")
-                    }
-                    .accessibilityLabel("Все задачи")
-
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showSettings = true
                     } label: {
@@ -131,6 +122,22 @@ struct ContentView: View {
                     .accessibilityLabel("Настройки")
                 }
             }
+            .navigationDestination(isPresented: $showAllTasks) {
+                AllTasksView {
+                    Task { await loadToday() }
+                }
+                .environmentObject(settings)
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24)
+                    .onEnded { value in
+                        guard !captureFocused else { return }
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        guard dx < -70, abs(dx) > abs(dy) * 1.4 else { return }
+                        showAllTasks = true
+                    }
+            )
             .refreshable {
                 await loadToday()
             }
@@ -390,10 +397,10 @@ struct ContentView: View {
 
             if let deadline = task.deadline {
                 if task.overdue {
-                    Text(deadline, format: .dateTime.hour().minute())
+                    Text(taskDeadlineText(deadline))
                         .foregroundStyle(.red)
                 } else {
-                    Text(deadline, format: .dateTime.hour().minute())
+                    Text(taskDeadlineText(deadline))
                         .foregroundStyle(.secondary)
                 }
             }

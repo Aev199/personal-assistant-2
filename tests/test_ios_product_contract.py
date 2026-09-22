@@ -75,6 +75,21 @@ def test_calendar_context_stays_attention_first():
     assert "15 * 60" in widget
 
 
+def test_today_uses_swipe_for_backlog_and_shows_relative_task_dates():
+    home = _read("App/ContentView.swift")
+    tasks = _read("App/AllTasksView.swift")
+    deadline = _read("App/TaskDeadlineFormatting.swift")
+
+    assert 'Image(systemName: "list.bullet")' not in home
+    assert "DragGesture(minimumDistance: 24)" in home
+    assert "dx < -70" in home
+    assert "navigationDestination(isPresented: $showAllTasks)" in home
+    assert "taskDeadlineText(deadline)" in home
+    assert "taskDeadlineText(deadline)" in tasks
+    assert '"сегодня' in deadline
+    assert '"завтра' in deadline
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

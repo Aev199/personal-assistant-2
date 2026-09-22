@@ -6,7 +6,7 @@ struct AssistantPocketApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            AppRootView()
                 .environmentObject(settings)
         }
     }

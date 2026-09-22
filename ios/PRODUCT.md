@@ -10,7 +10,7 @@ The Home Screen widget and **Сегодня** answer only three questions:
 2. **Дальше** — what is next, in a deliberately short list?
 3. **Запомнить** — how do I get a thought out of my head immediately?
 
-The full backlog is one level deeper. Ideas are deeper still and never enter the attention queue until promoted. Projects are context, not navigation.
+The app has three stable top-level destinations: **Сегодня**, **Задачи**, and **Идеи**. Ideas never enter the attention queue until promoted. Projects are context, not top-level navigation.
 
 ## ADHD-first rules
 
@@ -32,8 +32,10 @@ The full backlog is one level deeper. Ideas are deeper still and never enter the
 
 ## Interface rules
 
-- No permanent tab bar unless real usage proves one is necessary.
-- Important navigation is explicit, not gesture-only: **Изменить** beside **Сейчас** opens a searchable list of all active tasks, and **Все задачи** beside **Дальше** opens the backlog. A deliberate left swipe on **Сегодня** is also a fast accelerator into the backlog; local meeting actions stay explicit rather than gesture-only.
+- Use the standard iOS bottom tab bar for the three stable destinations: **Сегодня**, **Задачи**, **Идеи**. Do not add more permanent tabs without clear evidence.
+- **Сегодня** contains attention and capture only; it does not duplicate global navigation with a **Все задачи** button or whole-screen navigation swipe.
+- **Задачи** has exactly two visible scopes: **Рабочие** and **Личные**. The segmented control is explicit; horizontal paging is the fast accelerator between them.
+- Horizontal swipes inside **Задачи** belong to scope navigation, so task-row actions must not compete for the same gesture. **Выполнено** and **Сейчас** remain explicit row controls.
 - Task deadlines always include day context: today/tomorrow or an explicit calendar date.
 - No chat clone in the native app.
 - No model picker, AI badge, “thinking” copy, generated summaries of obvious UI state, or decorative assistant persona.
@@ -49,7 +51,7 @@ Free-form input is sent to the backend intake service, which uses the same Gemin
 ## Channel roles
 
 - **Widget:** glance, Quick Done, one-tap **Сейчас** for visible next tasks, refresh, text capture and one-tap entry into voice capture.
-- **iOS:** today, capture, choose focus, correct a task, browse/search active work, review saved ideas secondarily.
+- **iOS:** three stable tabs — today/capture, work-personal tasks, and saved ideas — plus local focus/edit actions.
 - **Telegram:** conversational commands, bulk operations and richer interaction while at a PC.
 - **Backend:** canonical state, attention ordering, intake, mutations and integrations.
 

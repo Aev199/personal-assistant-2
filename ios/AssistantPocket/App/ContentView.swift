@@ -3,6 +3,8 @@ import SwiftUI
 import WidgetKit
 
 struct ContentView: View {
+    let refreshToken: Int
+
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.scenePhase) private var scenePhase
 
@@ -23,7 +25,6 @@ struct ContentView: View {
     @State private var isVoiceSending = false
     @StateObject private var voiceRecorder = VoiceRecorder()
     @State private var editingTask: TodayTask?
-    @State private var showAllTasks = false
     @State private var showFocusPicker = false
     @FocusState private var captureFocused: Bool
 
@@ -132,22 +133,6 @@ struct ContentView: View {
                     .accessibilityLabel("Настройки")
                 }
             }
-            .navigationDestination(isPresented: $showAllTasks) {
-                AllTasksView {
-                    Task { await loadToday() }
-                }
-                .environmentObject(settings)
-            }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 28)
-                    .onEnded { value in
-                        guard !captureFocused else { return }
-                        let dx = value.translation.width
-                        let dy = value.translation.height
-                        guard dx < -90, abs(dx) > abs(dy) * 1.6 else { return }
-                        showAllTasks = true
-                    }
-            )
             .refreshable {
                 await loadToday()
             }
@@ -186,6 +171,9 @@ struct ContentView: View {
                         await flushVoiceOutbox()
                     }
                 }
+            }
+            .onChange(of: refreshToken) { _, _ in
+                Task { await loadToday() }
             }
             .sheet(isPresented: $showSettings, onDismiss: {
                 Task { await loadToday() }
@@ -357,20 +345,8 @@ struct ContentView: View {
     private var nextSection: some View {
         if !nextTasks.isEmpty || nextEvent != nil || nextReminder != nil {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Дальше")
-                        .font(.headline)
-
-                    Spacer()
-
-                    Button("Все задачи") {
-                        showAllTasks = true
-                    }
-                    .font(.subheadline.weight(.medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Открыть все задачи")
-                }
+                Text("Дальше")
+                    .font(.headline)
 
                 if let event = nextEvent {
                     compactEventRow(event)

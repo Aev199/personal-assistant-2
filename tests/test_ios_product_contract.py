@@ -9,13 +9,18 @@ def _read(relative: str) -> str:
     return (IOS / relative).read_text(encoding="utf-8")
 
 
-def test_ios_home_stays_attention_first_without_tab_bar():
+def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
+    root = _read("App/AppRootView.swift")
     source = _read("App/ContentView.swift")
 
+    assert "TabView(selection: $selectedTab)" in root
+    assert 'Label("Сегодня", systemImage: "house")' in root
+    assert 'Label("Задачи", systemImage: "checkmark.circle")' in root
+    assert 'Label("Идеи", systemImage: "lightbulb")' in root
     assert 'Text("Сейчас")' in source
     assert 'Text("Дальше")' in source
     assert 'assistant.captureDraft' in source
-    assert "TabView" not in source
+    assert 'Button("Все задачи")' not in source
 
 
 def test_ios_does_not_embed_model_or_classifier_logic():
@@ -28,16 +33,17 @@ def test_ios_does_not_embed_model_or_classifier_logic():
     assert "llm" not in lowered
 
 
-def test_ideas_stay_off_the_default_attention_surface():
+def test_ideas_are_a_separate_tab_and_stay_off_today():
+    root = _read("App/AppRootView.swift")
     home = _read("App/ContentView.swift")
     backlog = _read("App/AllTasksView.swift")
     ideas = _read("App/IdeasView.swift")
 
+    assert "IdeasView" in root
     assert "IdeasView" not in home
-    assert "IdeasView" in backlog
+    assert "IdeasView" not in backlog
     assert 'navigationTitle("Идеи")' in ideas
     assert "swipeActions" in ideas
-    assert "TabView" not in ideas
 
 
 def test_widget_shared_keychain_does_not_hardcode_app_group_as_access_group():
@@ -75,20 +81,28 @@ def test_calendar_context_stays_attention_first():
     assert "15 * 60" in widget
 
 
-def test_today_uses_explicit_attention_navigation_and_relative_dates():
+def test_today_keeps_local_focus_action_and_tasks_page_between_work_personal():
+    root = _read("App/AppRootView.swift")
     home = _read("App/ContentView.swift")
     tasks = _read("App/AllTasksView.swift")
     deadline = _read("Shared/TaskDeadlineFormatting.swift")
 
     assert 'Button("Изменить")' in home
-    assert 'Button("Все задачи")' in home
-    assert "navigationDestination(isPresented: $showAllTasks)" in home
-    assert "DragGesture(minimumDistance: 28)" in home
-    assert "dx < -90" in home
+    assert 'Button("Все задачи")' not in home
+    assert "showAllTasks" not in home
+    assert "dx < -90" not in home
+    assert 'case work = "Рабочие"' in tasks
+    assert 'case personal = "Личные"' in tasks
+    assert 'Picker("Тип задач", selection: $scope)' in tasks
+    assert "TabView(selection: $scope)" in tasks
+    assert ".tabViewStyle(.page(indexDisplayMode: .never))" in tasks
+    assert "swipeActions" not in tasks
+    assert 'Image(systemName: "play.fill")' in tasks
     assert "taskDeadlineText(deadline)" in home
     assert "taskDeadlineText(deadline)" in tasks
     assert '"сегодня' in deadline
     assert '"завтра' in deadline
+    assert "AllTasksView" in root
 
 
 def test_calendar_attention_can_be_dismissed_without_deleting_calendar():

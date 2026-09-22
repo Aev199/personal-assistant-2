@@ -1,27 +1,32 @@
 import SwiftUI
 import WidgetKit
 
+private enum TaskScope: String, CaseIterable, Identifiable {
+    case work = "Рабочие"
+    case personal = "Личные"
+
+    var id: Self { self }
+
+    var emptyTitle: String {
+        switch self {
+        case .work: "Рабочих задач нет"
+        case .personal: "Личных задач нет"
+        }
+    }
+}
+
 struct AllTasksView: View {
     @EnvironmentObject private var settings: AppSettings
 
+    let refreshToken: Int
     let onChanged: () -> Void
 
     @State private var tasks: [TodayTask] = []
     @State private var searchText = ""
+    @State private var scope: TaskScope = .work
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var editingTask: TodayTask?
-
-    private var filteredTasks: [TodayTask] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return tasks }
-
-        return tasks.filter { task in
-            task.title.localizedCaseInsensitiveContains(query)
-                || task.project.localizedCaseInsensitiveContains(query)
-                || task.assignee.localizedCaseInsensitiveContains(query)
-        }
-    }
 
     var body: some View {
         Group {
@@ -34,57 +39,37 @@ struct AllTasksView: View {
                     systemImage: "wifi.exclamationmark",
                     description: Text(errorMessage)
                 )
-            } else if filteredTasks.isEmpty {
-                ContentUnavailableView(
-                    searchText.isEmpty ? "Активных задач нет" : "Ничего не найдено",
-                    systemImage: searchText.isEmpty ? "checkmark.circle" : "magnifyingglass"
-                )
             } else {
-                List {
-                    ForEach(filteredTasks) { task in
-                        taskRow(task)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                editingTask = task
-                            }
-                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                if !task.isFocused {
-                                    Button {
-                                        Task { await focus(task) }
-                                    } label: {
-                                        Label("Сейчас", systemImage: "play.fill")
-                                    }
-                                }
-                            }
+                VStack(spacing: 0) {
+                    Picker("Тип задач", selection: $scope) {
+                        ForEach(TaskScope.allCases) { item in
+                            Text(item.rawValue).tag(item)
+                        }
                     }
-                }
-                .listStyle(.plain)
-                .refreshable {
-                    await load()
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+
+                    TabView(selection: $scope) {
+                        taskPage(.work)
+                            .tag(TaskScope.work)
+
+                        taskPage(.personal)
+                            .tag(TaskScope.personal)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
                 }
             }
         }
         .navigationTitle("Задачи")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    IdeasView {
-                        Task {
-                            await load()
-                            onChanged()
-                        }
-                    }
-                    .environmentObject(settings)
-                } label: {
-                    Image(systemName: "lightbulb")
-                }
-                .accessibilityLabel("Идеи")
-            }
-        }
+        .navigationBarTitleDisplayMode(.large)
         .searchable(text: $searchText, prompt: "Найти задачу")
         .task {
             await load()
+        }
+        .onChange(of: refreshToken) { _, _ in
+            Task { await load() }
         }
         .sheet(item: $editingTask) { task in
             TaskEditView(task: task) {
@@ -94,6 +79,56 @@ struct AllTasksView: View {
                 }
             }
             .environmentObject(settings)
+        }
+    }
+
+    @ViewBuilder
+    private func taskPage(_ pageScope: TaskScope) -> some View {
+        let visible = filteredTasks(for: pageScope)
+
+        if visible.isEmpty {
+            ContentUnavailableView(
+                searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? pageScope.emptyTitle
+                    : "Ничего не найдено",
+                systemImage: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "checkmark.circle"
+                    : "magnifyingglass"
+            )
+        } else {
+            List {
+                ForEach(visible) { task in
+                    taskRow(task)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            editingTask = task
+                        }
+                }
+            }
+            .listStyle(.plain)
+            .refreshable {
+                await load()
+            }
+        }
+    }
+
+    private func filteredTasks(for pageScope: TaskScope) -> [TodayTask] {
+        let scoped = tasks.filter { task in
+            switch pageScope {
+            case .work:
+                !task.isPersonal
+            case .personal:
+                task.isPersonal
+            }
+        }
+
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return scoped }
+
+        return scoped.filter { task in
+            task.title.localizedCaseInsensitiveContains(query)
+                || task.project.localizedCaseInsensitiveContains(query)
+                || task.assignee.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -142,7 +177,20 @@ struct AllTasksView: View {
                 .foregroundStyle(.secondary)
             }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+
+            if !task.isFocused {
+                Button {
+                    Task { await focus(task) }
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.subheadline)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Сейчас")
+            }
         }
         .padding(.vertical, 4)
     }

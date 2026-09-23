@@ -1013,6 +1013,8 @@ struct ContentView: View {
 
     @MainActor
     private func sendTranscribedVoiceCapture(_ queued: QueuedCapture) async {
+        VoiceCaptureOutbox.remove(queued.id)
+
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             let response = try await client.intake(
@@ -1197,6 +1199,8 @@ struct ContentView: View {
         var refreshed = false
 
         for item in queued {
+            VoiceCaptureOutbox.remove(item.id)
+
             do {
                 let response = try await client.intake(item.text, context: item.context, clientID: item.id)
                 if response.status == "stored" {

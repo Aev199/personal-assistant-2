@@ -433,6 +433,15 @@ def test_personal_client_targets_modern_speech_stack_and_prewarms_it_during_reco
     assert "#available(iOS 26.0" not in local
 
 
+def test_text_outbox_wins_over_same_id_audio_after_handoff():
+    home = _read("App/ContentView.swift")
+
+    assert "private func sendTranscribedVoiceCapture" in home
+    assert "VoiceCaptureOutbox.remove(queued.id)" in home
+    assert "for item in queued" in home
+    assert "VoiceCaptureOutbox.remove(item.id)" in home
+
+
 def test_voice_audio_to_text_handoff_is_recoverable_after_a_crash():
     home = _read("App/ContentView.swift")
     outbox = _read("App/CaptureOutbox.swift")

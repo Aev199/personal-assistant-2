@@ -171,20 +171,12 @@ struct ContentView: View {
                 }
                 consumeSystemCaptureRequest()
             }
-            .onOpenURL { url in
-                guard url.scheme == "assistantpocket", url.host == "capture" else { return }
-                let mode = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                    .queryItems?
-                    .first(where: { $0.name == "mode" })?
-                    .value
-                if mode == "voice" {
+            .onReceive(NotificationCenter.default.publisher(for: CaptureLaunchSignal.notification)) { notification in
+                if CaptureLaunchSignal.mode(from: notification) == .voice {
                     activateVoiceCapture()
                 } else {
                     activateCapture()
                 }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: CaptureLaunchSignal.notification)) { _ in
-                activateCapture()
             }
             .onReceive(clock) { tick in
                 now = tick

@@ -1,13 +1,34 @@
 import AppIntents
 import Foundation
 
+enum CaptureLaunchMode: String {
+    case text
+    case voice
+}
+
 enum CaptureLaunchSignal {
     static let notification = Notification.Name("assistant.capture.requested")
 
     @MainActor
     static func request() {
         WidgetSharedSettings.requestCaptureLaunch()
-        NotificationCenter.default.post(name: notification, object: nil)
+        notify(mode: .text)
+    }
+
+    @MainActor
+    static func notify(mode: CaptureLaunchMode) {
+        NotificationCenter.default.post(
+            name: notification,
+            object: mode.rawValue
+        )
+    }
+
+    static func mode(from notification: Notification) -> CaptureLaunchMode {
+        guard let raw = notification.object as? String,
+              let mode = CaptureLaunchMode(rawValue: raw) else {
+            return .text
+        }
+        return mode
     }
 
     static func consume() -> Bool {

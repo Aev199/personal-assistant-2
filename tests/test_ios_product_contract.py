@@ -63,6 +63,19 @@ def test_ideas_keep_actions_without_permanent_instructional_noise():
     assert "Смахните идею:" not in ideas
 
 
+def test_capture_deep_links_are_routed_at_root_after_switching_to_today():
+    root = _read("App/AppRootView.swift")
+    home = _read("App/ContentView.swift")
+    intents = _read("Shared/CaptureIntents.swift")
+
+    assert 'selectedTab = .today' in root
+    assert 'mode == "voice" ? .voice : .text' in root
+    assert "CaptureLaunchSignal.notify" in root
+    assert ".onOpenURL" not in home
+    assert "CaptureLaunchSignal.mode(from: notification) == .voice" in home
+    assert "enum CaptureLaunchMode" in intents
+
+
 def test_capture_is_one_tap_from_tasks_and_ideas_without_duplicating_intake_ui():
     tasks = _read("App/AllTasksView.swift")
     ideas = _read("App/IdeasView.swift")

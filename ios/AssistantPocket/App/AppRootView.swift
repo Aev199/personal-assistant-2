@@ -48,6 +48,15 @@ struct AppRootView: View {
         .onOpenURL { url in
             guard url.scheme == "assistantpocket", url.host == "capture" else { return }
             selectedTab = .today
+
+            let mode = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "mode" })?
+                .value
+
+            DispatchQueue.main.async {
+                CaptureLaunchSignal.notify(mode: mode == "voice" ? .voice : .text)
+            }
         }
     }
 }

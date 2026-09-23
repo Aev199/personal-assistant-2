@@ -196,7 +196,8 @@ struct ContentView: View {
                     didRetryPendingCalendar = false
                     consumeSystemCaptureRequest()
                     Task {
-                        await loadToday()
+                        // AppRoot bumps refreshToken for all primary tabs on foreground.
+                        // Keep recovery work here, but do not issue a duplicate /today request.
                         await loadPendingIntake()
                         await flushOutbox()
                         await flushVoiceOutbox()

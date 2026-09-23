@@ -61,6 +61,19 @@ struct IdeasView: View {
         }
         .navigationTitle("Идеи")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Link(destination: URL(string: "assistantpocket://capture?mode=voice")!) {
+                    Image(systemName: "mic")
+                }
+                .accessibilityLabel("Записать голосом")
+
+                Link(destination: URL(string: "assistantpocket://capture")!) {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("Запомнить")
+            }
+        }
         .task {
             await load()
         }

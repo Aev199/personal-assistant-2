@@ -46,6 +46,20 @@ def test_ideas_are_a_separate_tab_and_stay_off_today():
     assert "swipeActions" in ideas
 
 
+def test_capture_is_one_tap_from_tasks_and_ideas_without_duplicating_intake_ui():
+    tasks = _read("App/AllTasksView.swift")
+    ideas = _read("App/IdeasView.swift")
+    root = _read("App/AppRootView.swift")
+
+    for source in (tasks, ideas):
+        assert 'assistantpocket://capture?mode=voice' in source
+        assert 'assistantpocket://capture' in source
+        assert 'accessibilityLabel("Запомнить")' in source
+        assert 'accessibilityLabel("Записать голосом")' in source
+
+    assert 'selectedTab = .today' in root
+
+
 def test_widget_shared_keychain_does_not_hardcode_app_group_as_access_group():
     source = _read("Shared/WidgetSharedSettings.swift")
 

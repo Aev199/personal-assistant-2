@@ -64,6 +64,19 @@ struct AllTasksView: View {
         }
         .navigationTitle("Задачи")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Link(destination: URL(string: "assistantpocket://capture?mode=voice")!) {
+                    Image(systemName: "mic")
+                }
+                .accessibilityLabel("Записать голосом")
+
+                Link(destination: URL(string: "assistantpocket://capture")!) {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("Запомнить")
+            }
+        }
         .searchable(text: $searchText, prompt: "Найти задачу")
         .task {
             await load()

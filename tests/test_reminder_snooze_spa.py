@@ -142,6 +142,12 @@ class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
             ))
 
         reschedule.assert_not_awaited()
+        self.assertTrue(
+            any(
+                "telegram_message_id=NULL" in call.args[0]
+                for call in conn.execute.await_args_list
+            )
+        )
         callback.answer.assert_awaited_with("⏸ Отложено на 15 мин")
 
     async def test_snooze_from_reminders_screen_keeps_spa_message(self) -> None:

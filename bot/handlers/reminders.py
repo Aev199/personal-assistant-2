@@ -174,6 +174,12 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
                 new_time_db,
                 new_time,
             )
+            # Invalidate this delivered occurrence for stale iOS/widget caches.
+            # The recurring row itself already represents the future series.
+            await conn.execute(
+                "UPDATE reminders SET telegram_message_id=NULL WHERE id=$1",
+                rem_id,
+            )
         else:
             new_id = await reschedule_reminder(
                 conn,

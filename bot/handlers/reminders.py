@@ -145,7 +145,7 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
                 snooze_text = f"{hours} ч" if mins % 60 == 0 else f"{hours} ч {mins % 60} мин"
             else:
                 snooze_text = f"{mins} мин"
-        repeat = str((alert_row or {}).get("repeat") or "none").strip().lower()
+        repeat = str(alert_row["repeat"] if alert_row is not None else "none").strip().lower()
         if from_alert_message and repeat != "none":
             # Tick advances a repeating reminder immediately after delivery.
             # Snoozing the delivered popup must therefore create a one-off

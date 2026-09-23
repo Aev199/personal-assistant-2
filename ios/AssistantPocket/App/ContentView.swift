@@ -888,13 +888,21 @@ struct ContentView: View {
                 clientID: queued.id
             )
 
-            VoiceCaptureOutbox.remove(queued.id)
-
             if response.status == "stored" {
+                if let transcript = response.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !transcript.isEmpty {
+                    _ = CaptureOutbox.enqueue(
+                        text: transcript,
+                        context: queued.context,
+                        id: queued.id
+                    )
+                    VoiceCaptureOutbox.remove(queued.id)
+                }
                 presentConfirmation("Голос записан, разберу позже")
                 return
             }
 
+            VoiceCaptureOutbox.remove(queued.id)
             await applyIntakeResponse(
                 response,
                 originalText: response.transcript ?? "Голосовая запись"
@@ -935,14 +943,24 @@ struct ContentView: View {
                     context: item.context,
                     clientID: item.id
                 )
-                VoiceCaptureOutbox.remove(item.id)
-
-                if response.status != "stored" {
-                    await applyIntakeResponse(
-                        response,
-                        originalText: response.transcript ?? "Голосовая запись"
-                    )
+                if response.status == "stored" {
+                    if let transcript = response.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !transcript.isEmpty {
+                        _ = CaptureOutbox.enqueue(
+                            text: transcript,
+                            context: item.context,
+                            id: item.id
+                        )
+                        VoiceCaptureOutbox.remove(item.id)
+                    }
+                    continue
                 }
+
+                VoiceCaptureOutbox.remove(item.id)
+                await applyIntakeResponse(
+                    response,
+                    originalText: response.transcript ?? "Голосовая запись"
+                )
             } catch {
                 break
             }

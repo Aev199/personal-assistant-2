@@ -16,14 +16,18 @@ enum CaptureOutbox {
     }
 
     @discardableResult
-    static func enqueue(text: String, context: String?) -> QueuedCapture {
+    static func enqueue(
+        text: String,
+        context: String?,
+        id: UUID = UUID()
+    ) -> QueuedCapture {
         let item = QueuedCapture(
-            id: UUID(),
+            id: id,
             text: text,
             context: context,
             createdAt: .now
         )
-        var items = all()
+        var items = all().filter { $0.id != id }
         items.append(item)
         save(items)
         return item

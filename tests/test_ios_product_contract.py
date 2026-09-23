@@ -349,6 +349,17 @@ def test_reminder_delivery_and_widget_state_do_not_compete():
     assert "event.end.addingTimeInterval(5)" in widget
 
 
+def test_voice_capture_keeps_transcript_for_retry_when_classification_is_deferred():
+    home = _read("App/ContentView.swift")
+    outbox = _read("App/CaptureOutbox.swift")
+
+    assert "id: UUID = UUID()" in outbox
+    assert "id: queued.id" in home
+    assert "id: item.id" in home
+    assert 'response.status == "stored"' in home
+    assert "CaptureOutbox.enqueue(" in home
+
+
 def test_voice_capture_is_fast_shared_and_loss_resistant():
     home = _read("App/ContentView.swift")
     api = _read("App/APIClient.swift")

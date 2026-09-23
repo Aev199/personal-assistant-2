@@ -16,6 +16,17 @@ class _Calendar:
         return list(self.events_by_url.get(url, []))
 
 
+class _FlakyCalendar:
+    def __init__(self):
+        self.calls = 0
+
+    async def list_events(self, url, *, start_utc, end_utc):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary CalDAV failure")
+        return []
+
+
 class CalendarTodayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         calendar_today._CACHE.clear()
@@ -39,6 +50,26 @@ class CalendarTodayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.events, ())
         self.assertTrue(result.unavailable)
         self.assertFalse(result.pending)
+
+    async def test_failed_refresh_is_not_cached_so_retry_can_recover(self):
+        client = _FlakyCalendar()
+
+        first = await calendar_today.fetch_today_calendar(
+            tz=ZoneInfo("Europe/Moscow"),
+            calendar_urls=["cal://work"],
+            icloud=client,
+            cache_ttl_sec=90,
+        )
+        second = await calendar_today.fetch_today_calendar(
+            tz=ZoneInfo("Europe/Moscow"),
+            calendar_urls=["cal://work"],
+            icloud=client,
+            cache_ttl_sec=90,
+        )
+
+        self.assertTrue(first.unavailable)
+        self.assertFalse(second.unavailable)
+        self.assertEqual(client.calls, 2)
 
     async def test_deduplicates_cross_calendar_copy_and_uses_short_cache(self):
         start = datetime(2026, 9, 22, 9, 0, tzinfo=timezone.utc)

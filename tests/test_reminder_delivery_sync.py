@@ -71,6 +71,24 @@ class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message_id, 321)
         self.assertTrue(accepted)
 
+    async def test_repeating_delivery_keeps_last_message_id_for_stale_callback_guard(self):
+        conn = AsyncMock()
+        conn.execute.return_value = "UPDATE 1"
+
+        accepted = await _ack_sent(
+            conn,
+            reminder_id=7,
+            claim_token="00000000-0000-0000-0000-000000000001",
+            repeat="daily",
+            remind_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            tz_name="Europe/Moscow",
+            telegram_message_id=321,
+        )
+
+        self.assertTrue(accepted)
+        sql = conn.execute.await_args.args[0]
+        self.assertIn("telegram_message_id=$5", sql)
+
     async def test_ack_sent_reports_lost_claim_instead_of_counting_delivery(self):
         conn = AsyncMock()
         conn.execute.return_value = "UPDATE 0"

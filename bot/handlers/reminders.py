@@ -77,8 +77,36 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
     except Exception:
         return await callback.answer("Ошибка", show_alert=True)
 
-    action_key = f"snooze:{rem_id}:{val}:{action_token or 'no-token'}"
     async with db_pool.acquire() as conn:
+        alert_row = None
+        if from_alert_message:
+            alert_row = await conn.fetchrow(
+                """
+                SELECT text, chat_id, COALESCE(repeat, 'none') AS repeat,
+                       status, telegram_message_id, claim_token
+                FROM reminders
+                WHERE id=$1 AND cancelled_at_utc IS NULL
+                """,
+                rem_id,
+            )
+            if not alert_row:
+                return await callback.answer("Это напоминание уже неактуально")
+
+            callback_message_id = int(getattr(callback.message, "message_id", 0) or 0)
+            stored_message_id = int(alert_row["telegram_message_id"] or 0)
+            stored_token = str(alert_row["claim_token"] or "").replace("-", "")[:16]
+            alert_is_current = (
+                (callback_message_id > 0 and stored_message_id == callback_message_id)
+                or (bool(stored_token) and stored_token == action_token)
+            )
+            if not alert_is_current:
+                return await callback.answer("Это напоминание уже неактуально")
+
+        action_key = (
+            f"snooze-alert:{rem_id}:{action_token or int(getattr(callback.message, 'message_id', 0) or 0)}"
+            if from_alert_message
+            else f"snooze:{rem_id}:{val}:{action_token or 'no-token'}"
+        )
         journal_id = await record_action_journal(
             conn,
             chat_id=int(callback.message.chat.id),
@@ -117,14 +145,44 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
                 snooze_text = f"{hours} ч" if mins % 60 == 0 else f"{hours} ч {mins % 60} мин"
             else:
                 snooze_text = f"{mins} мин"
-        new_id = await reschedule_reminder(
-            conn,
-            reminder_id=rem_id,
-            new_time_utc=new_time,
-            fallback_chat_id=int(callback.message.chat.id),
-            tz_name=deps.tz_name,
-            store_tz=bool(getattr(deps, "db_reminders_remind_at_timestamptz", False)),
-        )
+        repeat = str((alert_row or {}).get("repeat") or "none").strip().lower()
+        if from_alert_message and repeat != "none":
+            # Tick advances a repeating reminder immediately after delivery.
+            # Snoozing the delivered popup must therefore create a one-off
+            # retry for the current occurrence, not destroy the future series.
+            new_time_db = to_db_utc(
+                new_time,
+                tz_name=deps.tz_name,
+                store_tz=bool(getattr(deps, "db_reminders_remind_at_timestamptz", False)),
+            )
+            new_id = await conn.fetchval(
+                """
+                INSERT INTO reminders (
+                    chat_id,
+                    text,
+                    remind_at,
+                    repeat,
+                    status,
+                    next_attempt_at_utc,
+                    is_sent
+                )
+                VALUES ($1, $2, $3, 'none', 'pending', $4, FALSE)
+                RETURNING id
+                """,
+                int(alert_row["chat_id"] or callback.message.chat.id),
+                str(alert_row["text"] or ""),
+                new_time_db,
+                new_time,
+            )
+        else:
+            new_id = await reschedule_reminder(
+                conn,
+                reminder_id=rem_id,
+                new_time_utc=new_time,
+                fallback_chat_id=int(callback.message.chat.id),
+                tz_name=deps.tz_name,
+                store_tz=bool(getattr(deps, "db_reminders_remind_at_timestamptz", False)),
+            )
         if new_id is None:
             return await callback.answer("Напоминание не найдено", show_alert=True)
 

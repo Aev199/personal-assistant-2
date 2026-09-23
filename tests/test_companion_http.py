@@ -155,11 +155,17 @@ def test_focus_mutations_are_serialized_across_app_and_widget_requests():
     unfocus_start = source.index("async def handle_task_unfocus")
     done_start = source.index("async def handle_task_done", unfocus_start)
     unfocus_block = source[unfocus_start:done_start]
-    done_block = source[done_start:]
+    done_end = source.index('return web.json_response({"ok": True, "task_id": task_id, "status": "done"})', done_start)
+    done_block = source[done_start:done_end]
+
+    reminder_ack_start = source.index("async def handle_reminder_ack")
+    reminder_snooze_start = source.index("async def handle_reminder_snooze", reminder_ack_start)
+    reminder_ack_block = source[reminder_ack_start:reminder_snooze_start]
 
     assert "_lock_attention_focus(conn" in focus_block
     assert "_lock_attention_focus(conn" in unfocus_block
     assert "_lock_attention_focus(conn" in done_block
+    assert "_lock_attention_focus(conn" not in reminder_ack_block
 
 
 def test_focus_previous_status_is_scoped_to_the_same_task():

@@ -605,7 +605,6 @@ async def handle_reminder_ack(request: web.Request, ctx) -> web.StreamResponse:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
             row = await conn.fetchrow(
                 """
                 SELECT id, text, remind_at, repeat, status, is_sent
@@ -1688,6 +1687,7 @@ async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
             row = await conn.fetchrow(
                 """
                 SELECT t.id, t.title, t.status, t.kind, t.project_id, p.code AS project_code

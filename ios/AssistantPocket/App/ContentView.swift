@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var didRetryPendingCalendar = false
     @State private var hasLoadedToday = false
     @State private var todayStale = false
+    @State private var todayLoadGeneration = 0
     @State private var isLoading = false
     @State private var isSending = false
     @State private var errorMessage: String?
@@ -877,13 +878,22 @@ struct ContentView: View {
     @MainActor
     private func loadToday() async {
         guard settings.isConfigured else { return }
+
+        todayLoadGeneration += 1
+        let generation = todayLoadGeneration
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if generation == todayLoadGeneration {
+                isLoading = false
+            }
+        }
 
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             let response = try await client.loadToday()
+            guard generation == todayLoadGeneration else { return }
+
             tasks = response.tasks
             reminders = response.reminders
             events = response.events ?? []
@@ -901,6 +911,7 @@ struct ContentView: View {
                 didRetryPendingCalendar = false
             }
         } catch {
+            guard generation == todayLoadGeneration else { return }
             if hasLoadedToday {
                 todayStale = true
             } else {

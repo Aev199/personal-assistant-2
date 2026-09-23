@@ -90,6 +90,19 @@ def test_capture_is_one_tap_from_tasks_and_ideas_without_duplicating_intake_ui()
     assert 'selectedTab = .today' in root
 
 
+def test_overlapping_refreshes_cannot_overwrite_newer_primary_tab_state():
+    home = _read("App/ContentView.swift")
+    tasks = _read("App/AllTasksView.swift")
+    ideas = _read("App/IdeasView.swift")
+
+    assert "todayLoadGeneration += 1" in home
+    assert "guard generation == todayLoadGeneration else { return }" in home
+    assert "loadGeneration += 1" in tasks
+    assert "guard generation == loadGeneration else { return }" in tasks
+    assert "loadGeneration += 1" in ideas
+    assert "guard generation == loadGeneration else { return }" in ideas
+
+
 def test_primary_tabs_share_one_revision_so_capture_and_mutations_do_not_leave_stale_lists():
     root = _read("App/AppRootView.swift")
     home = _read("App/ContentView.swift")

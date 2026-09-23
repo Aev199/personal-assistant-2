@@ -7,6 +7,7 @@ struct IdeasView: View {
     let onTaskCreated: () -> Void
 
     @State private var ideas: [AssistantIdea] = []
+    @State private var loadGeneration = 0
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var actionError: String?
@@ -113,14 +114,23 @@ struct IdeasView: View {
     private func load() async {
         guard settings.isConfigured else { return }
 
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if generation == loadGeneration {
+                isLoading = false
+            }
+        }
 
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            ideas = try await client.loadIdeas().ideas
+            let response = try await client.loadIdeas()
+            guard generation == loadGeneration else { return }
+            ideas = response.ideas
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }

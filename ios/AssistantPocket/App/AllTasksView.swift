@@ -24,6 +24,7 @@ struct AllTasksView: View {
     @State private var tasks: [TodayTask] = []
     @State private var searchText = ""
     @State private var scope: TaskScope = .work
+    @State private var loadGeneration = 0
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var actionError: String?
@@ -231,16 +232,26 @@ struct AllTasksView: View {
     private func load() async {
         guard settings.isConfigured else { return }
 
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if generation == loadGeneration {
+                isLoading = false
+            }
+        }
 
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            tasks = try await client.loadTasks().tasks
+            let response = try await client.loadTasks()
+            guard generation == loadGeneration else { return }
+            tasks = response.tasks
         } catch let APIClientError.http(code, _) where code == 404 {
+            guard generation == loadGeneration else { return }
             errorMessage = "Обновите backend Assistant до версии с полным API."
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }

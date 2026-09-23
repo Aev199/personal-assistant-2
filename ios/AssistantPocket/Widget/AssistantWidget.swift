@@ -150,8 +150,34 @@ private enum WidgetCodec {
 private actor WidgetMutationCoordinator {
     static let shared = WidgetMutationCoordinator()
 
+    private var isRunning = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    private func acquire() async {
+        if !isRunning {
+            isRunning = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        guard !waiters.isEmpty else {
+            isRunning = false
+            return
+        }
+
+        let next = waiters.removeFirst()
+        next.resume()
+    }
+
     func run<T: Sendable>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
-        try await operation()
+        await acquire()
+        defer { release() }
+        return try await operation()
     }
 }
 
@@ -447,29 +473,32 @@ struct DismissCalendarEventIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        let originalCache = WidgetSharedSettings.cachedTodayData
-
-        if let optimisticCache = WidgetCodec.cacheWithoutEvent(eventID) {
-            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        return try await WidgetMutationCoordinator.shared.run {
+                let originalCache = WidgetSharedSettings.cachedTodayData
+        
+                if let optimisticCache = WidgetCodec.cacheWithoutEvent(eventID) {
+                    WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                }
+        
+                do {
+                    try await WidgetNetwork.dismissEvent(eventID: eventID, until: eventEnd)
+                    WidgetSharedSettings.clearCachedTodayPreference()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    return .result()
+                } catch {
+                    if let originalCache {
+                        WidgetSharedSettings.writeCachedTodayData(originalCache)
+                    } else {
+                        WidgetSharedSettings.clearCachedTodayData()
+                    }
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    throw error
+                }
         }
 
-        do {
-            try await WidgetNetwork.dismissEvent(eventID: eventID, until: eventEnd)
-            WidgetSharedSettings.clearCachedTodayPreference()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            return .result()
-        } catch {
-            if let originalCache {
-                WidgetSharedSettings.writeCachedTodayData(originalCache)
-            } else {
-                WidgetSharedSettings.clearCachedTodayData()
-            }
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            throw error
-        }
     }
 }
 
@@ -488,29 +517,32 @@ struct AcknowledgeReminderIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        let originalCache = WidgetSharedSettings.cachedTodayData
-
-        if let optimisticCache = WidgetCodec.cacheWithoutReminder(reminderID) {
-            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        return try await WidgetMutationCoordinator.shared.run {
+                let originalCache = WidgetSharedSettings.cachedTodayData
+        
+                if let optimisticCache = WidgetCodec.cacheWithoutReminder(reminderID) {
+                    WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                }
+        
+                do {
+                    try await WidgetNetwork.acknowledgeReminder(reminderID: reminderID)
+                    WidgetSharedSettings.clearCachedTodayPreference()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    return .result()
+                } catch {
+                    if let originalCache {
+                        WidgetSharedSettings.writeCachedTodayData(originalCache)
+                    } else {
+                        WidgetSharedSettings.clearCachedTodayData()
+                    }
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    throw error
+                }
         }
 
-        do {
-            try await WidgetNetwork.acknowledgeReminder(reminderID: reminderID)
-            WidgetSharedSettings.clearCachedTodayPreference()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            return .result()
-        } catch {
-            if let originalCache {
-                WidgetSharedSettings.writeCachedTodayData(originalCache)
-            } else {
-                WidgetSharedSettings.clearCachedTodayData()
-            }
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            throw error
-        }
     }
 }
 
@@ -530,29 +562,32 @@ struct SnoozeReminderIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        let originalCache = WidgetSharedSettings.cachedTodayData
-
-        if let optimisticCache = WidgetCodec.cacheWithoutReminder(reminderID) {
-            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        return try await WidgetMutationCoordinator.shared.run {
+                let originalCache = WidgetSharedSettings.cachedTodayData
+        
+                if let optimisticCache = WidgetCodec.cacheWithoutReminder(reminderID) {
+                    WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                }
+        
+                do {
+                    try await WidgetNetwork.snoozeReminder(reminderID: reminderID)
+                    WidgetSharedSettings.clearCachedTodayPreference()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    return .result()
+                } catch {
+                    if let originalCache {
+                        WidgetSharedSettings.writeCachedTodayData(originalCache)
+                    } else {
+                        WidgetSharedSettings.clearCachedTodayData()
+                    }
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    throw error
+                }
         }
 
-        do {
-            try await WidgetNetwork.snoozeReminder(reminderID: reminderID)
-            WidgetSharedSettings.clearCachedTodayPreference()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            return .result()
-        } catch {
-            if let originalCache {
-                WidgetSharedSettings.writeCachedTodayData(originalCache)
-            } else {
-                WidgetSharedSettings.clearCachedTodayData()
-            }
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            throw error
-        }
     }
 }
 

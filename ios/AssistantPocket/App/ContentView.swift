@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var tasks: [TodayTask] = []
     @State private var reminders: [TodayReminder] = []
     @State private var events: [TodayEvent] = []
+    @State private var hasLoadedToday = false
     @State private var isLoading = false
     @State private var isSending = false
     @State private var errorMessage: String?
@@ -131,7 +132,7 @@ struct ContentView: View {
                             .transition(.opacity)
                     }
 
-                    if let errorMessage {
+                    if hasLoadedToday, let errorMessage {
                         Label(errorMessage, systemImage: "wifi.exclamationmark")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -252,7 +253,24 @@ struct ContentView: View {
                 }
             }
 
-            if let event = focusEvent {
+            if !hasLoadedToday && errorMessage != nil && settings.isConfigured && !isLoading {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Не удалось обновить", systemImage: "wifi.exclamationmark")
+                        .font(.title3.weight(.semibold))
+
+                    Text("Проверьте соединение или VPN. Ничего не помечаю как свободное, пока данные не загрузились.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Button("Повторить") {
+                        Task { await loadToday() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+            } else if let event = focusEvent {
                 eventFocusCard(event)
             } else if let reminder = focusReminder {
                 reminderFocusCard(reminder)
@@ -815,6 +833,7 @@ struct ContentView: View {
             tasks = response.tasks
             reminders = response.reminders
             events = response.events ?? []
+            hasLoadedToday = true
         } catch {
             present(error)
         }

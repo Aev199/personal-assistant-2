@@ -89,6 +89,17 @@ def test_primary_tabs_share_one_revision_so_capture_and_mutations_do_not_leave_s
     assert ".onChange(of: refreshToken)" in ideas
 
 
+def test_today_does_not_misreport_empty_day_when_first_load_failed():
+    home = _read("App/ContentView.swift")
+
+    assert "@State private var hasLoadedToday = false" in home
+    assert '"Не удалось обновить"' in home
+    assert '"Проверьте соединение или VPN.' in home
+    assert 'Button("Повторить")' in home
+    assert "hasLoadedToday = true" in home
+    assert "if hasLoadedToday, let errorMessage" in home
+
+
 def test_capture_feedback_is_ephemeral_instead_of_becoming_screen_clutter():
     home = _read("App/ContentView.swift")
 

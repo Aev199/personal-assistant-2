@@ -35,6 +35,17 @@ def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
     assert 'Button("Все задачи")' not in source
 
 
+def test_explicit_now_always_wins_over_calendar_attention_in_app():
+    home = _read("App/ContentView.swift")
+
+    focus_event = home[home.index("private var focusEvent:"):home.index("private var focusReminder:")]
+    focus_reminder = home[home.index("private var focusReminder:"):home.index("private var focusTask:")]
+
+    assert 'guard manualFocusTask == nil else { return nil }' in focus_event
+    assert 'guard manualFocusTask == nil, activeEvent == nil else { return nil }' in focus_reminder
+    assert 'Text("↩︎ вернуться")' not in home
+
+
 def test_ios_does_not_embed_model_or_classifier_logic():
     swift = "\n".join(path.read_text(encoding="utf-8") for path in IOS.rglob("*.swift"))
     lowered = swift.lower()

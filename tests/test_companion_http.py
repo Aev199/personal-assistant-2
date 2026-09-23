@@ -32,6 +32,7 @@ def test_assistant_routes_include_canonical_and_legacy_aliases():
     assert ("POST", "/api/v1/tasks/{task_id}/done") in routes
     assert ("POST", "/api/v1/attention/dismiss-event") in routes
     assert ("POST", "/api/v1/reminders/{reminder_id}/snooze") in routes
+    assert ("POST", "/api/v1/reminders/{reminder_id}/ack") in routes
 
     assert ("GET", "/api/v1/companion/today") in routes
     assert ("POST", "/api/v1/companion/capture") in routes
@@ -250,6 +251,20 @@ def test_attention_selector_keeps_explicit_focus_first():
     )
 
     assert [row["id"] for row in selected][:2] == [21, 20]
+
+
+def test_native_reminder_ack_preserves_repeat_and_ignores_stale_future_occurrence():
+    source = open(companion.__file__, encoding="utf-8").read()
+    start = source.index("async def handle_reminder_ack")
+    end = source.index("async def handle_reminder_snooze", start)
+    block = source[start:end]
+
+    assert "next_repeat_time_utc_naive" in block
+    assert "already_advanced" in block
+    assert '"already_handled"' in block
+    assert "status='pending'" in block
+    assert "status='sent'" in block
+    assert "claim_token=NULL" in block
 
 
 def test_today_keeps_missed_reminders_visible_without_letting_the_oldest_win():

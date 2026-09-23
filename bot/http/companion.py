@@ -21,7 +21,11 @@ from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
 from bot.services.calendar_today import TodayCalendarSnapshot, fetch_today_calendar
-from bot.services.reminders import mark_telegram_reminder_snoozed, snooze_reminder
+from bot.services.reminders import (
+    mark_telegram_reminder_snoozed,
+    next_repeat_time_utc_naive,
+    snooze_reminder,
+)
 from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
 
 
@@ -342,6 +346,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _snooze_reminder(request: web.Request) -> web.StreamResponse:
         return await handle_reminder_snooze(request, ctx)
 
+    async def _ack_reminder(request: web.Request) -> web.StreamResponse:
+        return await handle_reminder_ack(request, ctx)
+
     # Canonical client API.
     app.router.add_get("/api/v1/today", _today)
     app.router.add_get("/api/v1/tasks", _tasks)
@@ -362,6 +369,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
     app.router.add_post("/api/v1/attention/dismiss-event", _dismiss_event)
     app.router.add_post("/api/v1/reminders/{reminder_id}/snooze", _snooze_reminder)
+    app.router.add_post("/api/v1/reminders/{reminder_id}/ack", _ack_reminder)
 
     # Compatibility for already installed companion builds.
     app.router.add_get("/api/v1/companion/today", _today)
@@ -562,6 +570,124 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             "events": events,
             "calendar_unavailable": bool(calendar_snapshot.unavailable),
             "calendar_pending": bool(calendar_snapshot.pending),
+        }
+    )
+
+
+async def handle_reminder_ack(request: web.Request, ctx) -> web.StreamResponse:
+    """Acknowledge a due reminder from native attention surfaces.
+
+    A repeating reminder advances to its next occurrence. A stale client tap
+    never consumes a future occurrence that Telegram may already have advanced.
+    """
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        reminder_id = int(request.match_info["reminder_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_reminder_id"}, status=400)
+
+    tz_name = resolve_tz_name(ctx.deps.tz_name)
+    now_utc = datetime.now(timezone.utc)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT id, text, remind_at, repeat, status, is_sent
+                FROM reminders
+                WHERE id=$1
+                FOR UPDATE
+                """,
+                reminder_id,
+            )
+            if not row:
+                return web.json_response({"ok": False, "error": "reminder_not_found"}, status=404)
+
+            remind_utc = _utc_aware(row["remind_at"])
+            status = str(row["status"] or "pending").lower()
+            already_advanced = remind_utc is not None and remind_utc > now_utc + timedelta(seconds=30)
+            if bool(row["is_sent"]) or status not in {"pending", "retry", "claimed"} or already_advanced:
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "status": "already_handled",
+                        "reminder_id": reminder_id,
+                    }
+                )
+
+            repeat = str(row["repeat"] or "none").strip().lower()
+            next_time_naive = None
+            if repeat != "none":
+                next_time_naive = next_repeat_time_utc_naive(
+                    row["remind_at"],
+                    repeat,
+                    tz_name=tz_name,
+                )
+
+            if next_time_naive is not None:
+                next_time_aware = next_time_naive.replace(tzinfo=timezone.utc)
+                next_time_db = to_db_utc(
+                    next_time_aware,
+                    tz_name=tz_name,
+                    store_tz=bool(
+                        getattr(ctx.deps, "db_reminders_remind_at_timestamptz", False)
+                    ),
+                )
+                await conn.execute(
+                    """
+                    UPDATE reminders
+                    SET status='pending',
+                        remind_at=$2,
+                        next_attempt_at_utc=$3,
+                        is_sent=FALSE,
+                        sent_at_utc=NOW(),
+                        claimed_at_utc=NULL,
+                        claim_token=NULL,
+                        error_code=NULL,
+                        telegram_message_id=NULL
+                    WHERE id=$1
+                    """,
+                    reminder_id,
+                    next_time_db,
+                    next_time_aware,
+                )
+                result_status = "acknowledged_repeating"
+            else:
+                await conn.execute(
+                    """
+                    UPDATE reminders
+                    SET status='sent',
+                        is_sent=TRUE,
+                        sent_at_utc=NOW(),
+                        claimed_at_utc=NULL,
+                        claim_token=NULL,
+                        next_attempt_at_utc=NULL,
+                        error_code=NULL
+                    WHERE id=$1
+                    """,
+                    reminder_id,
+                )
+                result_status = "acknowledged"
+
+            await db_add_event(
+                conn,
+                "reminder_ack",
+                None,
+                None,
+                f"iOS reminder ack: #{reminder_id} {str(row['text'] or '')[:200]}",
+            )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "status": result_status,
+            "reminder_id": reminder_id,
         }
     )
 

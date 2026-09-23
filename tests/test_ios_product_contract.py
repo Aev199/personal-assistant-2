@@ -310,6 +310,19 @@ def test_action_failures_are_visible_on_attention_surfaces():
     assert "errorMessage != nil && !tasks.isEmpty" in focus_picker
 
 
+def test_due_reminder_can_be_acknowledged_in_app_or_widget_to_stop_future_delivery():
+    home = _read("App/ContentView.swift")
+    api = _read("App/APIClient.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert 'Button("ОК")' in home
+    assert "client.acknowledgeReminder(reminderID: reminder.id)" in home
+    assert "/api/v1/reminders/\\(reminderID)/ack" in api
+    assert "AcknowledgeReminderIntent" in widget
+    assert "WidgetNetwork.acknowledgeReminder" in widget
+    assert 'accessibilityLabel("Закрыть напоминание")' in widget
+
+
 def test_now_can_be_changed_and_reminders_can_be_snoozed():
     home = _read("App/ContentView.swift")
     focus_picker = _read("App/FocusPickerView.swift")

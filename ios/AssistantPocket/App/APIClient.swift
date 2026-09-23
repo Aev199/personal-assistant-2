@@ -306,6 +306,16 @@ struct APIClient {
         return try decode(TaskStartHelpResponse.self, data: data, response: response)
     }
 
+    func acknowledgeReminder(reminderID: Int) async throws -> AttentionMutationResponse {
+        let req = try request(
+            path: "/api/v1/reminders/\(reminderID)/ack",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(AttentionMutationResponse.self, data: data, response: response)
+    }
+
     func snoozeReminder(reminderID: Int, minutes: Int = 15) async throws -> AttentionMutationResponse {
         let body = try JSONSerialization.data(withJSONObject: ["minutes": minutes])
         let req = try request(

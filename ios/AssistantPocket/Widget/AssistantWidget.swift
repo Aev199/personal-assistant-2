@@ -188,6 +188,18 @@ private enum WidgetNetwork {
         }
     }
 
+    static func acknowledgeReminder(reminderID: Int) async throws {
+        let (_, response) = try await send(
+            path: "/api/v1/reminders/\(reminderID)/ack",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+
+        guard 200..<300 ~= response.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     static func snoozeReminder(reminderID: Int) async throws {
         let body = try JSONSerialization.data(withJSONObject: ["minutes": 15])
         let (_, response) = try await send(
@@ -374,6 +386,48 @@ struct DismissCalendarEventIntent: AppIntent {
         }
     }
 }
+
+struct AcknowledgeReminderIntent: AppIntent {
+    static var title: LocalizedStringResource = "Закрыть напоминание"
+    static var description = IntentDescription("Отмечает напоминание обработанным.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Reminder ID")
+    var reminderID: Int
+
+    init() {}
+
+    init(reminderID: Int) {
+        self.reminderID = reminderID
+    }
+
+    func perform() async throws -> some IntentResult {
+        let originalCache = WidgetSharedSettings.cachedTodayData
+
+        if let optimisticCache = WidgetCodec.cacheWithoutReminder(reminderID) {
+            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        }
+
+        do {
+            try await WidgetNetwork.acknowledgeReminder(reminderID: reminderID)
+            WidgetSharedSettings.clearCachedTodayPreference()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            return .result()
+        } catch {
+            if let originalCache {
+                WidgetSharedSettings.writeCachedTodayData(originalCache)
+            } else {
+                WidgetSharedSettings.clearCachedTodayData()
+            }
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            throw error
+        }
+    }
+}
+
 
 struct SnoozeReminderIntent: AppIntent {
     static var title: LocalizedStringResource = "Отложить напоминание"
@@ -940,6 +994,13 @@ private struct AssistantWidgetView: View {
             }
 
             Spacer(minLength: 0)
+
+            Button(intent: AcknowledgeReminderIntent(reminderID: reminder.id)) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Закрыть напоминание")
 
             Button(intent: SnoozeReminderIntent(reminderID: reminder.id)) {
                 Text("+15")

@@ -528,12 +528,21 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
-            Button("+15") {
-                Task { await snooze(reminder) }
+            VStack(spacing: 8) {
+                Button("ОК") {
+                    Task { await acknowledge(reminder) }
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .accessibilityLabel("Закрыть напоминание")
+
+                Button("+15") {
+                    Task { await snooze(reminder) }
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .accessibilityLabel("Отложить на 15 минут")
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
-            .accessibilityLabel("Отложить на 15 минут")
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1311,6 +1320,22 @@ struct ContentView: View {
             }
         } catch {
             present(error)
+        }
+    }
+
+    @MainActor
+    private func acknowledge(_ reminder: TodayReminder) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.acknowledgeReminder(reminderID: reminder.id)
+            withAnimation {
+                reminders.removeAll { $0.id == reminder.id }
+            }
+            presentConfirmation("Напоминание закрыто")
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        } catch {
+            presentActionError(error)
         }
     }
 

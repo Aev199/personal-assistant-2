@@ -89,6 +89,14 @@ def test_primary_tabs_share_one_revision_so_capture_and_mutations_do_not_leave_s
     assert ".onChange(of: refreshToken)" in ideas
 
 
+def test_capture_feedback_is_ephemeral_instead_of_becoming_screen_clutter():
+    home = _read("App/ContentView.swift")
+
+    assert "private func presentConfirmation" in home
+    assert "confirmationRevision" in home
+    assert ".now() + 2.4" in home
+
+
 def test_capture_feedback_says_what_was_saved():
     home = _read("App/ContentView.swift")
 

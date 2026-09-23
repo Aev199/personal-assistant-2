@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var isSending = false
     @State private var errorMessage: String?
     @State private var confirmation: String?
+    @State private var confirmationRevision = 0
     @State private var showSettings = false
     @AppStorage("assistant.clarificationContext") private var clarificationContext = ""
     @AppStorage("assistant.clarificationPrompt") private var clarificationPrompt = ""
@@ -872,7 +873,7 @@ struct ContentView: View {
             VoiceCaptureOutbox.remove(queued.id)
 
             if response.status == "stored" {
-                confirmation = "Голос записан, разберу позже"
+                presentConfirmation("Голос записан, разберу позже")
                 return
             }
 
@@ -882,7 +883,7 @@ struct ContentView: View {
             )
         } catch {
             if isRetryable(error) {
-                confirmation = "Голос сохранён на телефоне"
+                presentConfirmation("Голос сохранён на телефоне")
                 return
             }
 
@@ -953,7 +954,7 @@ struct ContentView: View {
 
             if response.status == "stored" {
                 captureFocused = false
-                confirmation = "Сохранено, разберу позже"
+                presentConfirmation("Сохранено, разберу позже")
                 return
             }
 
@@ -963,7 +964,7 @@ struct ContentView: View {
             if isRetryable(error) {
                 captureText = ""
                 captureFocused = false
-                confirmation = "Сохранено на телефоне"
+                presentConfirmation("Сохранено на телефоне")
                 return
             }
 
@@ -994,18 +995,18 @@ struct ContentView: View {
         if savedCount == 1, let item = response.saved.first {
             switch item.kind.lowercased() {
             case "idea":
-                confirmation = "Идея сохранена"
+                presentConfirmation("Идея сохранена")
             case "reminder":
-                confirmation = "Напоминание создано"
+                presentConfirmation("Напоминание создано")
             case "event", "calendar_event":
-                confirmation = "Встреча добавлена"
+                presentConfirmation("Встреча добавлена")
             default:
-                confirmation = "Задача записана"
+                presentConfirmation("Задача записана")
             }
         } else if savedCount > 1 {
-            confirmation = "Записано: \(savedCount)"
+            presentConfirmation("Записано: \(savedCount)")
         } else if response.status == "stored" {
-            confirmation = response.message ?? "Записано"
+            presentConfirmation(response.message ?? "Записано")
         }
 
         if savedCount > 0 {
@@ -1032,7 +1033,7 @@ struct ContentView: View {
             do {
                 let response = try await client.intake(item.text, context: item.context, clientID: item.id)
                 if response.status == "stored" {
-                    confirmation = "Сохранено, разберу позже"
+                    presentConfirmation("Сохранено, разберу позже")
                     break
                 }
 
@@ -1082,7 +1083,7 @@ struct ContentView: View {
             withAnimation {
                 pendingIntake.removeAll { $0.id == pending.id }
             }
-            confirmation = "Добавлено"
+            presentConfirmation("Добавлено")
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
         } catch {
@@ -1113,7 +1114,7 @@ struct ContentView: View {
             withAnimation {
                 reminders.removeAll { $0.id == reminder.id }
             }
-            confirmation = "Отложено на 15 минут"
+            presentConfirmation("Отложено на 15 минут")
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)
@@ -1232,6 +1233,22 @@ struct ContentView: View {
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)
+        }
+    }
+
+    @MainActor
+    private func presentConfirmation(_ message: String) {
+        confirmationRevision += 1
+        let revision = confirmationRevision
+        withAnimation(.easeOut(duration: 0.15)) {
+            confirmation = message
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+            guard confirmationRevision == revision else { return }
+            withAnimation(.easeIn(duration: 0.15)) {
+                confirmation = nil
+            }
         }
     }
 

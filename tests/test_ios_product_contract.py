@@ -523,10 +523,20 @@ def test_voice_capture_is_fast_shared_and_loss_resistant():
     assert "NSMicrophoneUsageDescription" in project
 
 
+def test_widget_marks_cached_fallback_as_stale_without_hiding_useful_content():
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "let stale: Bool" in widget
+    assert "cachedEntry(stale: true)" in widget
+    assert 'Image(systemName: "wifi.slash")' in widget
+    assert 'accessibilityLabel("Показаны сохранённые данные")' in widget
+    assert "entry.error != nil || entry.calendarPending || entry.stale" in widget
+
+
 def test_widget_does_not_ask_for_manual_refresh_during_normal_operation():
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "if entry.error != nil" in widget
+    assert "if entry.error != nil || entry.stale" in widget
     assert "RefreshAssistantWidgetIntent" in widget
 
 

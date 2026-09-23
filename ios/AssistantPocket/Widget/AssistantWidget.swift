@@ -68,7 +68,7 @@ private enum WidgetCodec {
         return try? encoder.encode(value)
     }
 
-    static func cachedEntry() -> AssistantWidgetEntry? {
+    static func cachedEntry(stale: Bool = false) -> AssistantWidgetEntry? {
         guard let data = WidgetSharedSettings.cachedTodayData,
               let today = decodeToday(data) else {
             return nil
@@ -80,6 +80,7 @@ private enum WidgetCodec {
             events: today.events ?? [],
             calendarUnavailable: today.calendarUnavailable ?? false,
             calendarPending: today.calendarPending ?? false,
+            stale: stale,
             error: nil
         )
     }
@@ -427,6 +428,7 @@ private struct AssistantWidgetEntry: TimelineEntry {
     let events: [WidgetEvent]
     let calendarUnavailable: Bool
     let calendarPending: Bool
+    let stale: Bool
     let error: String?
 }
 
@@ -443,6 +445,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
             events: [],
             calendarUnavailable: false,
             calendarPending: false,
+            stale: false,
             error: nil
         )
     }
@@ -475,7 +478,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
             }
 
             let nextRefresh: Date
-            if entry.error != nil || entry.calendarPending {
+            if entry.error != nil || entry.calendarPending || entry.stale {
                 nextRefresh = Date().addingTimeInterval(60)
             } else {
                 nextRefresh = nextRefreshDate(for: entry)
@@ -530,6 +533,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 events: [],
                 calendarUnavailable: false,
                 calendarPending: false,
+                stale: false,
                 error: "Откройте Assistant и сохраните настройки"
             )
         }
@@ -545,6 +549,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                     events: [],
                     calendarUnavailable: false,
                     calendarPending: false,
+                    stale: false,
                     error: "Неверный код доступа"
                 )
             }
@@ -565,10 +570,11 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 events: today.events ?? [],
                 calendarUnavailable: today.calendarUnavailable ?? false,
                 calendarPending: today.calendarPending ?? false,
+                stale: false,
                 error: nil
             )
         } catch {
-            if let cached = WidgetCodec.cachedEntry() {
+            if let cached = WidgetCodec.cachedEntry(stale: true) {
                 return cached
             }
             return AssistantWidgetEntry(
@@ -578,6 +584,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 events: [],
                 calendarUnavailable: false,
                 calendarPending: false,
+                stale: false,
                 error: "Нет связи"
             )
         }
@@ -739,9 +746,16 @@ private struct AssistantWidgetView: View {
                     .accessibilityLabel("Календарь не обновился")
             }
 
+            if entry.stale {
+                Image(systemName: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Показаны сохранённые данные")
+            }
+
             Spacer()
 
-            if entry.error != nil {
+            if entry.error != nil || entry.stale {
                 Button(intent: RefreshAssistantWidgetIntent()) {
                     Image(systemName: "arrow.clockwise")
                         .font(.subheadline.weight(.semibold))

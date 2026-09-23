@@ -111,10 +111,26 @@ struct FocusPickerView: View {
                 }
             }
             .searchable(text: $searchText, prompt: "Найти задачу")
+            .alert("Не удалось изменить «Сейчас»", isPresented: actionErrorPresented) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
             .task {
                 await load()
             }
         }
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil && !tasks.isEmpty },
+            set: { isPresented in
+                if !isPresented {
+                    errorMessage = nil
+                }
+            }
+        )
     }
 
     private func isCurrent(_ task: TodayTask) -> Bool {

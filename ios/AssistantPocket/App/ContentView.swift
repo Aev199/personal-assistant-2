@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var isSending = false
     @State private var errorMessage: String?
+    @State private var actionError: String?
     @State private var confirmation: String?
     @State private var confirmationRevision = 0
     @State private var showSettings = false
@@ -196,6 +197,11 @@ struct ContentView: View {
             }
             .onChange(of: refreshToken) { _, _ in
                 Task { await loadToday() }
+            }
+            .alert("Не удалось выполнить действие", isPresented: actionErrorPresented) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(actionError ?? "")
             }
             .sheet(isPresented: $showSettings, onDismiss: {
                 Task { await loadToday() }
@@ -1131,7 +1137,7 @@ struct ContentView: View {
             presentConfirmation("Отложено на 15 минут")
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1146,7 +1152,7 @@ struct ContentView: View {
             }
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1214,7 +1220,7 @@ struct ContentView: View {
             await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1229,7 +1235,7 @@ struct ContentView: View {
             await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1246,7 +1252,7 @@ struct ContentView: View {
             onChanged()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1264,6 +1270,37 @@ struct ContentView: View {
                 confirmation = nil
             }
         }
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { actionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    actionError = nil
+                }
+            }
+        )
+    }
+
+    @MainActor
+    private func presentActionError(_ error: Error) {
+        if error is CancellationError {
+            return
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled:
+                return
+            case .timedOut, .notConnectedToInternet, .networkConnectionLost,
+                 .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+                actionError = "Нет связи с Assistant."
+                return
+            default:
+                break
+            }
+        }
+        actionError = error.localizedDescription
     }
 
     @MainActor

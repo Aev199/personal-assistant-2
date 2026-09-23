@@ -202,6 +202,16 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
     assert "Shared/TaskDeadlineFormatting.swift" in project
 
 
+def test_action_failures_are_visible_on_attention_surfaces():
+    home = _read("App/ContentView.swift")
+    focus_picker = _read("App/FocusPickerView.swift")
+
+    assert 'alert("Не удалось выполнить действие"' in home
+    assert "presentActionError(error)" in home
+    assert 'alert("Не удалось изменить «Сейчас»"' in focus_picker
+    assert "errorMessage != nil && !tasks.isEmpty" in focus_picker
+
+
 def test_now_can_be_changed_and_reminders_can_be_snoozed():
     home = _read("App/ContentView.swift")
     focus_picker = _read("App/FocusPickerView.swift")

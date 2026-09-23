@@ -278,6 +278,48 @@ def test_attention_selector_keeps_explicit_focus_first():
     assert [row["id"] for row in selected][:2] == [21, 20]
 
 
+def test_native_snooze_preserves_repeating_series_and_rejects_stale_future_tap():
+    now = datetime(2026, 9, 24, 9, 0, tzinfo=timezone.utc)
+
+    due_repeat = {
+        "status": "pending",
+        "repeat": "daily",
+        "telegram_message_id": None,
+        "remind_at": datetime(2026, 9, 24, 8, 59),
+    }
+    advanced_repeat = {
+        "status": "pending",
+        "repeat": "daily",
+        "telegram_message_id": None,
+        "remind_at": datetime(2026, 9, 25, 9, 0),
+    }
+    delivered_repeat = {
+        **advanced_repeat,
+        "telegram_message_id": 321,
+    }
+    sent_single = {
+        "status": "sent",
+        "repeat": "none",
+        "telegram_message_id": None,
+        "remind_at": datetime(2026, 9, 24, 8, 59),
+    }
+
+    assert companion._native_reminder_snooze_mode(due_repeat, now_utc=now) == "advance_repeat"
+    assert companion._native_reminder_snooze_mode(advanced_repeat, now_utc=now) == "already_handled"
+    assert companion._native_reminder_snooze_mode(delivered_repeat, now_utc=now) == "retry_delivered_repeat"
+    assert companion._native_reminder_snooze_mode(sent_single, now_utc=now) == "already_handled"
+
+    source = open(companion.__file__, encoding="utf-8").read()
+    start = source.index("async def handle_reminder_snooze")
+    end = source.index("async def handle_event_dismiss", start)
+    block = source[start:end]
+
+    assert "next_repeat_time_utc_naive" in block
+    assert "retry_delivered_repeat" in block
+    assert "INSERT INTO reminders" in block
+    assert "'none', 'pending'" in block
+
+
 def test_native_reminder_ack_preserves_repeat_and_ignores_stale_future_occurrence():
     source = open(companion.__file__, encoding="utf-8").read()
     start = source.index("async def handle_reminder_ack")

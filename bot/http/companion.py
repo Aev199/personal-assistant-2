@@ -147,6 +147,29 @@ def _active_dismissed_event_items(
     return active
 
 
+def _native_reminder_snooze_mode(row, *, now_utc: datetime) -> str:
+    """Choose snooze semantics without letting a stale native tap alter a later occurrence."""
+    status = str(row["status"] or "pending").strip().lower()
+    repeat = str(row["repeat"] or "none").strip().lower()
+    telegram_message_id = row["telegram_message_id"]
+    remind_utc = _utc_aware(row["remind_at"])
+
+    if repeat != "none":
+        if remind_utc is not None and remind_utc <= now_utc + timedelta(seconds=30):
+            return "advance_repeat"
+        if telegram_message_id:
+            # Tick already advanced the recurring series, but the popup for the
+            # just-delivered occurrence is still the one the native cache saw.
+            return "retry_delivered_repeat"
+        return "already_handled"
+
+    if status in {"pending", "retry", "claimed"}:
+        return "reschedule_single"
+    if status == "sent" and telegram_message_id:
+        return "reschedule_single"
+    return "already_handled"
+
+
 def _utc_aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -727,29 +750,130 @@ async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamRespons
     if minutes != 15:
         return web.json_response({"ok": False, "error": "unsupported_minutes"}, status=400)
 
+    now_utc = datetime.now(timezone.utc)
+    new_time = now_utc + timedelta(minutes=minutes)
     delivery = None
+    new_id: int | None = None
+
     async with pool.acquire() as conn:
-        delivery = await conn.fetchrow(
-            """
-            SELECT text, chat_id, telegram_message_id
-            FROM reminders
-            WHERE id=$1
-            """,
-            reminder_id,
-        )
-        result = await snooze_reminder(
-            conn,
-            reminder_id=reminder_id,
-            minutes=minutes,
-            fallback_chat_id=int(ctx.deps.admin_id or 0),
-            tz_name=ctx.deps.tz_name,
-            store_tz=bool(getattr(ctx.deps, "db_reminders_remind_at_timestamptz", False)),
-        )
+        async with conn.transaction():
+            delivery = await conn.fetchrow(
+                """
+                SELECT id, text, chat_id, remind_at, COALESCE(repeat, 'none') AS repeat,
+                       COALESCE(status, 'pending') AS status,
+                       COALESCE(is_sent, FALSE) AS is_sent,
+                       telegram_message_id
+                FROM reminders
+                WHERE id=$1 AND cancelled_at_utc IS NULL
+                FOR UPDATE
+                """,
+                reminder_id,
+            )
+            if not delivery:
+                return web.json_response({"ok": False, "error": "reminder_not_found"}, status=404)
 
-    if result is None:
-        return web.json_response({"ok": False, "error": "reminder_not_found"}, status=404)
+            mode = _native_reminder_snooze_mode(delivery, now_utc=now_utc)
+            if mode == "already_handled":
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "status": "already_handled",
+                        "reminder_id": reminder_id,
+                    }
+                )
 
-    new_id, new_time, _label = result
+            repeat = str(delivery["repeat"] or "none").strip().lower()
+            if mode in {"advance_repeat", "retry_delivered_repeat"}:
+                if mode == "advance_repeat":
+                    next_time_naive = next_repeat_time_utc_naive(
+                        delivery["remind_at"],
+                        repeat,
+                        tz_name=resolve_tz_name(ctx.deps.tz_name),
+                    )
+                    if next_time_naive is None:
+                        return web.json_response(
+                            {"ok": False, "error": "unsupported_repeat"},
+                            status=409,
+                        )
+                    next_time_aware = next_time_naive.replace(tzinfo=timezone.utc)
+                    next_time_db = to_db_utc(
+                        next_time_aware,
+                        tz_name=resolve_tz_name(ctx.deps.tz_name),
+                        store_tz=bool(
+                            getattr(ctx.deps, "db_reminders_remind_at_timestamptz", False)
+                        ),
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE reminders
+                        SET status='pending',
+                            remind_at=$2,
+                            next_attempt_at_utc=$3,
+                            is_sent=FALSE,
+                            sent_at_utc=NOW(),
+                            claimed_at_utc=NULL,
+                            claim_token=NULL,
+                            error_code=NULL,
+                            telegram_message_id=NULL
+                        WHERE id=$1
+                        """,
+                        reminder_id,
+                        next_time_db,
+                        next_time_aware,
+                    )
+                else:
+                    # The recurring row already points at the next occurrence.
+                    # Consume only the delivered popup marker.
+                    await conn.execute(
+                        "UPDATE reminders SET telegram_message_id=NULL WHERE id=$1",
+                        reminder_id,
+                    )
+
+                new_time_db = to_db_utc(
+                    new_time,
+                    tz_name=resolve_tz_name(ctx.deps.tz_name),
+                    store_tz=bool(
+                        getattr(ctx.deps, "db_reminders_remind_at_timestamptz", False)
+                    ),
+                )
+                new_id = int(
+                    await conn.fetchval(
+                        """
+                        INSERT INTO reminders (
+                            chat_id,
+                            text,
+                            remind_at,
+                            repeat,
+                            status,
+                            next_attempt_at_utc,
+                            is_sent
+                        )
+                        VALUES ($1, $2, $3, 'none', 'pending', $4, FALSE)
+                        RETURNING id
+                        """,
+                        int(delivery["chat_id"] or ctx.deps.admin_id or 0),
+                        str(delivery["text"] or ""),
+                        new_time_db,
+                        new_time,
+                    )
+                )
+            else:
+                result = await snooze_reminder(
+                    conn,
+                    reminder_id=reminder_id,
+                    minutes=minutes,
+                    fallback_chat_id=int(ctx.deps.admin_id or 0),
+                    tz_name=ctx.deps.tz_name,
+                    store_tz=bool(
+                        getattr(ctx.deps, "db_reminders_remind_at_timestamptz", False)
+                    ),
+                )
+                if result is None:
+                    return web.json_response(
+                        {"ok": False, "error": "reminder_not_found"},
+                        status=404,
+                    )
+                new_id, new_time, _label = result
 
     if delivery and delivery["telegram_message_id"]:
         await mark_telegram_reminder_snoozed(
@@ -765,12 +889,11 @@ async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamRespons
             "ok": True,
             "status": "snoozed",
             "reminder_id": reminder_id,
-            "new_reminder_id": new_id,
+            "new_reminder_id": int(new_id),
             "at": new_time.isoformat(),
             "minutes": minutes,
         }
     )
-
 
 async def handle_event_dismiss(request: web.Request, ctx) -> web.StreamResponse:
     """Hide a calendar event from attention surfaces without deleting it."""

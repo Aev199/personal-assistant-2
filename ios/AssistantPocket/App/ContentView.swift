@@ -1101,7 +1101,10 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func sendTranscribedVoiceCapture(_ queued: QueuedCapture) async {
+    private func sendTranscribedVoiceCapture(
+        _ queued: QueuedCapture,
+        mayResolveClarification: Bool = true
+    ) async {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             let response = try await client.intake(
@@ -1118,7 +1121,11 @@ struct ContentView: View {
 
             CaptureOutbox.remove(queued.id)
             VoiceCaptureOutbox.remove(queued.id)
-            await applyIntakeResponse(response, originalText: queued.text)
+            await applyIntakeResponse(
+                response,
+                originalText: queued.text,
+                mayResolveClarification: mayResolveClarification
+            )
         } catch {
             // The transcript is already durable in CaptureOutbox. Keep it for
             // any failure so a successful local recognition can never be lost.
@@ -1149,13 +1156,21 @@ struct ContentView: View {
 
         for item in queued {
             if let existingText = CaptureOutbox.item(id: item.id) {
-                await sendTranscribedVoiceCapture(existingText)
+                await sendTranscribedVoiceCapture(
+                    existingText,
+                    mayResolveClarification: item.context != nil
+                        && item.context == clarificationContext
+                )
                 continue
             }
 
             do {
                 if let textCapture = try await makeLocalVoiceTextCapture(item) {
-                    await sendTranscribedVoiceCapture(textCapture)
+                    await sendTranscribedVoiceCapture(
+                        textCapture,
+                        mayResolveClarification: item.context != nil
+                            && item.context == clarificationContext
+                    )
                     continue
                 }
 
@@ -1181,7 +1196,9 @@ struct ContentView: View {
                 VoiceCaptureOutbox.remove(item.id)
                 await applyIntakeResponse(
                     response,
-                    originalText: response.transcript ?? "Голосовая запись"
+                    originalText: response.transcript ?? "Голосовая запись",
+                    mayResolveClarification: item.context != nil
+                        && item.context == clarificationContext
                 )
             } catch is CancellationError {
                 break
@@ -1233,17 +1250,19 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func applyIntakeResponse(_ response: NativeIntakeResponse, originalText: String) async {
+    private func applyIntakeResponse(
+        _ response: NativeIntakeResponse,
+        originalText: String,
+        mayResolveClarification: Bool = true
+    ) async {
         if let need = response.needsInput.first {
             clarificationPrompt = need.prompt
             clarificationContext = response.context ?? (clarificationContext.isEmpty ? originalText : clarificationContext)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 captureFocused = true
             }
-        } else {
-            clarificationPrompt = ""
-            clarificationContext = ""
-            captureFocused = false
+        } else if mayResolveClarification {
+            clearClarification()
         }
 
         for pending in response.pending where !pendingIntake.contains(where: { $0.id == pending.id }) {
@@ -1306,7 +1325,12 @@ struct ContentView: View {
 
                 CaptureOutbox.remove(item.id)
                 VoiceCaptureOutbox.remove(item.id)
-                await applyIntakeResponse(response, originalText: item.text)
+                await applyIntakeResponse(
+                    response,
+                    originalText: item.text,
+                    mayResolveClarification: item.context != nil
+                        && item.context == clarificationContext
+                )
                 refreshed = refreshed || !response.saved.isEmpty
             } catch {
                 if isRetryable(error) {

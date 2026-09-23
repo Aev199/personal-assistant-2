@@ -569,6 +569,14 @@ def test_voice_recording_is_persisted_before_app_can_leave_foreground():
     assert "try? session.setActive(false" in recorder
 
 
+def test_background_replays_do_not_clear_an_unrelated_clarification():
+    home = _read("App/ContentView.swift")
+
+    assert "mayResolveClarification: Bool = true" in home
+    assert "item.context == clarificationContext" in home
+    assert "else if mayResolveClarification" in home
+
+
 def test_clarification_can_be_cancelled_explicitly():
     home = _read("App/ContentView.swift")
 

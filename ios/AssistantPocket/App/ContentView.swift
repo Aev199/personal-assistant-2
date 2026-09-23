@@ -415,8 +415,6 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Убрать задачу из Сейчас")
-
-            }
             }
         }
         .padding(16)

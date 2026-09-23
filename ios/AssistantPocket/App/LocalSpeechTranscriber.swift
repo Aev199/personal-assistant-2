@@ -119,13 +119,24 @@ enum LocalSpeechTranscriber {
         }()
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-        if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
+        let lastSample = try await analyzer.analyzeSequence(from: audioFile)
+
+        // SpeechAnalyzer may return early rather than throw when its parent
+        // task is cancelled. Never finalize or submit a partial transcript.
+        if Task.isCancelled {
+            await analyzer.cancelAndFinishNow()
+            throw CancellationError()
+        }
+
+        if let lastSample {
             try await analyzer.finalizeAndFinish(through: lastSample)
         } else {
             await analyzer.cancelAndFinishNow()
         }
 
-        return try await transcriptTask
+        let output = try await transcriptTask
+        try Task.checkCancellation()
+        return output
     }
 
     private static func transcribeWithDictationTranscriber(
@@ -156,13 +167,24 @@ enum LocalSpeechTranscriber {
         }()
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-        if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
+        let lastSample = try await analyzer.analyzeSequence(from: audioFile)
+
+        // SpeechAnalyzer may return early rather than throw when its parent
+        // task is cancelled. Never finalize or submit a partial transcript.
+        if Task.isCancelled {
+            await analyzer.cancelAndFinishNow()
+            throw CancellationError()
+        }
+
+        if let lastSample {
             try await analyzer.finalizeAndFinish(through: lastSample)
         } else {
             await analyzer.cancelAndFinishNow()
         }
 
-        return try await transcriptTask
+        let output = try await transcriptTask
+        try Task.checkCancellation()
+        return output
     }
 
     @discardableResult

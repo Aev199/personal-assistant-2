@@ -606,6 +606,15 @@ def test_voice_audio_to_text_handoff_is_recoverable_after_a_crash():
     assert "await sendTranscribedVoiceCapture(existingText)" in home
 
 
+def test_speech_analyzer_cancellation_cannot_return_partial_transcript():
+    local = _read("App/LocalSpeechTranscriber.swift")
+
+    assert local.count("let lastSample = try await analyzer.analyzeSequence(from: audioFile)") == 2
+    assert local.count("if Task.isCancelled") == 2
+    assert local.count("await analyzer.cancelAndFinishNow()") >= 4
+    assert local.count("try Task.checkCancellation()") >= 3
+
+
 def test_cancelled_local_transcription_never_turns_into_an_audio_upload():
     home = _read("App/ContentView.swift")
     local = _read("App/LocalSpeechTranscriber.swift")

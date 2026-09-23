@@ -54,19 +54,21 @@ def test_widget_shared_keychain_does_not_hardcode_app_group_as_access_group():
     assert 'service = "com.aev199.assistantpocket.widget-shared"' in source
 
 
-def test_due_reminders_can_take_attention_without_growing_today():
+def test_due_reminders_take_attention_only_when_due_without_growing_today():
     home = _read("App/ContentView.swift")
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "15 * 60" in home
-    assert "15 * 60" in widget
+    assert "private var dueReminder" in home
+    assert "return at <= now" in home
+    assert "private var dueReminder" in widget
+    assert "return at <= entry.date" in widget
     assert "focusReminder" in home
     assert "focusReminder" in widget
     assert "reservedTimed" in home
     assert "4 - reservedTimed" in home
 
 
-def test_calendar_context_stays_attention_first():
+def test_calendar_context_interrupts_without_losing_explicit_focus():
     home = _read("App/ContentView.swift")
     models = _read("App/Models.swift")
     widget = _read("Widget/AssistantWidget.swift")
@@ -76,9 +78,14 @@ def test_calendar_context_stays_attention_first():
     assert "activeEvent" in home
     assert "upcomingEvent" in home
     assert "eventFocusCard" in home
+    assert 'Text("После встречи: \\(paused.title)")' in home
+    assert ".onReceive(clock)" in home
     assert "WidgetEvent" in widget
     assert "focusEventView" in widget
-    assert "15 * 60" in widget
+    assert 'Text("После: \\(paused.title)")' in widget
+    assert "event.start.addingTimeInterval(-15 * 60)" in widget
+    assert "event.end.addingTimeInterval(5)" in widget
+    assert "private var nextContent" in widget
 
 
 def test_today_keeps_local_focus_action_and_tasks_page_between_work_personal():
@@ -175,9 +182,9 @@ def test_reminder_delivery_and_widget_state_do_not_compete():
     widget = _read("Widget/AssistantWidget.swift")
 
     assert "nextRefreshDate(for entry:" in widget
-    assert "attentionStart = at.addingTimeInterval(-15 * 60)" in widget
-    assert "at.addingTimeInterval(5)" in widget
+    assert "candidates.append(at)" in widget
     assert "now.addingTimeInterval(60)" in widget
+    assert "event.end.addingTimeInterval(5)" in widget
 
 
 def test_voice_capture_is_fast_shared_and_loss_resistant():

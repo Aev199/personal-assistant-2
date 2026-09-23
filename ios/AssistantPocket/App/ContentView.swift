@@ -26,32 +26,30 @@ struct ContentView: View {
     @StateObject private var voiceRecorder = VoiceRecorder()
     @State private var editingTask: TodayTask?
     @State private var showFocusPicker = false
+    @State private var now = Date()
     @FocusState private var captureFocused: Bool
+
+    private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     private var manualFocusTask: TodayTask? {
         tasks.first(where: { $0.isFocused })
     }
 
     private var activeEvent: TodayEvent? {
-        guard manualFocusTask == nil else { return nil }
-        let now = Date()
-        return events.first { $0.start <= now && $0.end > now }
+        events.first { $0.start <= now && $0.end > now }
     }
 
-    private var dueSoonReminder: TodayReminder? {
-        guard manualFocusTask == nil else { return nil }
-        let cutoff = Date().addingTimeInterval(15 * 60)
-        return reminders.first(where: { reminder in
+    private var dueReminder: TodayReminder? {
+        reminders.first(where: { reminder in
             guard let at = reminder.at else { return false }
-            return at <= cutoff
+            return at <= now
         })
     }
 
     private var upcomingEvent: TodayEvent? {
-        guard manualFocusTask == nil, activeEvent == nil, dueSoonReminder == nil else { return nil }
-        let now = Date()
+        guard manualFocusTask == nil, activeEvent == nil, dueReminder == nil else { return nil }
         let cutoff = now.addingTimeInterval(15 * 60)
-        return events.first { $0.end > now && $0.start <= cutoff }
+        return events.first { $0.start > now && $0.start <= cutoff && $0.end > now }
     }
 
     private var focusEvent: TodayEvent? {
@@ -61,12 +59,13 @@ struct ContentView: View {
     }
 
     private var focusReminder: TodayReminder? {
-        guard manualFocusTask == nil, activeEvent == nil else { return nil }
-        return dueSoonReminder
+        guard activeEvent == nil else { return nil }
+        return dueReminder
     }
 
     private var focusTask: TodayTask? {
-        manualFocusTask
+        guard focusEvent == nil, focusReminder == nil else { return nil }
+        return manualFocusTask
     }
 
     private var remainingTasks: [TodayTask] {
@@ -80,8 +79,9 @@ struct ContentView: View {
     }
 
     private var remainingEvents: [TodayEvent] {
-        guard let focusEvent else { return events }
-        return events.filter { $0.id != focusEvent.id }
+        let activeOrFuture = events.filter { $0.end > now }
+        guard let focusEvent else { return activeOrFuture }
+        return activeOrFuture.filter { $0.id != focusEvent.id }
     }
 
     private var nextEvent: TodayEvent? {
@@ -161,6 +161,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: CaptureLaunchSignal.notification)) { _ in
                 activateCapture()
             }
+            .onReceive(clock) { tick in
+                now = tick
+            }
             .onChange(of: scenePhase) { phase in
                 if phase == .active {
                     consumeSystemCaptureRequest()
@@ -204,7 +207,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                if manualFocusTask != nil {
+                if focusTask != nil {
                     Button("Изменить") {
                         showFocusPicker = true
                     }
@@ -306,6 +309,13 @@ struct ContentView: View {
                 Text(event.start, format: .dateTime.hour().minute())
                     + Text("–")
                     + Text(event.end, format: .dateTime.hour().minute())
+
+                if let paused = manualFocusTask {
+                    Text("После встречи: \(paused.title)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             .font(.subheadline)
 
@@ -396,6 +406,12 @@ struct ContentView: View {
                     .lineLimit(2)
 
                 taskMeta(task)
+
+                if task.isFocused && focusTask == nil {
+                    Text("↩︎ вернуться")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -421,6 +437,10 @@ struct ContentView: View {
                 Text(event.start, format: .dateTime.hour().minute())
                     + Text("–")
                     + Text(event.end, format: .dateTime.hour().minute())
+
+                if let relative = timeUntilText(event.start) {
+                    Text(relative)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -438,6 +458,21 @@ struct ContentView: View {
             .accessibilityLabel("Убрать встречу из внимания")
         }
         .padding(.vertical, 5)
+    }
+
+    private func timeUntilText(_ date: Date) -> String? {
+        let seconds = date.timeIntervalSince(now)
+        guard seconds > 0 else { return nil }
+
+        let minutes = max(1, Int((seconds / 60).rounded(.up)))
+        if minutes < 60 {
+            return "через \(minutes) мин"
+        }
+
+        let hours = minutes / 60
+        let rest = minutes % 60
+        guard hours <= 2 else { return nil }
+        return rest == 0 ? "через \(hours) ч" : "через \(hours) ч \(rest) мин"
     }
 
     private func compactReminderRow(_ reminder: TodayReminder) -> some View {

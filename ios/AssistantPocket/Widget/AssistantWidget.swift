@@ -474,15 +474,20 @@ private struct AssistantWidgetProvider: TimelineProvider {
 
             if at <= now {
                 candidates.append(now.addingTimeInterval(60))
-                continue
+            } else {
+                candidates.append(at)
             }
+        }
 
-            let attentionStart = at.addingTimeInterval(-15 * 60)
+        for event in entry.events where event.end > now {
+            let attentionStart = event.start.addingTimeInterval(-15 * 60)
             if attentionStart > now {
                 candidates.append(attentionStart)
-            } else {
-                candidates.append(at.addingTimeInterval(5))
             }
+            if event.start > now {
+                candidates.append(event.start)
+            }
+            candidates.append(event.end.addingTimeInterval(5))
         }
 
         return candidates.min() ?? now.addingTimeInterval(15 * 60)
@@ -559,23 +564,22 @@ private struct AssistantWidgetView: View {
     }
 
     private var activeEvent: WidgetEvent? {
-        guard manualFocusTask == nil else { return nil }
-        return entry.events.first { $0.start <= entry.date && $0.end > entry.date }
+        entry.events.first { $0.start <= entry.date && $0.end > entry.date }
     }
 
-    private var dueSoonReminder: WidgetReminder? {
-        guard manualFocusTask == nil else { return nil }
-        let cutoff = entry.date.addingTimeInterval(15 * 60)
-        return entry.reminders.first(where: { reminder in
+    private var dueReminder: WidgetReminder? {
+        entry.reminders.first(where: { reminder in
             guard let at = reminder.at else { return false }
-            return at <= cutoff
+            return at <= entry.date
         })
     }
 
     private var upcomingEvent: WidgetEvent? {
-        guard manualFocusTask == nil, activeEvent == nil, dueSoonReminder == nil else { return nil }
+        guard manualFocusTask == nil, activeEvent == nil, dueReminder == nil else { return nil }
         let cutoff = entry.date.addingTimeInterval(15 * 60)
-        return entry.events.first { $0.end > entry.date && $0.start <= cutoff }
+        return entry.events.first {
+            $0.start > entry.date && $0.start <= cutoff && $0.end > entry.date
+        }
     }
 
     private var focusEvent: WidgetEvent? {
@@ -585,12 +589,63 @@ private struct AssistantWidgetView: View {
     }
 
     private var focusReminder: WidgetReminder? {
-        guard manualFocusTask == nil, activeEvent == nil else { return nil }
-        return dueSoonReminder
+        guard activeEvent == nil else { return nil }
+        return dueReminder
     }
 
     private var focusTaskItem: WidgetTask? {
-        manualFocusTask
+        guard focusEvent == nil, focusReminder == nil else { return nil }
+        return manualFocusTask
+    }
+
+    private var nextEvent: WidgetEvent? {
+        entry.events.first {
+            $0.end > entry.date && $0.id != focusEvent?.id
+        }
+    }
+
+    private var nextReminder: WidgetReminder? {
+        entry.reminders.first {
+            $0.id != focusReminder?.id
+        }
+    }
+
+    private var nextTaskLimit: Int {
+        let focusRows = (focusEvent != nil || focusReminder != nil || focusTaskItem != nil) ? 1 : 0
+        let timedRows = (nextEvent == nil ? 0 : 1) + (nextReminder == nil ? 0 : 1)
+        return max(0, visibleTaskCount - focusRows - timedRows)
+    }
+
+    private var nextTasks: [WidgetTask] {
+        entry.tasks
+            .filter { $0.id != focusTaskItem?.id }
+            .prefix(nextTaskLimit)
+            .map { $0 }
+    }
+
+    private var hasNextContent: Bool {
+        nextEvent != nil || nextReminder != nil || !nextTasks.isEmpty
+    }
+
+    @ViewBuilder
+    private var nextContent: some View {
+        if hasNextContent {
+            Text("Дальше")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if let event = nextEvent {
+                compactEvent(event)
+            }
+
+            if let reminder = nextReminder {
+                compactReminder(reminder)
+            }
+
+            ForEach(nextTasks) { task in
+                compactTask(task)
+            }
+        }
     }
 
     var body: some View {
@@ -601,56 +656,17 @@ private struct AssistantWidgetView: View {
                 errorState(error)
             } else if let event = focusEvent {
                 focusEventView(event)
-
-                let rest = Array(entry.tasks.prefix(max(0, visibleTaskCount - 1)))
-                if !rest.isEmpty {
-                    Text("Дальше")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    ForEach(rest) { task in
-                        compactTask(task)
-                    }
-                }
-
+                nextContent
                 Spacer(minLength: 0)
             } else if let reminder = focusReminder {
                 focusReminderView(reminder)
-
-                let rest = Array(entry.tasks.prefix(max(0, visibleTaskCount - 1)))
-                if !rest.isEmpty {
-                    Text("Дальше")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    ForEach(rest) { task in
-                        compactTask(task)
-                    }
-                }
-
+                nextContent
                 Spacer(minLength: 0)
             } else if let focus = focusTaskItem {
                 focusTask(focus)
-
-                let rest = Array(entry.tasks.filter { $0.id != focus.id }.prefix(max(0, visibleTaskCount - 1)))
-                if !rest.isEmpty {
-                    Text("Дальше")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    ForEach(rest) { task in
-                        compactTask(task)
-                    }
-                }
-
-                if family == .systemLarge, let event = entry.events.first {
-                    compactEvent(event)
-                } else if family == .systemLarge, let reminder = entry.reminders.first {
-                    compactReminder(reminder)
-                }
-
+                nextContent
                 Spacer(minLength: 0)
-            } else if !entry.tasks.isEmpty {
+            } else if hasNextContent {
                 noFocusState
             } else {
                 emptyState
@@ -730,12 +746,18 @@ private struct AssistantWidgetView: View {
                     .foregroundStyle(task.overdue ? .red : .secondary)
             }
 
-            Button(intent: FocusTaskIntent(taskID: task.id)) {
-                Text("Сейчас")
+            if task.isFocused {
+                Text("вернуться")
                     .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                Button(intent: FocusTaskIntent(taskID: task.id)) {
+                    Text("Сейчас")
+                        .font(.caption2.weight(.medium))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Сейчас")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Сейчас")
         }
     }
 
@@ -773,6 +795,13 @@ private struct AssistantWidgetView: View {
                 Text(event.start, format: .dateTime.hour().minute())
                     + Text("–")
                     + Text(event.end, format: .dateTime.hour().minute())
+
+                if let paused = manualFocusTask {
+                    Text("После: \(paused.title)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer(minLength: 0)
@@ -887,13 +916,7 @@ private struct AssistantWidgetView: View {
             Text("Ничего не выбрано")
                 .font(.subheadline.weight(.semibold))
 
-            Text("Дальше")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            ForEach(Array(entry.tasks.prefix(visibleTaskCount))) { task in
-                compactTask(task)
-            }
+            nextContent
 
             Spacer(minLength: 0)
         }

@@ -520,14 +520,25 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert 'Text("+15")' in widget
 
 
-def test_today_refreshes_on_foreground_and_rechecks_reentry_gap():
+def test_today_foreground_recovery_does_not_duplicate_root_refresh():
+    root = _read("App/AppRootView.swift")
     home = _read("App/ContentView.swift")
 
     assert "if phase == .active" in home
     assert "detectReturnGap()" in home
     assert "didRetryPendingCalendar = false" in home
-    assert "await loadToday()" in home
     assert "current - lastOpenedAt >= 36 * 60 * 60" in home
+
+    scene_start = home.index(".onChange(of: scenePhase)")
+    refresh_start = home.index(".onChange(of: refreshToken)", scene_start)
+    foreground_block = home[scene_start:refresh_start]
+    assert "await loadToday()" not in foreground_block
+    assert "await loadPendingIntake()" in foreground_block
+    assert "await flushOutbox()" in foreground_block
+    assert "await flushVoiceOutbox()" in foreground_block
+
+    assert "taskRevision += 1" in root
+    assert "ContentView(refreshToken: taskRevision)" in root
 
 
 def test_return_after_a_long_gap_collapses_reentry_to_one_task():

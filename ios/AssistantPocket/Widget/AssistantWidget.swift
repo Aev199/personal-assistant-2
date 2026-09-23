@@ -147,6 +147,14 @@ private enum WidgetCodec {
     }
 }
 
+private actor WidgetMutationCoordinator {
+    static let shared = WidgetMutationCoordinator()
+
+    func run<T: Sendable>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
+        try await operation()
+    }
+}
+
 private enum WidgetNetwork {
     static func loadToday() async throws -> (Data, HTTPURLResponse) {
         try await send(
@@ -299,29 +307,33 @@ struct MarkTaskDoneIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        let originalCache = WidgetSharedSettings.cachedTodayData
+        return try await WidgetMutationCoordinator.shared.run {
 
-        if let optimisticCache = WidgetCodec.cacheWithoutTask(taskID) {
-            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                let originalCache = WidgetSharedSettings.cachedTodayData
+
+                if let optimisticCache = WidgetCodec.cacheWithoutTask(taskID) {
+                    WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                }
+
+                do {
+                    try await WidgetNetwork.markDone(taskID: taskID)
+                    WidgetSharedSettings.clearCachedTodayPreference()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    return .result()
+                } catch {
+                    if let originalCache {
+                        WidgetSharedSettings.writeCachedTodayData(originalCache)
+                    } else {
+                        WidgetSharedSettings.clearCachedTodayData()
+                    }
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    throw error
+                }
         }
 
-        do {
-            try await WidgetNetwork.markDone(taskID: taskID)
-            WidgetSharedSettings.clearCachedTodayPreference()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            return .result()
-        } catch {
-            if let originalCache {
-                WidgetSharedSettings.writeCachedTodayData(originalCache)
-            } else {
-                WidgetSharedSettings.clearCachedTodayData()
-            }
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            throw error
-        }
     }
 }
 
@@ -340,29 +352,33 @@ struct FocusTaskIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        let originalCache = WidgetSharedSettings.cachedTodayData
+        return try await WidgetMutationCoordinator.shared.run {
 
-        if let optimisticCache = WidgetCodec.cacheFocusedTask(taskID) {
-            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                let originalCache = WidgetSharedSettings.cachedTodayData
+
+                if let optimisticCache = WidgetCodec.cacheFocusedTask(taskID) {
+                    WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                }
+
+                do {
+                    try await WidgetNetwork.focusTask(taskID: taskID)
+                    WidgetSharedSettings.clearCachedTodayPreference()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    return .result()
+                } catch {
+                    if let originalCache {
+                        WidgetSharedSettings.writeCachedTodayData(originalCache)
+                    } else {
+                        WidgetSharedSettings.clearCachedTodayData()
+                    }
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    throw error
+                }
         }
 
-        do {
-            try await WidgetNetwork.focusTask(taskID: taskID)
-            WidgetSharedSettings.clearCachedTodayPreference()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            return .result()
-        } catch {
-            if let originalCache {
-                WidgetSharedSettings.writeCachedTodayData(originalCache)
-            } else {
-                WidgetSharedSettings.clearCachedTodayData()
-            }
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            throw error
-        }
     }
 }
 
@@ -381,29 +397,33 @@ struct ClearFocusTaskIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        let originalCache = WidgetSharedSettings.cachedTodayData
+        return try await WidgetMutationCoordinator.shared.run {
 
-        if let optimisticCache = WidgetCodec.cacheWithoutFocus(taskID) {
-            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                let originalCache = WidgetSharedSettings.cachedTodayData
+
+                if let optimisticCache = WidgetCodec.cacheWithoutFocus(taskID) {
+                    WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                }
+
+                do {
+                    try await WidgetNetwork.clearFocus(taskID: taskID)
+                    WidgetSharedSettings.clearCachedTodayPreference()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    return .result()
+                } catch {
+                    if let originalCache {
+                        WidgetSharedSettings.writeCachedTodayData(originalCache)
+                    } else {
+                        WidgetSharedSettings.clearCachedTodayData()
+                    }
+                    WidgetSharedSettings.requestCachedTodayOnce()
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+                    throw error
+                }
         }
 
-        do {
-            try await WidgetNetwork.clearFocus(taskID: taskID)
-            WidgetSharedSettings.clearCachedTodayPreference()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            return .result()
-        } catch {
-            if let originalCache {
-                WidgetSharedSettings.writeCachedTodayData(originalCache)
-            } else {
-                WidgetSharedSettings.clearCachedTodayData()
-            }
-            WidgetSharedSettings.requestCachedTodayOnce()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            throw error
-        }
     }
 }
 

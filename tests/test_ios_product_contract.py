@@ -384,6 +384,18 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
     assert "Shared/TaskDeadlineFormatting.swift" in project
 
 
+def test_stale_pending_confirmation_refreshes_instead_of_leaving_dead_card():
+    home = _read("App/ContentView.swift")
+
+    confirm_start = home.index("private func confirmPending")
+    reminder_start = home.index("private func acknowledge", confirm_start)
+    block = home[confirm_start:reminder_start]
+
+    assert block.count("APIClientError.http(code, _) where code == 409") == 2
+    assert block.count("await loadPendingIntake()") == 2
+    assert block.count('"Эта запись уже обработана"') == 2
+
+
 def test_voice_and_pending_action_failures_use_immediate_alert_surface():
     home = _read("App/ContentView.swift")
 

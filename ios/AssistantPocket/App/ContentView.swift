@@ -1394,6 +1394,9 @@ struct ContentView: View {
             presentConfirmation("Добавлено")
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
+        } catch let APIClientError.http(code, _) where code == 409 {
+            await loadPendingIntake()
+            presentConfirmation("Эта запись уже обработана")
         } catch {
             presentActionError(error)
         }
@@ -1408,6 +1411,9 @@ struct ContentView: View {
             withAnimation {
                 pendingIntake.removeAll { $0.id == pending.id }
             }
+        } catch let APIClientError.http(code, _) where code == 409 {
+            await loadPendingIntake()
+            presentConfirmation("Эта запись уже обработана")
         } catch {
             presentActionError(error)
         }

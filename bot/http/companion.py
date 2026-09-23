@@ -475,10 +475,34 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             WHERE t.status NOT IN ('done', 'postponed')
               AND t.kind != 'super'
               AND p.status IN ('active', 'system')
-            ORDER BY t.created_at ASC, t.id ASC
+            ORDER BY
+              CASE WHEN $1::bigint IS NOT NULL AND t.id=$1 THEN 0 ELSE 1 END,
+              t.created_at ASC,
+              t.id ASC
             LIMIT 200
-            """
+            """,
+            focus_task_id,
         )
+
+        if focus_task_id is not None and all(
+            int(row["id"]) != focus_task_id for row in task_rows
+        ):
+            # Telegram, bulk actions, project archival, or another backend
+            # surface may have completed/postponed the focused task. Clear only
+            # the exact stale focus we read so a concurrent new focus survives.
+            await conn.execute(
+                """
+                DELETE FROM conversation_state
+                WHERE chat_id=$1
+                  AND flow='attention_focus'
+                  AND payload_json->>'task_id'=$2
+                """,
+                int(ctx.deps.admin_id or 0),
+                str(focus_task_id),
+            )
+            focus_task_id = None
+            focus_started_at = None
+
         reminder_rows = await conn.fetch(
             """
             SELECT id, text, remind_at

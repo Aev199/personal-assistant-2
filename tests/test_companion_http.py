@@ -260,6 +260,20 @@ def test_attention_selector_prefers_in_progress_then_due_today():
     assert [row["id"] for row in selected] == [11, 10, 12]
 
 
+def test_today_keeps_active_focus_inside_query_limit_and_self_heals_external_completion():
+    source = open(companion.__file__, encoding="utf-8").read()
+    start = source.index("task_rows = await conn.fetch")
+    end = source.index("reminder_rows = await conn.fetch", start)
+    block = source[start:end]
+
+    assert "CASE WHEN $1::bigint IS NOT NULL AND t.id=$1 THEN 0 ELSE 1 END" in block
+    assert "focus_task_id," in block
+    assert "all(" in block
+    assert "DELETE FROM conversation_state" in block
+    assert "payload_json->>'task_id'=$2" in block
+    assert "focus_task_id = None" in block
+
+
 def test_attention_selector_keeps_explicit_focus_first():
     now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
     end = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)

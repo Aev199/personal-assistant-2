@@ -168,6 +168,22 @@ def test_focus_mutations_are_serialized_across_app_and_widget_requests():
     assert "_lock_attention_focus(conn" not in reminder_ack_block
 
 
+def test_calendar_attention_dismissals_are_serialized_across_clients():
+    source = open(companion.__file__, encoding="utf-8").read()
+
+    assert "async def _lock_attention_state(" in source
+
+    start = source.index("async def handle_event_dismiss")
+    end = source.index("async def handle_tasks", start)
+    block = source[start:end]
+
+    assert "async with conn.transaction():" in block
+    assert "_lock_attention_state(" in block
+    assert "ATTENTION_DISMISSED_EVENTS_FLOW" in block
+    assert block.index("_lock_attention_state(") < block.index("get_conversation_state(")
+    assert block.index("get_conversation_state(") < block.index("set_conversation_state(")
+
+
 def test_focus_previous_status_is_scoped_to_the_same_task():
     state = {
         "payload": {

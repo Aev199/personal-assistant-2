@@ -470,17 +470,31 @@ struct ContentView: View {
                 Text("Дальше")
                     .font(.headline)
 
-                if let event = nextEvent {
-                    compactEventRow(event)
-                }
-
-                if let reminder = nextReminder {
-                    compactReminderRow(reminder)
-                }
+                nextTimedRows
 
                 ForEach(nextTasks) { task in
                     compactTaskRow(task)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var nextTimedRows: some View {
+        if let event = nextEvent, let reminder = nextReminder, let reminderAt = reminder.at {
+            if reminderAt <= event.start {
+                compactReminderRow(reminder)
+                compactEventRow(event)
+            } else {
+                compactEventRow(event)
+                compactReminderRow(reminder)
+            }
+        } else {
+            if let event = nextEvent {
+                compactEventRow(event)
+            }
+            if let reminder = nextReminder {
+                compactReminderRow(reminder)
             }
         }
     }

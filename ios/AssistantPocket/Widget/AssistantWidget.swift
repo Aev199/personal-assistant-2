@@ -645,16 +645,30 @@ private struct AssistantWidgetView: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            if let event = nextEvent {
-                compactEvent(event)
-            }
-
-            if let reminder = nextReminder {
-                compactReminder(reminder)
-            }
+            nextTimedContent
 
             ForEach(nextTasks) { task in
                 compactTask(task)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var nextTimedContent: some View {
+        if let event = nextEvent, let reminder = nextReminder, let reminderAt = reminder.at {
+            if reminderAt <= event.start {
+                compactReminder(reminder)
+                compactEvent(event)
+            } else {
+                compactEvent(event)
+                compactReminder(reminder)
+            }
+        } else {
+            if let event = nextEvent {
+                compactEvent(event)
+            }
+            if let reminder = nextReminder {
+                compactReminder(reminder)
             }
         }
     }

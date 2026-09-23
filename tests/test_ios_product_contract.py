@@ -128,6 +128,16 @@ def test_due_reminders_take_attention_only_when_due_without_growing_today():
     assert "4 - reservedTimed" in home
 
 
+def test_timed_items_in_next_are_ordered_by_clock_time_in_app_and_widget():
+    home = _read("App/ContentView.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "private var nextTimedRows" in home
+    assert "reminderAt <= event.start" in home
+    assert "private var nextTimedContent" in widget
+    assert "reminderAt <= event.start" in widget
+
+
 def test_calendar_context_interrupts_without_losing_explicit_focus():
     home = _read("App/ContentView.swift")
     models = _read("App/Models.swift")

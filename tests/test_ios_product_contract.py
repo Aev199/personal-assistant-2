@@ -320,6 +320,16 @@ def test_calendar_failure_is_visible_instead_of_looking_like_a_free_day():
     assert 'accessibilityLabel("Календарь не обновился")' in widget
 
 
+def test_widget_explicit_focus_has_same_priority_and_clear_action_as_app():
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "static func clearFocus(taskID: Int) async throws" in widget
+    assert "struct ClearFocusTaskIntent: AppIntent" in widget
+    assert "guard manualFocusTask == nil else { return nil }" in widget
+    assert 'Text("Не сейчас")' in widget
+    assert 'Text("вернуться")' not in widget
+
+
 def test_calendar_context_interrupts_without_losing_explicit_focus():
     home = _read("App/ContentView.swift")
     models = _read("App/Models.swift")

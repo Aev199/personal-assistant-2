@@ -168,6 +168,18 @@ private enum WidgetNetwork {
         }
     }
 
+    static func clearFocus(taskID: Int) async throws {
+        let (_, response) = try await send(
+            path: "/api/v1/tasks/\(taskID)/unfocus",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+
+        guard 200..<300 ~= response.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     static func dismissEvent(eventID: String, until: Date) async throws {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -341,6 +353,39 @@ struct FocusTaskIntent: AppIntent {
         }
     }
 }
+
+struct ClearFocusTaskIntent: AppIntent {
+    static var title: LocalizedStringResource = "Не сейчас"
+    static var description = IntentDescription("Снимает задачу с текущего фокуса Personal Assistant.")
+    static var openAppWhenRun = false
+
+    @Parameter(title: "Task ID")
+    var taskID: Int
+
+    init() {}
+
+    init(taskID: Int) {
+        self.taskID = taskID
+    }
+
+    func perform() async throws -> some IntentResult {
+        let originalCache = WidgetSharedSettings.cachedTodayData
+        do {
+            try await WidgetNetwork.clearFocus(taskID: taskID)
+            WidgetSharedSettings.clearCachedTodayPreference()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            return .result()
+        } catch {
+            if let originalCache {
+                WidgetSharedSettings.writeCachedTodayData(originalCache)
+            }
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            throw error
+        }
+    }
+}
+
 
 struct DismissCalendarEventIntent: AppIntent {
     static var title: LocalizedStringResource = "Скрыть встречу"
@@ -685,6 +730,8 @@ private struct AssistantWidgetView: View {
     }
 
     private var focusEvent: WidgetEvent? {
+        // Explicit task focus wins over calendar attention.
+        guard manualFocusTask == nil else { return nil }
         if let activeEvent { return activeEvent }
         if let upcomingEvent { return upcomingEvent }
         return nil
@@ -858,6 +905,15 @@ private struct AssistantWidgetView: View {
             }
 
             Spacer(minLength: 0)
+
+            if task.isFocused {
+                Button(intent: ClearFocusTaskIntent(taskID: task.id)) {
+                    Text("Не сейчас")
+                        .font(.caption2.weight(.medium))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Не сейчас")
+            }
         }
     }
 
@@ -882,11 +938,7 @@ private struct AssistantWidgetView: View {
                     .foregroundStyle(task.overdue ? .red : .secondary)
             }
 
-            if task.isFocused {
-                Text("вернуться")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-            } else {
+            if !task.isFocused {
                 Button(intent: FocusTaskIntent(taskID: task.id)) {
                     Text("Сейчас")
                         .font(.caption2.weight(.medium))

@@ -114,6 +114,14 @@ def test_utc_aware_normalizes_naive_and_aware_values():
     assert companion._utc_aware(None) is None
 
 
+def test_task_start_endpoint_clamps_help_to_one_action():
+    source = (ROOT / "bot" / "http" / "companion.py").read_text(encoding="utf-8")
+
+    assert '"maxItems": 1' in source
+    assert "_clean_task_steps(payload)[:1]" in source
+    assert "Give exactly one concrete physical next action" in source
+
+
 def test_clean_task_steps_keeps_small_unique_actions():
     payload = {
         "steps": [

@@ -1397,8 +1397,8 @@ async def handle_task_steps(request: web.Request, ctx) -> web.StreamResponse:
     system_prompt = (
         "You help a person start a task when initiation feels difficult. "
         "Return JSON only with the shape {\"steps\":[\"...\"]}. "
-        "Give 1 to 3 concrete physical next actions, smallest useful action first. "
-        "Each step must be short, specific, and directly doable. "
+        "Give exactly one concrete physical next action: the smallest useful action. "
+        "The step must be short, specific, and directly doable. "
         "Do not add motivation, explanation, priorities, deadlines, or new tasks. "
         "Use the same language as the task title."
     )
@@ -1413,7 +1413,7 @@ async def handle_task_steps(request: web.Request, ctx) -> web.StreamResponse:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
-                "maxItems": 3,
+                "maxItems": 1,
             }
         },
         "required": ["steps"],
@@ -1429,7 +1429,7 @@ async def handle_task_steps(request: web.Request, ctx) -> web.StreamResponse:
     except Exception:
         return web.json_response({"ok": False, "error": "llm_unavailable"}, status=503)
 
-    steps = _clean_task_steps(payload)
+    steps = _clean_task_steps(payload)[:1]
     if not steps:
         return web.json_response({"ok": False, "error": "invalid_llm_response"}, status=502)
 

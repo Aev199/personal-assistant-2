@@ -343,7 +343,7 @@ struct ContentView: View {
                 .accessibilityLabel("Убрать задачу из Сейчас")
 
                 if startHelpTaskID != task.id {
-                    Button("С чего начать?") {
+                    Button("Первый шаг") {
                         Task { await loadStartHelp(task) }
                     }
                     .font(.subheadline.weight(.medium))
@@ -361,19 +361,13 @@ struct ContentView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    } else if !startHelpSteps.isEmpty {
-                        Text("Первый шаг")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-
-                        ForEach(Array(startHelpSteps.enumerated()), id: \.offset) { index, step in
-                            HStack(alignment: .top, spacing: 7) {
-                                Text(index == 0 ? "→" : "·")
-                                    .foregroundStyle(.secondary)
-                                Text(step)
-                                    .font(index == 0 ? .subheadline.weight(.medium) : .subheadline)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                    } else if let firstStep = startHelpSteps.first {
+                        HStack(alignment: .top, spacing: 7) {
+                            Text("→")
+                                .foregroundStyle(.secondary)
+                            Text(firstStep)
+                                .font(.subheadline.weight(.medium))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         Button("Скрыть") {

@@ -264,6 +264,14 @@ def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_wo
     assert "client.focusTask(taskID: task.id)" in home
 
 
+def test_start_help_stays_one_action_instead_of_becoming_a_subtask_list():
+    home = _read("App/ContentView.swift")
+
+    assert 'Button("Первый шаг")' in home
+    assert "startHelpSteps.first" in home
+    assert "ForEach(Array(startHelpSteps.enumerated())" not in home
+
+
 def test_start_help_is_cached_locally_to_avoid_repeated_llm_calls():
     home = _read("App/ContentView.swift")
 
@@ -277,8 +285,8 @@ def test_current_task_can_request_tiny_start_help_without_new_navigation():
     api = _read("App/APIClient.swift")
     models = _read("App/Models.swift")
 
-    assert 'Button("С чего начать?")' in home
-    assert 'Text("Первый шаг")' in home
+    assert 'Button("Первый шаг")' in home
+    assert "startHelpSteps.first" in home
     assert 'Text("Ищу первый шаг…")' in home
     assert "client.taskStartHelp(taskID: task.id)" in home
     assert 'path: "/api/v1/tasks/\\(taskID)/steps"' in api

@@ -33,6 +33,10 @@ enum CaptureOutbox {
         return item
     }
 
+    static func item(id: UUID) -> QueuedCapture? {
+        all().first { $0.id == id }
+    }
+
     static func remove(_ id: UUID) {
         save(all().filter { $0.id != id })
     }

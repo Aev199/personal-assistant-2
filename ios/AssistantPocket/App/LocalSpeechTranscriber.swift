@@ -3,13 +3,43 @@ import Foundation
 import Speech
 
 enum LocalSpeechTranscriber {
-    static func transcribe(fileURL: URL) async -> String? {
-        guard #available(iOS 26.0, *) else { return nil }
+    private static let preferredLocales = [
+        Locale(identifier: "ru-RU"),
+        Locale.current,
+    ]
 
-        let preferredLocales = [
-            Locale(identifier: "ru-RU"),
-            Locale.current,
-        ]
+    static func preparePreferredAssets() async {
+        for requestedLocale in preferredLocales {
+            if SpeechTranscriber.isAvailable,
+               let locale = await SpeechTranscriber.supportedLocale(
+                   equivalentTo: requestedLocale
+               ) {
+                let transcriber = SpeechTranscriber(
+                    locale: locale,
+                    preset: .offlineTranscription
+                )
+                if (try? await ensureAssets(for: [transcriber])) != nil {
+                    return
+                }
+            }
+        }
+
+        for requestedLocale in preferredLocales {
+            if let locale = await DictationTranscriber.supportedLocale(
+                equivalentTo: requestedLocale
+            ) {
+                let transcriber = DictationTranscriber(
+                    locale: locale,
+                    preset: .shortDictation
+                )
+                if (try? await ensureAssets(for: [transcriber])) != nil {
+                    return
+                }
+            }
+        }
+    }
+
+    static func transcribe(fileURL: URL) async -> String? {
 
         for requestedLocale in preferredLocales {
             if let text = try? await transcribeWithSpeechTranscriber(
@@ -42,7 +72,6 @@ enum LocalSpeechTranscriber {
         return clean.isEmpty ? nil : clean
     }
 
-    @available(iOS 26.0, *)
     private static func transcribeWithSpeechTranscriber(
         fileURL: URL,
         requestedLocale: Locale
@@ -81,7 +110,6 @@ enum LocalSpeechTranscriber {
         return try await transcriptTask
     }
 
-    @available(iOS 26.0, *)
     private static func transcribeWithDictationTranscriber(
         fileURL: URL,
         requestedLocale: Locale
@@ -119,14 +147,15 @@ enum LocalSpeechTranscriber {
         return try await transcriptTask
     }
 
-    @available(iOS 26.0, *)
+    @discardableResult
     private static func ensureAssets(
         for modules: [any SpeechModule]
-    ) async throws {
+    ) async throws -> Bool {
         if let request = try await AssetInventory.assetInstallationRequest(
             supporting: modules
         ) {
             try await request.downloadAndInstall()
         }
+        return true
     }
 }

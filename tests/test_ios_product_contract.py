@@ -420,6 +420,30 @@ def test_reminder_delivery_and_widget_state_do_not_compete():
     assert "event.end.addingTimeInterval(5)" in widget
 
 
+def test_personal_client_targets_modern_speech_stack_and_prewarms_it_during_recording():
+    project = (ROOT / "ios" / "project.yml").read_text(encoding="utf-8")
+    home = _read("App/ContentView.swift")
+    local = _read("App/LocalSpeechTranscriber.swift")
+
+    assert 'iOS: "26.0"' in project
+    assert "NSSpeechRecognitionUsageDescription" in project
+    assert "LocalSpeechTranscriber.preparePreferredAssets()" in home
+    assert "static func preparePreferredAssets()" in local
+    assert "#available(iOS 26.0" not in home
+    assert "#available(iOS 26.0" not in local
+
+
+def test_voice_audio_to_text_handoff_is_recoverable_after_a_crash():
+    home = _read("App/ContentView.swift")
+    outbox = _read("App/CaptureOutbox.swift")
+
+    assert "static func item(id: UUID)" in outbox
+    assert "CaptureOutbox.item(id: queued.id)" in home
+    assert "CaptureOutbox.item(id: item.id)" in home
+    assert "VoiceCaptureOutbox.remove(queued.id)" in home
+    assert "VoiceCaptureOutbox.remove(item.id)" in home
+
+
 def test_voice_prefers_on_device_transcription_and_keeps_server_audio_as_fallback():
     home = _read("App/ContentView.swift")
     local = _read("App/LocalSpeechTranscriber.swift")

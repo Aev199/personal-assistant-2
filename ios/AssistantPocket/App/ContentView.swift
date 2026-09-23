@@ -903,6 +903,9 @@ struct ContentView: View {
 
         do {
             try await voiceRecorder.start()
+            Task {
+                await LocalSpeechTranscriber.preparePreferredAssets()
+            }
         } catch {
             present(error)
         }
@@ -933,6 +936,12 @@ struct ContentView: View {
         errorMessage = nil
         confirmation = nil
         defer { isVoiceSending = false }
+
+        if let existingText = CaptureOutbox.item(id: queued.id) {
+            VoiceCaptureOutbox.remove(queued.id)
+            await sendTranscribedVoiceCapture(existingText)
+            return
+        }
 
         if let textCapture = await makeLocalVoiceTextCapture(queued) {
             await sendTranscribedVoiceCapture(textCapture)
@@ -985,8 +994,6 @@ struct ContentView: View {
     private func makeLocalVoiceTextCapture(
         _ queued: QueuedVoiceCapture
     ) async -> QueuedCapture? {
-        guard #available(iOS 26.0, *) else { return nil }
-
         let transcript = await LocalSpeechTranscriber.transcribe(
             fileURL: VoiceCaptureOutbox.url(for: queued)
         )
@@ -1050,6 +1057,12 @@ struct ContentView: View {
         )
 
         for item in queued {
+            if let existingText = CaptureOutbox.item(id: item.id) {
+                VoiceCaptureOutbox.remove(item.id)
+                await sendTranscribedVoiceCapture(existingText)
+                continue
+            }
+
             if let textCapture = await makeLocalVoiceTextCapture(item) {
                 await sendTranscribedVoiceCapture(textCapture)
                 continue

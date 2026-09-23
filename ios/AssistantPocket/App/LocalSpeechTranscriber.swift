@@ -16,7 +16,7 @@ enum LocalSpeechTranscriber {
                ) {
                 let transcriber = SpeechTranscriber(
                     locale: locale,
-                    preset: .offlineTranscription
+                    preset: .transcription
                 )
                 if (try? await ensureAssets(for: [transcriber])) != nil {
                     return
@@ -103,7 +103,7 @@ enum LocalSpeechTranscriber {
 
         let transcriber = SpeechTranscriber(
             locale: locale,
-            preset: .offlineTranscription
+            preset: .transcription
         )
         try await ensureAssets(for: [transcriber])
 

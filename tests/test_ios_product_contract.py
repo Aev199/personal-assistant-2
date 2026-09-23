@@ -501,6 +501,13 @@ def test_reminder_delivery_and_widget_state_do_not_compete():
     assert "event.end.addingTimeInterval(5)" in widget
 
 
+def test_speech_transcriber_uses_current_stable_file_transcription_preset():
+    local = _read("App/LocalSpeechTranscriber.swift")
+
+    assert "preset: .transcription" in local
+    assert ".offlineTranscription" not in local
+
+
 def test_personal_client_targets_modern_speech_stack_and_prewarms_it_during_recording():
     project = (ROOT / "ios" / "project.yml").read_text(encoding="utf-8")
     home = _read("App/ContentView.swift")

@@ -36,7 +36,7 @@ def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
 
 
 def test_widget_clear_focus_updates_cached_state_optimistically_and_rolls_back():
-    widget = _read("../Widget/AssistantWidget.swift")
+    widget = _read("Widget/AssistantWidget.swift")
 
     assert "static func cacheWithoutFocus(_ taskID: Int)" in widget
     block = widget[widget.index("struct ClearFocusTaskIntent"):]

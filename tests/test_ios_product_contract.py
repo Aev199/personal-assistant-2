@@ -60,6 +60,27 @@ def test_capture_is_one_tap_from_tasks_and_ideas_without_duplicating_intake_ui()
     assert 'selectedTab = .today' in root
 
 
+def test_primary_tabs_share_one_revision_so_capture_and_mutations_do_not_leave_stale_lists():
+    root = _read("App/AppRootView.swift")
+    home = _read("App/ContentView.swift")
+    ideas = _read("App/IdeasView.swift")
+
+    assert "ContentView(refreshToken: taskRevision)" in root
+    assert "IdeasView(refreshToken: taskRevision)" in root
+    assert "let onChanged: () -> Void" in home
+    assert "onChanged()" in home
+    assert ".onChange(of: refreshToken)" in ideas
+
+
+def test_capture_feedback_says_what_was_saved():
+    home = _read("App/ContentView.swift")
+
+    assert '"Идея сохранена"' in home
+    assert '"Напоминание создано"' in home
+    assert '"Встреча добавлена"' in home
+    assert '"Задача записана"' in home
+
+
 def test_widget_shared_keychain_does_not_hardcode_app_group_as_access_group():
     source = _read("Shared/WidgetSharedSettings.swift")
 

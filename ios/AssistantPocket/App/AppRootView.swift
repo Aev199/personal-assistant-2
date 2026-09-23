@@ -14,7 +14,9 @@ struct AppRootView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            ContentView(refreshToken: taskRevision)
+            ContentView(refreshToken: taskRevision) {
+                taskRevision += 1
+            }
                 .environmentObject(settings)
                 .tabItem {
                     Label("Сегодня", systemImage: "house")
@@ -33,7 +35,7 @@ struct AppRootView: View {
             .tag(AppTab.tasks)
 
             NavigationStack {
-                IdeasView {
+                IdeasView(refreshToken: taskRevision) {
                     taskRevision += 1
                 }
                 .environmentObject(settings)

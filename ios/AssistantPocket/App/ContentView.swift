@@ -4,6 +4,7 @@ import WidgetKit
 
 struct ContentView: View {
     let refreshToken: Int
+    let onChanged: () -> Void
 
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.scenePhase) private var scenePhase
@@ -185,12 +186,14 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showFocusPicker) {
                 FocusPickerView(currentTaskID: manualFocusTask?.id) {
+                    onChanged()
                     Task { await loadToday() }
                 }
                 .environmentObject(settings)
             }
             .sheet(item: $editingTask) { task in
                 TaskEditView(task: task) {
+                    onChanged()
                     Task { await loadToday() }
                 }
                 .environmentObject(settings)
@@ -890,8 +893,17 @@ struct ContentView: View {
         }
 
         let savedCount = response.saved.count
-        if savedCount == 1 {
-            confirmation = "Записано"
+        if savedCount == 1, let item = response.saved.first {
+            switch item.kind.lowercased() {
+            case "idea":
+                confirmation = "Идея сохранена"
+            case "reminder":
+                confirmation = "Напоминание создано"
+            case "event", "calendar_event":
+                confirmation = "Встреча добавлена"
+            default:
+                confirmation = "Задача записана"
+            }
         } else if savedCount > 1 {
             confirmation = "Записано: \(savedCount)"
         } else if response.status == "stored" {
@@ -899,6 +911,7 @@ struct ContentView: View {
         }
 
         if savedCount > 0 {
+            onChanged()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
         }
@@ -1029,6 +1042,7 @@ struct ContentView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.clearFocus(taskID: task.id)
+            onChanged()
             await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
@@ -1045,6 +1059,7 @@ struct ContentView: View {
             withAnimation {
                 tasks.removeAll { $0.id == task.id }
             }
+            onChanged()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)

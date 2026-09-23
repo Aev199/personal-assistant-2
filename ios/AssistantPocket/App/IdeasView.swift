@@ -3,6 +3,7 @@ import SwiftUI
 struct IdeasView: View {
     @EnvironmentObject private var settings: AppSettings
 
+    let refreshToken: Int
     let onTaskCreated: () -> Void
 
     @State private var ideas: [AssistantIdea] = []
@@ -76,6 +77,9 @@ struct IdeasView: View {
         }
         .task {
             await load()
+        }
+        .onChange(of: refreshToken) { _, _ in
+            Task { await load() }
         }
     }
 

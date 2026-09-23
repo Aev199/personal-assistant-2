@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var tasks: [TodayTask] = []
     @State private var reminders: [TodayReminder] = []
     @State private var events: [TodayEvent] = []
+    @State private var calendarUnavailable = false
     @State private var hasLoadedToday = false
     @State private var isLoading = false
     @State private var isSending = false
@@ -122,6 +123,7 @@ struct ContentView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 26) {
                     focusSection
+                    calendarWarning
                     nextSection
                     captureSection
 
@@ -224,6 +226,28 @@ struct ContentView: View {
                     Task { await loadToday() }
                 }
                 .environmentObject(settings)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var calendarWarning: some View {
+        if calendarUnavailable {
+            HStack(spacing: 8) {
+                Label("Календарь не обновился", systemImage: "calendar.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    Task { await loadToday() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Повторить обновление календаря")
             }
         }
     }
@@ -833,6 +857,7 @@ struct ContentView: View {
             tasks = response.tasks
             reminders = response.reminders
             events = response.events ?? []
+            calendarUnavailable = response.calendarUnavailable ?? false
             hasLoadedToday = true
         } catch {
             present(error)

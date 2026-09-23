@@ -45,6 +45,12 @@ private struct WidgetTodayResponse: Codable {
     var tasks: [WidgetTask]
     var reminders: [WidgetReminder]
     var events: [WidgetEvent]?
+    var calendarUnavailable: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case tasks, reminders, events
+        case calendarUnavailable = "calendar_unavailable"
+    }
 }
 
 private enum WidgetCodec {
@@ -70,6 +76,7 @@ private enum WidgetCodec {
             tasks: today.tasks,
             reminders: today.reminders,
             events: today.events ?? [],
+            calendarUnavailable: today.calendarUnavailable ?? false,
             error: nil
         )
     }
@@ -415,6 +422,7 @@ private struct AssistantWidgetEntry: TimelineEntry {
     let tasks: [WidgetTask]
     let reminders: [WidgetReminder]
     let events: [WidgetEvent]
+    let calendarUnavailable: Bool
     let error: String?
 }
 
@@ -429,6 +437,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
             ],
             reminders: [],
             events: [],
+            calendarUnavailable: false,
             error: nil
         )
     }
@@ -514,6 +523,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 tasks: [],
                 reminders: [],
                 events: [],
+                calendarUnavailable: false,
                 error: "Откройте Assistant и сохраните настройки"
             )
         }
@@ -527,6 +537,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                     tasks: [],
                     reminders: [],
                     events: [],
+                    calendarUnavailable: false,
                     error: "Неверный код доступа"
                 )
             }
@@ -545,6 +556,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 tasks: today.tasks,
                 reminders: today.reminders,
                 events: today.events ?? [],
+                calendarUnavailable: today.calendarUnavailable ?? false,
                 error: nil
             )
         } catch {
@@ -556,6 +568,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 tasks: [],
                 reminders: [],
                 events: [],
+                calendarUnavailable: false,
                 error: "Нет связи"
             )
         }
@@ -705,6 +718,13 @@ private struct AssistantWidgetView: View {
         HStack(spacing: 9) {
             Text("Сейчас")
                 .font(.headline)
+
+            if entry.calendarUnavailable {
+                Image(systemName: "calendar.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Календарь не обновился")
+            }
 
             Spacer()
 

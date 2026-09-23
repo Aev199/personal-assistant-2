@@ -10,13 +10,8 @@ enum CaptureLaunchSignal {
     static let notification = Notification.Name("assistant.capture.requested")
 
     @MainActor
-    static func request() {
-        WidgetSharedSettings.requestCaptureLaunch()
-        notify(mode: .text)
-    }
-
-    @MainActor
-    static func notify(mode: CaptureLaunchMode) {
+    static func request(mode: CaptureLaunchMode = .text) {
+        WidgetSharedSettings.requestCaptureLaunch(mode: mode.rawValue)
         NotificationCenter.default.post(
             name: notification,
             object: mode.rawValue
@@ -31,8 +26,11 @@ enum CaptureLaunchSignal {
         return mode
     }
 
-    static func consume() -> Bool {
-        WidgetSharedSettings.consumeCaptureLaunch()
+    static func consumeMode() -> CaptureLaunchMode? {
+        guard let raw = WidgetSharedSettings.consumeCaptureLaunchMode() else {
+            return nil
+        }
+        return CaptureLaunchMode(rawValue: raw) ?? .text
     }
 }
 
@@ -64,7 +62,7 @@ struct OpenAssistantCaptureIntent: OpenIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        CaptureLaunchSignal.request()
+        CaptureLaunchSignal.request(mode: .text)
         return .result()
     }
 }

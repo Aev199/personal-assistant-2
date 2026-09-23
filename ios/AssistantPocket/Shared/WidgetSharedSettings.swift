@@ -58,14 +58,16 @@ enum WidgetSharedSettings {
         delete(preferTodayCacheAccount)
     }
 
-    static func requestCaptureLaunch() {
-        writeValue("1", account: captureRequestAccount)
+    static func requestCaptureLaunch(mode: String = "text") {
+        writeValue(mode.isEmpty ? "text" : mode, account: captureRequestAccount)
     }
 
-    static func consumeCaptureLaunch() -> Bool {
-        guard read(captureRequestAccount) == "1" else { return false }
+    static func consumeCaptureLaunchMode() -> String? {
+        let raw = read(captureRequestAccount)
+        guard !raw.isEmpty else { return nil }
         delete(captureRequestAccount)
-        return true
+        // "1" is retained for compatibility with already installed builds.
+        return raw == "1" ? "text" : raw
     }
 
     private static func read(_ account: String) -> String {

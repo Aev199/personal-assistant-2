@@ -70,10 +70,24 @@ def test_capture_deep_links_are_routed_at_root_after_switching_to_today():
 
     assert 'selectedTab = .today' in root
     assert 'mode == "voice" ? .voice : .text' in root
-    assert "CaptureLaunchSignal.notify" in root
+    assert "CaptureLaunchSignal.request(mode:" in root
     assert ".onOpenURL" not in home
-    assert "CaptureLaunchSignal.mode(from: notification) == .voice" in home
+    assert "CaptureLaunchSignal.mode(from: notification)" in home
+    assert "CaptureLaunchSignal.consumeMode()" in home
     assert "enum CaptureLaunchMode" in intents
+
+
+def test_capture_mode_is_durable_across_cold_start_or_late_subscription():
+    shared = _read("Shared/WidgetSharedSettings.swift")
+    intents = _read("Shared/CaptureIntents.swift")
+    home = _read("App/ContentView.swift")
+
+    assert "requestCaptureLaunch(mode:" in shared
+    assert "consumeCaptureLaunchMode()" in shared
+    assert 'return raw == "1" ? "text" : raw' in shared
+    assert "static func consumeMode()" in intents
+    assert "guard let mode = CaptureLaunchSignal.consumeMode()" in home
+    assert "activateCapture(mode: mode)" in home
 
 
 def test_capture_is_one_tap_from_tasks_and_ideas_without_duplicating_intake_ui():

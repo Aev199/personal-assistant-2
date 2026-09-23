@@ -177,11 +177,9 @@ struct ContentView: View {
                 consumeSystemCaptureRequest()
             }
             .onReceive(NotificationCenter.default.publisher(for: CaptureLaunchSignal.notification)) { notification in
-                if CaptureLaunchSignal.mode(from: notification) == .voice {
-                    activateVoiceCapture()
-                } else {
-                    activateCapture()
-                }
+                let mode = CaptureLaunchSignal.mode(from: notification)
+                _ = CaptureLaunchSignal.consumeMode()
+                activateCapture(mode: mode)
             }
             .onReceive(clock) { tick in
                 now = tick
@@ -855,8 +853,16 @@ struct ContentView: View {
     }
 
     private func consumeSystemCaptureRequest() {
-        guard CaptureLaunchSignal.consume() else { return }
-        activateCapture()
+        guard let mode = CaptureLaunchSignal.consumeMode() else { return }
+        activateCapture(mode: mode)
+    }
+
+    private func activateCapture(mode: CaptureLaunchMode) {
+        if mode == .voice {
+            activateVoiceCapture()
+        } else {
+            activateCapture()
+        }
     }
 
     private func activateVoiceCapture() {

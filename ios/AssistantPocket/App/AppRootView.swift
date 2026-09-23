@@ -55,7 +55,7 @@ struct AppRootView: View {
                 .value
 
             DispatchQueue.main.async {
-                CaptureLaunchSignal.notify(mode: mode == "voice" ? .voice : .text)
+                CaptureLaunchSignal.request(mode: mode == "voice" ? .voice : .text)
             }
         }
     }

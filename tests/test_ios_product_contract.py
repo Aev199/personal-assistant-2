@@ -84,6 +84,17 @@ def test_capture_deep_links_are_routed_at_root_after_switching_to_today():
     assert "enum CaptureLaunchMode" in intents
 
 
+def test_external_quick_capture_cannot_be_hijacked_by_old_clarification_context():
+    home = _read("App/ContentView.swift")
+
+    start = home.index("private func activateCapture(mode:")
+    end = home.index("private func activateVoiceCapture", start)
+    block = home[start:end]
+
+    assert "clearClarification()" in block
+    assert block.index("clearClarification()") < block.index("activateVoiceCapture()")
+
+
 def test_cold_start_capture_runs_before_refresh_and_outbox_work():
     home = _read("App/ContentView.swift")
 

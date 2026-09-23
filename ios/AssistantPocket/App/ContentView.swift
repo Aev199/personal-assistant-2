@@ -876,6 +876,10 @@ struct ContentView: View {
     }
 
     private func activateCapture(mode: CaptureLaunchMode) {
+        // Capture launched from a widget/deep link means "new thought", not
+        // "answer the clarification I happened to leave open earlier".
+        clearClarification()
+
         if mode == .voice {
             activateVoiceCapture()
         } else {

@@ -54,6 +54,10 @@ enum WidgetSharedSettings {
         return true
     }
 
+    static func clearCachedTodayPreference() {
+        delete(preferTodayCacheAccount)
+    }
+
     static func requestCaptureLaunch() {
         writeValue("1", account: captureRequestAccount)
     }

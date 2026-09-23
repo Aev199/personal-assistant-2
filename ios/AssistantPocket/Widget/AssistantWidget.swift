@@ -273,6 +273,8 @@ struct MarkTaskDoneIntent: AppIntent {
 
         do {
             try await WidgetNetwork.markDone(taskID: taskID)
+            WidgetSharedSettings.clearCachedTodayPreference()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             return .result()
         } catch {
             if let originalCache {
@@ -312,6 +314,8 @@ struct FocusTaskIntent: AppIntent {
 
         do {
             try await WidgetNetwork.focusTask(taskID: taskID)
+            WidgetSharedSettings.clearCachedTodayPreference()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             return .result()
         } catch {
             if let originalCache {
@@ -355,6 +359,8 @@ struct DismissCalendarEventIntent: AppIntent {
 
         do {
             try await WidgetNetwork.dismissEvent(eventID: eventID, until: eventEnd)
+            WidgetSharedSettings.clearCachedTodayPreference()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             return .result()
         } catch {
             if let originalCache {
@@ -394,6 +400,8 @@ struct SnoozeReminderIntent: AppIntent {
 
         do {
             try await WidgetNetwork.snoozeReminder(reminderID: reminderID)
+            WidgetSharedSettings.clearCachedTodayPreference()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             return .result()
         } catch {
             if let originalCache {

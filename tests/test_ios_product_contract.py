@@ -557,6 +557,15 @@ def test_widget_marks_cached_fallback_as_stale_without_hiding_useful_content():
     assert "entry.error != nil || entry.calendarPending || entry.stale" in widget
 
 
+def test_widget_optimistic_actions_refresh_from_server_after_success():
+    shared = _read("Shared/WidgetSharedSettings.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "static func clearCachedTodayPreference()" in shared
+    assert widget.count("WidgetSharedSettings.clearCachedTodayPreference()") >= 4
+    assert widget.count('WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")') >= 8
+
+
 def test_widget_does_not_ask_for_manual_refresh_during_normal_operation():
     widget = _read("Widget/AssistantWidget.swift")
 

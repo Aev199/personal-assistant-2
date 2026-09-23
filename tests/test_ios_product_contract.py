@@ -193,6 +193,16 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert 'Text("+15")' in widget
 
 
+def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_work():
+    home = _read("App/ContentView.swift")
+
+    assert "private var suggestedFocusTask" in home
+    assert "deadline < startOfTomorrow" in home
+    assert 'Text("Начать: \\(suggestedFocusTask.title)")' in home
+    assert 'Button("Выбрать другую")' in home
+    assert "client.focusTask(taskID: task.id)" in home
+
+
 def test_explicit_focus_exposes_when_it_started_without_adding_a_timer_mode():
     models = _read("App/Models.swift")
     home = _read("App/ContentView.swift")

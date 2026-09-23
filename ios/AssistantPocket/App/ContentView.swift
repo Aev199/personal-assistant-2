@@ -69,6 +69,15 @@ struct ContentView: View {
         return manualFocusTask
     }
 
+    private var suggestedFocusTask: TodayTask? {
+        let startOfTomorrow = Calendar.current.startOfDay(for: now).addingTimeInterval(24 * 60 * 60)
+        return tasks.first { task in
+            guard !task.isFocused else { return false }
+            guard let deadline = task.deadline else { return true }
+            return task.overdue || deadline < startOfTomorrow
+        }
+    }
+
     private var remainingTasks: [TodayTask] {
         guard let focusTask else { return tasks }
         return tasks.filter { $0.id != focusTask.id }
@@ -234,16 +243,28 @@ struct ContentView: View {
                 focusTaskCard(task)
             } else if settings.isConfigured && !isLoading {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(tasks.isEmpty ? "На сейчас ничего нет" : "Ничего не выбрано")
+                    Text(suggestedFocusTask == nil ? "На сейчас ничего нет" : "Ничего не выбрано")
                         .font(.title3.weight(.semibold))
 
-                    if !tasks.isEmpty {
-                        Button("Выбрать из Дальше") {
+                    if let suggestedFocusTask {
+                        Button {
+                            Task { await focus(suggestedFocusTask) }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.right.circle.fill")
+                                Text("Начать: \(suggestedFocusTask.title)")
+                                    .lineLimit(1)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityLabel("Начать задачу \(suggestedFocusTask.title)")
+
+                        Button("Выбрать другую") {
                             showFocusPicker = true
                         }
                         .font(.subheadline.weight(.medium))
-                        .buttonStyle(.bordered)
-                        .accessibilityLabel("Выбрать текущую задачу")
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                     }
                 }
                 .padding(16)
@@ -1035,6 +1056,20 @@ struct ContentView: View {
             withAnimation {
                 events.removeAll { $0.id == event.id }
             }
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func focus(_ task: TodayTask) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.focusTask(taskID: task.id)
+            onChanged()
+            await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)

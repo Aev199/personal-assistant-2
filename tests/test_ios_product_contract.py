@@ -35,6 +35,26 @@ def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
     assert 'Button("Все задачи")' not in source
 
 
+def test_widget_clear_focus_updates_cached_state_optimistically_and_rolls_back():
+    widget = _read("../Widget/AssistantWidget.swift")
+
+    assert "static func cacheWithoutFocus(_ taskID: Int)" in widget
+    block = widget[widget.index("struct ClearFocusTaskIntent"):]
+    assert "WidgetCodec.cacheWithoutFocus(taskID)" in block
+    assert "WidgetSharedSettings.writeCachedTodayData(originalCache)" in block
+    assert "WidgetSharedSettings.clearCachedTodayData()" in block
+
+
+def test_app_refreshes_primary_data_when_returning_to_foreground():
+    root = _read("App/AppRootView.swift")
+
+    assert '@Environment(\\.scenePhase) private var scenePhase' in root
+    assert '.onChange(of: scenePhase)' in root
+    assert 'guard phase == .active else { return }' in root
+    assert 'taskRevision += 1' in root
+    assert 'WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")' in root
+
+
 def test_explicit_now_always_wins_over_calendar_attention_in_app():
     home = _read("App/ContentView.swift")
 

@@ -1152,6 +1152,7 @@ struct ContentView: View {
             return
         }
 
+        VoiceCaptureOutbox.recoverTemporaryRecordings()
         let queued = VoiceCaptureOutbox.all()
         guard !queued.isEmpty else { return }
 

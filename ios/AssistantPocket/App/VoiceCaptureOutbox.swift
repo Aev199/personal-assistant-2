@@ -73,6 +73,68 @@ enum VoiceCaptureOutbox {
         return items
     }
 
+    static func recoverTemporaryRecordings() {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: temporaryDirectory,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        var items = all()
+        var knownIDs = Set(items.map(\.id))
+        var changed = false
+
+        for url in files {
+            let basename = url.deletingPathExtension().lastPathComponent
+            guard url.pathExtension.lowercased() == "m4a",
+                  basename.hasPrefix("assistant-voice-") else {
+                continue
+            }
+
+            let rawID = String(basename.dropFirst("assistant-voice-".count))
+            guard let id = UUID(uuidString: rawID) else { continue }
+
+            let filename = "\(id.uuidString.lowercased()).m4a"
+            let destination = directory.appendingPathComponent(filename)
+
+            if fileManager.fileExists(atPath: destination.path) {
+                // The durable copy already won the handoff. The temporary
+                // recording is only a duplicate left by an interrupted cleanup.
+                try? fileManager.removeItem(at: url)
+                continue
+            }
+
+            do {
+                try fileManager.moveItem(at: url, to: destination)
+            } catch {
+                continue
+            }
+
+            if !knownIDs.contains(id) {
+                let values = try? destination.resourceValues(forKeys: [.creationDateKey])
+                items.append(
+                    QueuedVoiceCapture(
+                        id: id,
+                        filename: filename,
+                        context: nil,
+                        createdAt: values?.creationDate ?? .now
+                    )
+                )
+                knownIDs.insert(id)
+                changed = true
+            }
+        }
+
+        if changed {
+            items.sort { $0.createdAt < $1.createdAt }
+            save(items)
+        }
+    }
+
     @discardableResult
     static func enqueue(recordingURL: URL, context: String?) throws -> QueuedVoiceCapture {
         let id = UUID()

@@ -655,6 +655,17 @@ def test_voice_capture_keeps_transcript_for_retry_when_classification_is_deferre
     assert "CaptureOutbox.enqueue(" in home
 
 
+def test_voice_outbox_recovers_recorder_temp_file_when_durable_move_never_happened():
+    outbox = _read("App/VoiceCaptureOutbox.swift")
+    home = _read("App/ContentView.swift")
+
+    assert "static func recoverTemporaryRecordings()" in outbox
+    assert 'basename.hasPrefix("assistant-voice-")' in outbox
+    assert 'dropFirst("assistant-voice-".count)' in outbox
+    assert "fileManager.moveItem(at: url, to: destination)" in outbox
+    assert "VoiceCaptureOutbox.recoverTemporaryRecordings()" in home
+
+
 def test_voice_outbox_recovers_audio_orphaned_between_file_move_and_metadata_write():
     outbox = _read("App/VoiceCaptureOutbox.swift")
     home = _read("App/ContentView.swift")

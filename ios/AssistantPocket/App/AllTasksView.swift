@@ -26,6 +26,7 @@ struct AllTasksView: View {
     @State private var scope: TaskScope = .work
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var actionError: String?
     @State private var editingTask: TodayTask?
 
     var body: some View {
@@ -93,6 +94,22 @@ struct AllTasksView: View {
             }
             .environmentObject(settings)
         }
+        .alert("Не удалось выполнить действие", isPresented: actionErrorPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionError ?? "")
+        }
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { actionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    actionError = nil
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -116,7 +133,7 @@ struct AllTasksView: View {
                         .onTapGesture {
                             editingTask = task
                         }
-                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        .contextMenu {
                             if !task.isFocused {
                                 Button {
                                     Task { await focus(task) }
@@ -124,8 +141,7 @@ struct AllTasksView: View {
                                     Label("Сейчас", systemImage: "scope")
                                 }
                             }
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+
                             Button {
                                 Task { await complete(task) }
                             } label: {
@@ -166,7 +182,7 @@ struct AllTasksView: View {
             Button {
                 Task { await complete(task) }
             } label: {
-                Image(systemName: task.inProgress ? "circle.inset.filled" : "circle")
+                Image(systemName: "circle")
                     .font(.title3)
                     .padding(.top, 2)
             }
@@ -239,7 +255,7 @@ struct AllTasksView: View {
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             onChanged()
         } catch {
-            errorMessage = error.localizedDescription
+            actionError = error.localizedDescription
         }
     }
 
@@ -256,7 +272,7 @@ struct AllTasksView: View {
             onChanged()
         } catch {
             tasks.insert(original, at: min(index, tasks.count))
-            errorMessage = error.localizedDescription
+            actionError = error.localizedDescription
         }
     }
 }

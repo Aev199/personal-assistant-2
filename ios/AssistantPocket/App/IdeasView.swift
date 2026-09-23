@@ -9,6 +9,7 @@ struct IdeasView: View {
     @State private var ideas: [AssistantIdea] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var actionError: String?
 
     var body: some View {
         Group {
@@ -29,11 +30,10 @@ struct IdeasView: View {
                 )
             } else {
                 List {
-                    Section {
-                        ForEach(ideas) { idea in
-                            Text(idea.text)
-                                .font(.body)
-                                .fixedSize(horizontal: false, vertical: true)
+                    ForEach(ideas) { idea in
+                        Text(idea.text)
+                            .font(.body)
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.vertical, 4)
                             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                 Button {
@@ -49,9 +49,19 @@ struct IdeasView: View {
                                     Label("Архив", systemImage: "archivebox")
                                 }
                             }
-                        }
-                    } footer: {
-                        Text("Смахните идею: слева — в задачу, справа — в архив.")
+                            .contextMenu {
+                                Button {
+                                    Task { await promote(idea) }
+                                } label: {
+                                    Label("В задачу", systemImage: "checklist")
+                                }
+
+                                Button {
+                                    Task { await archive(idea) }
+                                } label: {
+                                    Label("Архив", systemImage: "archivebox")
+                                }
+                            }
                     }
                 }
                 .listStyle(.insetGrouped)
@@ -81,6 +91,22 @@ struct IdeasView: View {
         .onChange(of: refreshToken) { _, _ in
             Task { await load() }
         }
+        .alert("Не удалось выполнить действие", isPresented: actionErrorPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionError ?? "")
+        }
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { actionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    actionError = nil
+                }
+            }
+        )
     }
 
     @MainActor
@@ -108,7 +134,7 @@ struct IdeasView: View {
             ideas.removeAll { $0.id == idea.id }
             onTaskCreated()
         } catch {
-            errorMessage = error.localizedDescription
+            actionError = error.localizedDescription
         }
     }
 
@@ -120,7 +146,7 @@ struct IdeasView: View {
             _ = try await client.archiveIdea(ideaID: idea.id)
             ideas.removeAll { $0.id == idea.id }
         } catch {
-            errorMessage = error.localizedDescription
+            actionError = error.localizedDescription
         }
     }
 }

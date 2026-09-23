@@ -46,6 +46,23 @@ def test_ideas_are_a_separate_tab_and_stay_off_today():
     assert "swipeActions" in ideas
 
 
+def test_task_page_swipe_does_not_compete_with_row_action_swipes():
+    tasks = _read("App/AllTasksView.swift")
+
+    assert ".tabViewStyle(.page(indexDisplayMode: .never))" in tasks
+    assert ".swipeActions(" not in tasks
+    assert ".contextMenu" in tasks
+    assert 'Image(systemName: "circle")' in tasks
+
+
+def test_ideas_keep_actions_without_permanent_instructional_noise():
+    ideas = _read("App/IdeasView.swift")
+
+    assert ".swipeActions(" in ideas
+    assert ".contextMenu" in ideas
+    assert "Смахните идею:" not in ideas
+
+
 def test_capture_is_one_tap_from_tasks_and_ideas_without_duplicating_intake_ui():
     tasks = _read("App/AllTasksView.swift")
     ideas = _read("App/IdeasView.swift")
@@ -138,8 +155,8 @@ def test_today_keeps_local_focus_action_and_tasks_page_between_work_personal():
     assert 'Picker("Тип задач", selection: $scope)' in tasks
     assert "TabView(selection: $scope)" in tasks
     assert ".tabViewStyle(.page(indexDisplayMode: .never))" in tasks
-    assert ".swipeActions(edge: .leading" in tasks
-    assert ".swipeActions(edge: .trailing" in tasks
+    assert ".swipeActions(" not in tasks
+    assert ".contextMenu" in tasks
     assert 'Label("Сейчас", systemImage: "scope")' in tasks
     assert 'Label("Готово", systemImage: "checkmark")' in tasks
     assert 'Image(systemName: "play.fill")' not in tasks
@@ -252,7 +269,8 @@ def test_now_requires_explicit_focus_instead_of_promoting_first_task_implicitly(
 
     assert "return focusEvent == nil && focusReminder == nil ? tasks.first : nil" not in home
     assert "return focusEvent == nil && focusReminder == nil ? entry.tasks.first : nil" not in widget
-    assert 'Text(tasks.isEmpty ? "На сейчас ничего нет" : "Ничего не выбрано")' in home
+    assert '"Ничего не выбрано"' in home
+    assert '"На сейчас ничего нет"' in home
     assert 'Text("Ничего не выбрано")' in widget
 
 

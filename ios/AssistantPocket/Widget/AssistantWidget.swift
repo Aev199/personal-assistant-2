@@ -720,7 +720,7 @@ private struct AssistantWidgetView: View {
     private func focusTask(_ task: WidgetTask) -> some View {
         HStack(alignment: .top, spacing: 9) {
             Button(intent: MarkTaskDoneIntent(taskID: task.id)) {
-                Image(systemName: task.inProgress ? "circle.inset.filled" : "circle")
+                Image(systemName: "circle")
                     .font(.title3)
             }
             .buttonStyle(.plain)

@@ -571,7 +571,8 @@ def test_voice_capture_is_fast_shared_and_loss_resistant():
     assert "voiceIntake(" in home
     assert "VoiceCaptureOutbox.enqueue" in home
     assert "flushVoiceOutbox()" in home
-    assert "CaptureLaunchSignal.mode(from: notification) == .voice" in home
+    assert "CaptureLaunchSignal.mode(from: notification)" in home
+    assert "activateCapture(mode: mode)" in home
 
     assert "/api/v1/intake/audio" in api
     assert "/api/v1/companion/intake/audio" in api

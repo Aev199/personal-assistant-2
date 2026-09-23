@@ -1204,7 +1204,12 @@ struct ContentView: View {
             } catch is CancellationError {
                 break
             } catch {
-                break
+                if isRetryable(error) {
+                    break
+                }
+                // Preserve this item for inspection/retry, but let later
+                // captures continue instead of poisoning the whole queue.
+                continue
             }
         }
     }
@@ -1337,8 +1342,9 @@ struct ContentView: View {
                 if isRetryable(error) {
                     break
                 }
-                // Keep the item: a durable capture is preferable to silent loss.
-                break
+                // Keep the bad item, but do not let it permanently block every
+                // newer capture behind it.
+                continue
             }
         }
 

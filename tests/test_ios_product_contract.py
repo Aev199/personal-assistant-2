@@ -639,6 +639,22 @@ def test_clarification_can_be_cancelled_explicitly():
     assert "private func clearClarification()" in home
 
 
+def test_one_nonretryable_outbox_item_does_not_block_newer_captures_forever():
+    home = _read("App/ContentView.swift")
+
+    voice_start = home.index("private func flushVoiceOutbox")
+    text_start = home.index("private func flushOutbox")
+    pending_start = home.index("private func isRetryable", text_start)
+
+    voice_block = home[voice_start:text_start]
+    text_block = home[text_start:pending_start]
+
+    assert "if isRetryable(error)" in voice_block
+    assert "continue" in voice_block
+    assert "if isRetryable(error)" in text_block
+    assert "continue" in text_block
+
+
 def test_failed_text_capture_remains_durable_for_later_retry():
     home = _read("App/ContentView.swift")
 

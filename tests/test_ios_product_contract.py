@@ -43,6 +43,8 @@ def test_widget_mutations_use_a_non_reentrant_gate_to_avoid_cache_races():
     assert "private var waiters: [CheckedContinuation<Void, Never>] = []" in widget
     assert "await acquire()" in widget
     assert "defer { release() }" in widget
+    assert "async throws -> Void" in widget
+    assert "func run<T: Sendable>" not in widget
 
     for intent in (
         "MarkTaskDoneIntent",

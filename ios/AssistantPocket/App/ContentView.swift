@@ -28,6 +28,10 @@ struct ContentView: View {
     @State private var editingTask: TodayTask?
     @State private var showFocusPicker = false
     @State private var now = Date()
+    @State private var startHelpTaskID: Int?
+    @State private var startHelpSteps: [String] = []
+    @State private var isLoadingStartHelp = false
+    @State private var startHelpError: String?
     @FocusState private var captureFocused: Bool
 
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -308,13 +312,71 @@ struct ContentView: View {
                 .accessibilityLabel("Выполнено")
             }
 
-            Button("Не сейчас") {
-                Task { await clearFocus(task) }
+            HStack(spacing: 14) {
+                Button("Не сейчас") {
+                    Task { await clearFocus(task) }
+                }
+                .font(.subheadline.weight(.medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Убрать задачу из Сейчас")
+
+                if startHelpTaskID != task.id {
+                    Button("С чего начать?") {
+                        Task { await loadStartHelp(task) }
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .buttonStyle(.plain)
+                }
             }
-            .font(.subheadline.weight(.medium))
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("Убрать задачу из Сейчас")
+
+            if startHelpTaskID == task.id {
+                VStack(alignment: .leading, spacing: 8) {
+                    if isLoadingStartHelp {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Ищу первый шаг…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if !startHelpSteps.isEmpty {
+                        Text("Первый шаг")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        ForEach(Array(startHelpSteps.enumerated()), id: \.offset) { index, step in
+                            HStack(alignment: .top, spacing: 7) {
+                                Text(index == 0 ? "→" : "·")
+                                    .foregroundStyle(.secondary)
+                                Text(step)
+                                    .font(index == 0 ? .subheadline.weight(.medium) : .subheadline)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        Button("Скрыть") {
+                            clearStartHelp()
+                        }
+                        .font(.caption.weight(.medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    } else if let startHelpError {
+                        HStack(spacing: 8) {
+                            Text(startHelpError)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Button("Повторить") {
+                                Task { await loadStartHelp(task) }
+                            }
+                            .font(.caption.weight(.medium))
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1063,11 +1125,39 @@ struct ContentView: View {
     }
 
     @MainActor
+    private func loadStartHelp(_ task: TodayTask) async {
+        startHelpTaskID = task.id
+        startHelpSteps = []
+        startHelpError = nil
+        isLoadingStartHelp = true
+        defer { isLoadingStartHelp = false }
+
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            let response = try await client.taskStartHelp(taskID: task.id)
+            guard startHelpTaskID == task.id else { return }
+            startHelpSteps = response.steps
+        } catch {
+            guard startHelpTaskID == task.id else { return }
+            startHelpError = "Подсказка сейчас недоступна."
+        }
+    }
+
+    @MainActor
+    private func clearStartHelp() {
+        startHelpTaskID = nil
+        startHelpSteps = []
+        startHelpError = nil
+        isLoadingStartHelp = false
+    }
+
+    @MainActor
     private func focus(_ task: TodayTask) async {
         errorMessage = nil
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.focusTask(taskID: task.id)
+            clearStartHelp()
             onChanged()
             await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
@@ -1082,6 +1172,7 @@ struct ContentView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.clearFocus(taskID: task.id)
+            clearStartHelp()
             onChanged()
             await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
@@ -1096,6 +1187,7 @@ struct ContentView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.markDone(taskID: task.id)
+            clearStartHelp()
             withAnimation {
                 tasks.removeAll { $0.id == task.id }
             }

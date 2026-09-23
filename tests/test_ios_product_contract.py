@@ -203,6 +203,19 @@ def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_wo
     assert "client.focusTask(taskID: task.id)" in home
 
 
+def test_current_task_can_request_tiny_start_help_without_new_navigation():
+    home = _read("App/ContentView.swift")
+    api = _read("App/APIClient.swift")
+    models = _read("App/Models.swift")
+
+    assert 'Button("С чего начать?")' in home
+    assert 'Text("Первый шаг")' in home
+    assert 'Text("Ищу первый шаг…")' in home
+    assert "client.taskStartHelp(taskID: task.id)" in home
+    assert 'path: "/api/v1/tasks/\\(taskID)/steps"' in api
+    assert "struct TaskStartHelpResponse" in models
+
+
 def test_explicit_focus_exposes_when_it_started_without_adding_a_timer_mode():
     models = _read("App/Models.swift")
     home = _read("App/ContentView.swift")

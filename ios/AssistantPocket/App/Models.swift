@@ -79,6 +79,17 @@ struct TaskMutationResponse: Decodable {
     }
 }
 
+struct TaskStartHelpResponse: Decodable {
+    let ok: Bool
+    let taskId: Int
+    let steps: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case ok, steps
+        case taskId = "task_id"
+    }
+}
+
 struct TodayTask: Decodable, Identifiable {
     let id: Int
     let title: String

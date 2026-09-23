@@ -28,6 +28,7 @@ def test_assistant_routes_include_canonical_and_legacy_aliases():
     assert ("POST", "/api/v1/intake/{pending_action_id}/cancel") in routes
     assert ("POST", "/api/v1/tasks/{task_id}/focus") in routes
     assert ("POST", "/api/v1/tasks/{task_id}/unfocus") in routes
+    assert ("POST", "/api/v1/tasks/{task_id}/steps") in routes
     assert ("POST", "/api/v1/tasks/{task_id}/done") in routes
     assert ("POST", "/api/v1/attention/dismiss-event") in routes
     assert ("POST", "/api/v1/reminders/{reminder_id}/snooze") in routes
@@ -111,6 +112,26 @@ def test_utc_aware_normalizes_naive_and_aware_values():
     assert normalized_naive == datetime(2026, 9, 12, 10, 30, tzinfo=timezone.utc)
     assert normalized_aware == aware
     assert companion._utc_aware(None) is None
+
+
+def test_clean_task_steps_keeps_small_unique_actions():
+    payload = {
+        "steps": [
+            "  Открыть исходную модель  ",
+            "Открыть исходную модель",
+            "Проверить исходные нагрузки",
+            "Сравнить результаты расчёта",
+            "Лишний четвёртый шаг",
+        ]
+    }
+
+    assert companion._clean_task_steps(payload) == [
+        "Открыть исходную модель",
+        "Проверить исходные нагрузки",
+        "Сравнить результаты расчёта",
+    ]
+    assert companion._clean_task_steps({"step": "Открыть файл"}) == ["Открыть файл"]
+    assert companion._clean_task_steps(None) == []
 
 
 def test_focus_started_at_requires_matching_task():

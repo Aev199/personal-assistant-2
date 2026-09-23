@@ -165,6 +165,31 @@ def _focus_started_at(state: dict | None, task_id: int | None) -> str | None:
     return str(value).strip() if value else None
 
 
+def _clean_task_steps(payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("steps")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        single = payload.get("step")
+        raw = [single] if isinstance(single, str) else []
+
+    steps: list[str] = []
+    for item in raw:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        text = " ".join(text.split())
+        if len(text) > 160:
+            text = text[:157].rstrip() + "…"
+        if text not in steps:
+            steps.append(text)
+        if len(steps) >= 3:
+            break
+    return steps
+
+
 def _attention_sort_key(
     row: dict,
     now_utc: datetime,
@@ -289,6 +314,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _unfocus(request: web.Request) -> web.StreamResponse:
         return await handle_task_unfocus(request, ctx)
 
+    async def _steps(request: web.Request) -> web.StreamResponse:
+        return await handle_task_steps(request, ctx)
+
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
@@ -314,6 +342,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
     app.router.add_post("/api/v1/tasks/{task_id}/focus", _focus)
     app.router.add_post("/api/v1/tasks/{task_id}/unfocus", _unfocus)
+    app.router.add_post("/api/v1/tasks/{task_id}/steps", _steps)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
     app.router.add_post("/api/v1/attention/dismiss-event", _dismiss_event)
     app.router.add_post("/api/v1/reminders/{reminder_id}/snooze", _snooze_reminder)
@@ -1325,6 +1354,75 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
             "task_id": task_id,
             "status": "in_progress",
             "focused_since": started_at,
+        }
+    )
+
+
+async def handle_task_steps(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    llm = getattr(ctx.deps, "llm", None)
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+    if llm is None or not getattr(llm, "enabled", False):
+        return web.json_response({"ok": False, "error": "llm_unavailable"}, status=503)
+
+    try:
+        task_id = int(request.match_info["task_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT t.id, t.title, t.status, t.kind, p.code AS project_code
+            FROM tasks t
+            JOIN projects p ON p.id=t.project_id
+            WHERE t.id=$1
+            """,
+            task_id,
+        )
+
+    if not row:
+        return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
+    if str(row["kind"] or "task").lower() == "super":
+        return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
+    if str(row["status"] or "").lower() in {"done", "postponed"}:
+        return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
+
+    title = str(row["title"] or "").strip()
+    project = str(row["project_code"] or "").strip()
+    system_prompt = (
+        "You help a person start a task when initiation feels difficult. "
+        "Return JSON only with the shape {\"steps\":[\"...\"]}. "
+        "Give 1 to 3 concrete physical next actions, smallest useful action first. "
+        "Each step must be short, specific, and directly doable. "
+        "Do not add motivation, explanation, priorities, deadlines, or new tasks. "
+        "Use the same language as the task title."
+    )
+    user_prompt = f"Task: {title}"
+    if project and project.upper() != "INBOX":
+        user_prompt += f"\nProject: {project}"
+
+    try:
+        payload = await llm.classify_intake(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+    except Exception:
+        return web.json_response({"ok": False, "error": "llm_unavailable"}, status=503)
+
+    steps = _clean_task_steps(payload)
+    if not steps:
+        return web.json_response({"ok": False, "error": "invalid_llm_response"}, status=502)
+
+    return web.json_response(
+        {
+            "ok": True,
+            "task_id": task_id,
+            "steps": steps,
         }
     )
 

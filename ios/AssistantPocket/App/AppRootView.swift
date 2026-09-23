@@ -7,6 +7,10 @@ private enum AppTab: Hashable {
     case ideas
 }
 
+// Build marker kept in source so a release-candidate commit can trigger the
+// iOS-only workflow without changing runtime behavior.
+private let iosReleaseCandidate = "2026-09-23-concurrency-hardening"
+
 struct AppRootView: View {
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.scenePhase) private var scenePhase

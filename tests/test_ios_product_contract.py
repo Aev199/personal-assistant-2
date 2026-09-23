@@ -9,6 +9,18 @@ def _read(relative: str) -> str:
     return (IOS / relative).read_text(encoding="utf-8")
 
 
+def test_ios_product_docs_match_current_tabs_voice_and_attention_semantics():
+    readme = (ROOT / "ios" / "README.md").read_text(encoding="utf-8")
+    product = (ROOT / "ios" / "PRODUCT.md").read_text(encoding="utf-8")
+
+    assert "three stable native tabs" in readme
+    assert "No tab bar" not in readme
+    assert "on-device SpeechAnalyzer transcription first" in readme
+    assert "transcribed on-device with SpeechAnalyzer" in product
+    assert "A reminder takes **Сейчас** only when it is due" in product
+    assert "explicit task remains remembered underneath" in product
+
+
 def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
     root = _read("App/AppRootView.swift")
     source = _read("App/ContentView.swift")

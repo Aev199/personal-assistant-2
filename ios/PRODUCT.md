@@ -15,13 +15,13 @@ The app has three stable top-level destinations: **Сегодня**, **Зада�
 ## ADHD-first rules
 
 - Capture must survive bad network, VPN changes, app suspension and accidental interruption.
-- Voice capture is a first-class capture path, not a separate feature: it is transcribed by the backend Gemini path and then enters the same intake pipeline as text. Recorded audio stays in a local outbox until the backend accepts it.
+- Voice capture is a first-class capture path, not a separate feature: audio is persisted first, transcribed on-device with SpeechAnalyzer when available, and only the transcript is sent to the normal backend/Gemini intake path. Server audio transcription is the fallback. Recorded audio stays available until the handoff is acknowledged.
 - An unfinished capture must survive relaunch.
-- There is one explicit current focus. Choosing a new focus must not require reorganizing the backlog. A manual choice overrides automatic calendar/reminder focus until that task is completed or changed.
-- A reminder that is due or within 15 minutes may temporarily take **Сейчас**; it must not be buried behind ordinary tasks.
+- There is one explicit task focus. Choosing a new task focus must not require reorganizing the backlog. A due reminder or active meeting may temporarily occupy **Сейчас**, but the explicit task remains remembered underneath and can resume afterwards.
+- A reminder takes **Сейчас** only when it is due. Upcoming reminders remain time anchors in **Дальше** instead of interrupting work early.
 - A due reminder has one default escape hatch: **+15 мин**. More complex rescheduling stays off the primary surface.
 - Telegram is the reminder delivery channel for now; iOS and the widget are attention/state surfaces. A delivered reminder disappears from native Today on refresh. Native snooze makes the previously delivered Telegram alert inactive instead of leaving two live controls for the same reminder.
-- A meeting that is already in progress, or starts within 15 minutes, may take **Сейчас**. Calendar context stays compact rather than becoming a full calendar screen.
+- A meeting already in progress may interrupt **Сейчас** while preserving the paused explicit task for return. An upcoming meeting within 15 minutes can take **Сейчас** only when no explicit task is selected. Calendar context stays compact rather than becoming a full calendar screen.
 - Acknowledging a calendar event hides it from attention until the event ends; it never deletes or edits the source calendar event. Both the app and widget use a compact explicit dismiss control; the primary surface does not depend on hidden gestures.
 - **Дальше** stays deliberately short: at most four rows on the main screen.
 - Safe capture actions happen without a confirmation ceremony.

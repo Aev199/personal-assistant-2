@@ -5,7 +5,7 @@ The native iOS app is a primary mobile surface of Personal Assistant, not a comp
 ## Product roles
 
 - **Widget** — the lowest-friction daily surface: see what matters now, Quick Done, refresh, text capture and one-tap voice capture.
-- **iOS app** — Today + capture + calendar context + one second-level active-task list. Ideas sit one level deeper from that list. No tab bar, no chat clone, no project-management dashboard.
+- **iOS app** — three stable native tabs: Today/capture, Tasks, and Ideas. Calendar context stays inside Today. No chat clone and no project-management dashboard.
 - **Telegram** — conversational / command interface to the same backend, especially useful while working on a PC.
 - **Backend** — source of truth and owner of attention ordering, tasks, reminders and mutations.
 
@@ -19,7 +19,7 @@ The main screen remains deliberately small:
 2. **Дальше** — a short continuation, not the whole backlog.
 3. **Запомнить** — fast Inbox capture.
 
-The toolbar contains one second-level **Задачи** screen with the complete active backlog, local search and Quick Done. **Идеи** are reachable from there and stay outside the attention queue until explicitly promoted to a task. Neither screen is a permanent tab.
+The standard bottom tab bar contains **Сегодня**, **Задачи**, and **Идеи**. Tasks provides the complete active backlog with work/personal scopes and local search. Ideas stay outside the attention queue until explicitly promoted to a task.
 
 The Home Screen widget uses StaticConfiguration; configurable AppIntentConfiguration is intentionally avoided because it fails after the current ESign sideload resigning flow.
 
@@ -42,7 +42,7 @@ Authentication uses Bearer tokens. ASSISTANT_API_TOKEN is the preferred full-cli
 
 Free-form capture uses the backend intake service shared with Telegram. Swift does not classify intent. Work tasks, personal tasks, reminders and ideas are persisted by the backend; ideas remain non-actionable until explicitly promoted.
 
-Voice recording itself happens only in the foreground app because WidgetKit cannot access the microphone. The widget microphone deep-links directly into recording mode; after microphone permission has been granted once, the app starts recording immediately after opening. Audio is kept in a local outbox until upload succeeds, transcribed by Gemini on the backend, and then processed by the same native intake pipeline as text.
+Voice recording itself happens only in the foreground app because WidgetKit cannot access the microphone. The widget microphone deep-links directly into recording mode; after microphone permission has been granted once, the app starts recording immediately after opening. Audio first enters a durable local outbox. On modern iOS the phone attempts on-device SpeechAnalyzer transcription first; the resulting text then enters the normal backend intake/Gemini interpretation path. Server-side audio transcription remains only a fallback. Audio is retained until the text handoff is acknowledged.
 
 ## Widget sharing and sideload signing
 

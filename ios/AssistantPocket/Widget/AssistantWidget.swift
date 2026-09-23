@@ -694,12 +694,14 @@ private struct AssistantWidgetView: View {
 
             Spacer()
 
-            Button(intent: RefreshAssistantWidgetIntent()) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.subheadline.weight(.semibold))
+            if entry.error != nil {
+                Button(intent: RefreshAssistantWidgetIntent()) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Обновить")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Обновить")
 
             Link(destination: URL(string: "assistantpocket://capture?mode=voice")!) {
                 Image(systemName: "mic.circle.fill")

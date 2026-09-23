@@ -302,6 +302,13 @@ def test_voice_capture_is_fast_shared_and_loss_resistant():
     assert "NSMicrophoneUsageDescription" in project
 
 
+def test_widget_does_not_ask_for_manual_refresh_during_normal_operation():
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "if entry.error != nil" in widget
+    assert "RefreshAssistantWidgetIntent" in widget
+
+
 def test_widget_keeps_esign_safe_static_configuration():
     source = _read("Widget/AssistantWidget.swift")
 

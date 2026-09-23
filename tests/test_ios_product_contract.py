@@ -611,7 +611,7 @@ def test_voice_outbox_recovers_audio_orphaned_between_file_move_and_metadata_wri
     assert "UUID(uuidString:" in outbox
     assert "recovered.append(" in outbox
     assert "var items = all()" in outbox
-    assert '"rather than deleting the only audio copy"' in home
+    assert "rather than deleting the only audio copy" in home
 
 
 def test_voice_recording_is_persisted_before_app_can_leave_foreground():

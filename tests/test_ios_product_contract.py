@@ -338,6 +338,15 @@ def test_returning_copy_matches_the_action_instead_of_saying_start_again():
     assert '"Вернуться: \\(suggestedFocusTask.title)"' in home
 
 
+def test_not_now_does_not_immediately_recommend_the_same_task_again():
+    home = _read("App/ContentView.swift")
+
+    assert "@State private var justUnfocusedTaskID" in home
+    assert "task.id != justUnfocusedTaskID" in home
+    assert "justUnfocusedTaskID = task.id" in home
+    assert "justUnfocusedTaskID = nil" in home
+
+
 def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_work():
     home = _read("App/ContentView.swift")
 

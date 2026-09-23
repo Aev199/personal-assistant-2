@@ -165,6 +165,22 @@ def _focus_started_at(state: dict | None, task_id: int | None) -> str | None:
     return str(value).strip() if value else None
 
 
+def _focus_previous_status(state: dict | None, task_id: int | None) -> str | None:
+    if not state or task_id is None:
+        return None
+    payload = state.get("payload") or {}
+    try:
+        focused_id = int(payload.get("task_id"))
+    except (TypeError, ValueError):
+        return None
+    if focused_id != int(task_id):
+        return None
+    value = str(payload.get("previous_status") or "").strip().lower()
+    if not value or value in {"in_progress", "done", "postponed"}:
+        return None
+    return value
+
+
 def _clean_task_steps(payload: object) -> list[str]:
     if not isinstance(payload, dict):
         return []
@@ -1304,53 +1320,83 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
         return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
 
     async with pool.acquire() as conn:
-        focus_state = await get_conversation_state(
-            conn,
-            int(ctx.deps.admin_id or 0),
-            "attention_focus",
-        )
-        started_at = _focus_started_at(focus_state, task_id)
-        if started_at is None:
-            started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-        row = await conn.fetchrow(
-            """
-            SELECT t.id, t.title, t.status, t.kind, t.project_id, p.code AS project_code
-            FROM tasks t
-            JOIN projects p ON p.id=t.project_id
-            WHERE t.id=$1
-            FOR UPDATE
-            """,
-            task_id,
-        )
-        if not row:
-            return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
-        if str(row["kind"] or "task").lower() == "super":
-            return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
-        if str(row["status"] or "").lower() in {"done", "postponed"}:
-            return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
-
-        if str(row["status"] or "todo").lower() != "in_progress":
-            await conn.execute(
-                "UPDATE tasks SET status='in_progress', updated_at=NOW() WHERE id=$1",
-                task_id,
-            )
-            await db_add_event(
+        async with conn.transaction():
+            focus_state = await get_conversation_state(
                 conn,
-                "task_in_progress",
-                int(row["project_id"]),
-                task_id,
-                f"iOS focus: [{row['project_code']}] #{task_id} {row['title']}",
+                int(ctx.deps.admin_id or 0),
+                "attention_focus",
             )
+            payload = (focus_state or {}).get("payload") or {}
+            try:
+                previous_focus_id = int(payload.get("task_id"))
+            except (TypeError, ValueError):
+                previous_focus_id = None
 
-        await set_conversation_state(
-            conn,
-            int(ctx.deps.admin_id or 0),
-            "attention_focus",
-            step="active",
-            payload={"task_id": task_id, "started_at": started_at},
-            ttl_sec=None,
-        )
+            if previous_focus_id is not None and previous_focus_id != task_id:
+                previous_status = _focus_previous_status(focus_state, previous_focus_id)
+                if previous_status:
+                    await conn.execute(
+                        """
+                        UPDATE tasks
+                        SET status=$2, updated_at=NOW()
+                        WHERE id=$1 AND status='in_progress'
+                        """,
+                        previous_focus_id,
+                        previous_status,
+                    )
+
+            started_at = _focus_started_at(focus_state, task_id)
+            if started_at is None:
+                started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+            row = await conn.fetchrow(
+                """
+                SELECT t.id, t.title, t.status, t.kind, t.project_id, p.code AS project_code
+                FROM tasks t
+                JOIN projects p ON p.id=t.project_id
+                WHERE t.id=$1
+                FOR UPDATE
+                """,
+                task_id,
+            )
+            if not row:
+                return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
+            if str(row["kind"] or "task").lower() == "super":
+                return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
+            current_status = str(row["status"] or "todo").lower()
+            if current_status in {"done", "postponed"}:
+                return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
+
+            if previous_focus_id == task_id:
+                previous_status = _focus_previous_status(focus_state, task_id)
+            else:
+                previous_status = current_status if current_status != "in_progress" else None
+
+            if current_status != "in_progress":
+                await conn.execute(
+                    "UPDATE tasks SET status='in_progress', updated_at=NOW() WHERE id=$1",
+                    task_id,
+                )
+                await db_add_event(
+                    conn,
+                    "task_in_progress",
+                    int(row["project_id"]),
+                    task_id,
+                    f"iOS focus: [{row['project_code']}] #{task_id} {row['title']}",
+                )
+
+            await set_conversation_state(
+                conn,
+                int(ctx.deps.admin_id or 0),
+                "attention_focus",
+                step="active",
+                payload={
+                    "task_id": task_id,
+                    "started_at": started_at,
+                    "previous_status": previous_status,
+                },
+                ttl_sec=None,
+            )
 
     return web.json_response(
         {
@@ -1360,7 +1406,6 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
             "focused_since": started_at,
         }
     )
-
 
 async def handle_task_steps(request: web.Request, ctx) -> web.StreamResponse:
     if not _authorized(request):
@@ -1460,25 +1505,36 @@ async def handle_task_unfocus(request: web.Request, ctx) -> web.StreamResponse:
         return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
 
     async with pool.acquire() as conn:
-        focus_state = await get_conversation_state(
-            conn,
-            int(ctx.deps.admin_id or 0),
-            "attention_focus",
-        )
-        try:
-            focused_id = int((focus_state or {}).get("payload", {}).get("task_id"))
-        except (TypeError, ValueError):
-            focused_id = None
-
-        if focused_id == task_id:
-            await clear_conversation_state(
+        async with conn.transaction():
+            focus_state = await get_conversation_state(
                 conn,
                 int(ctx.deps.admin_id or 0),
                 "attention_focus",
             )
+            try:
+                focused_id = int((focus_state or {}).get("payload", {}).get("task_id"))
+            except (TypeError, ValueError):
+                focused_id = None
+
+            if focused_id == task_id:
+                previous_status = _focus_previous_status(focus_state, task_id)
+                if previous_status:
+                    await conn.execute(
+                        """
+                        UPDATE tasks
+                        SET status=$2, updated_at=NOW()
+                        WHERE id=$1 AND status='in_progress'
+                        """,
+                        task_id,
+                        previous_status,
+                    )
+                await clear_conversation_state(
+                    conn,
+                    int(ctx.deps.admin_id or 0),
+                    "attention_focus",
+                )
 
     return web.json_response({"ok": True, "task_id": task_id, "status": "unfocused"})
-
 
 async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:
     if not _authorized(request, allow_widget=True):

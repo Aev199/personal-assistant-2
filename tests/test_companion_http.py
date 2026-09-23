@@ -142,6 +142,36 @@ def test_clean_task_steps_keeps_small_unique_actions():
     assert companion._clean_task_steps(None) == []
 
 
+def test_focus_previous_status_is_scoped_to_the_same_task():
+    state = {
+        "payload": {
+            "task_id": 42,
+            "previous_status": "todo",
+        }
+    }
+
+    assert companion._focus_previous_status(state, 42) == "todo"
+    assert companion._focus_previous_status(state, 41) is None
+    assert companion._focus_previous_status({"payload": {"task_id": 42, "previous_status": "in_progress"}}, 42) is None
+
+
+def test_focus_handlers_restore_status_they_promoted():
+    source = open(companion.__file__, encoding="utf-8").read()
+    focus_start = source.index("async def handle_task_focus")
+    steps_start = source.index("async def handle_task_steps", focus_start)
+    focus_block = source[focus_start:steps_start]
+
+    unfocus_start = source.index("async def handle_task_unfocus")
+    done_start = source.index("async def handle_task_done", unfocus_start)
+    unfocus_block = source[unfocus_start:done_start]
+
+    assert '"previous_status": previous_status' in focus_block
+    assert "previous_focus_id != task_id" in focus_block
+    assert "SET status=$2" in focus_block
+    assert "_focus_previous_status(focus_state, task_id)" in unfocus_block
+    assert "SET status=$2" in unfocus_block
+
+
 def test_focus_started_at_requires_matching_task():
     state = {
         "payload": {

@@ -34,6 +34,7 @@ struct ContentView: View {
     @StateObject private var voiceRecorder = VoiceRecorder()
     @State private var editingTask: TodayTask?
     @State private var showFocusPicker = false
+    @State private var justUnfocusedTaskID: Int?
     @State private var now = Date()
     @State private var startHelpTaskID: Int?
     @State private var startHelpSteps: [String] = []
@@ -86,6 +87,7 @@ struct ContentView: View {
         let startOfTomorrow = Calendar.current.startOfDay(for: now).addingTimeInterval(24 * 60 * 60)
         return tasks.first { task in
             guard !task.isFocused else { return false }
+            guard task.id != justUnfocusedTaskID else { return false }
             guard let deadline = task.deadline else { return true }
             return task.overdue || deadline < startOfTomorrow
         }
@@ -1365,6 +1367,7 @@ struct ContentView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.focusTask(taskID: task.id)
+            justUnfocusedTaskID = nil
             returningAfterBreak = false
             clearStartHelp()
             onChanged()
@@ -1381,6 +1384,7 @@ struct ContentView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.clearFocus(taskID: task.id)
+            justUnfocusedTaskID = task.id
             clearStartHelp()
             onChanged()
             await loadToday()

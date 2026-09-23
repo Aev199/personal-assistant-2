@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.services.reminders import mark_telegram_reminder_snoozed, send_reminder
-from bot.services.tick import _ack_sent
+from bot.services.tick import _ack_sent, _claim_is_current
 
 
 class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
@@ -24,6 +24,32 @@ class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message_id, 321)
         bot.send_message.assert_awaited_once()
+
+    async def test_claim_recheck_detects_native_action_before_telegram_send(self):
+        conn = AsyncMock()
+        conn.fetchval.return_value = False
+
+        current = await _claim_is_current(
+            conn,
+            reminder_id=7,
+            claim_token="00000000-0000-0000-0000-000000000001",
+        )
+
+        self.assertFalse(current)
+        sql, reminder_id, claim_token = conn.fetchval.await_args.args
+        self.assertIn("status='claimed'", sql)
+        self.assertIn("claim_token=$2::uuid", sql)
+        self.assertEqual(reminder_id, 7)
+
+    async def test_tick_rechecks_claim_immediately_before_telegram_delivery(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] / "bot" / "services" / "tick.py").read_text(encoding="utf-8")
+        loop_start = source.index("for record in records:")
+        send_pos = source.index("telegram_message_id = await send_reminder", loop_start)
+        recheck_pos = source.index("await _claim_is_current", loop_start)
+
+        self.assertLess(recheck_pos, send_pos)
+
 
     async def test_ack_sent_persists_telegram_message_id(self):
         conn = AsyncMock()

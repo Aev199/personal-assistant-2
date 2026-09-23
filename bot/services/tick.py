@@ -65,6 +65,30 @@ async def _claim_due_reminders(
     return list(rows or [])
 
 
+async def _claim_is_current(
+    conn: asyncpg.Connection,
+    *,
+    reminder_id: int,
+    claim_token: str,
+) -> bool:
+    """Return False if another surface already handled a claimed reminder."""
+    value = await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM reminders
+            WHERE id=$1
+              AND status='claimed'
+              AND claim_token=$2::uuid
+              AND cancelled_at_utc IS NULL
+        )
+        """,
+        int(reminder_id),
+        str(claim_token),
+    )
+    return bool(value)
+
+
 def _retry_delay_sec(attempt_count: int) -> int:
     schedule = [60, 300, 900, 1800, 3600, 7200]
     idx = min(max(0, int(attempt_count) - 1), len(schedule) - 1)
@@ -217,6 +241,19 @@ async def do_tick(
         for record in records:
             reminder_id = int(record["id"])
             claim_token = str(record["claim_token"])
+
+            # Native iOS/widget actions can acknowledge or snooze a reminder
+            # after this tick claimed it but before Telegram delivery starts.
+            # Re-check the exact claim so an action that already completed does
+            # not still produce a late duplicate Telegram alert.
+            async with pool.acquire() as conn:
+                if not await _claim_is_current(
+                    conn,
+                    reminder_id=reminder_id,
+                    claim_token=claim_token,
+                ):
+                    continue
+
             telegram_message_id = await send_reminder(
                 bot=bot,
                 chat_id=int(record["chat_id"] or admin_id),

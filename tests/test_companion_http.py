@@ -115,7 +115,7 @@ def test_utc_aware_normalizes_naive_and_aware_values():
 
 
 def test_task_start_endpoint_clamps_help_to_one_action():
-    source = (ROOT / "bot" / "http" / "companion.py").read_text(encoding="utf-8")
+    source = open(companion.__file__, encoding="utf-8").read()
 
     assert '"maxItems": 1' in source
     assert "_clean_task_steps(payload)[:1]" in source
@@ -209,6 +209,18 @@ def test_attention_selector_keeps_explicit_focus_first():
     )
 
     assert [row["id"] for row in selected][:2] == [21, 20]
+
+
+def test_today_keeps_missed_reminders_visible_without_letting_the_oldest_win():
+    source = open(companion.__file__, encoding="utf-8").read()
+    start = source.index("reminder_rows = await conn.fetch")
+    end = source.index("selected_task_rows =", start)
+    reminder_query = source[start:end]
+
+    assert "AND remind_at >= $2" not in reminder_query
+    assert "AND remind_at < $3" in reminder_query
+    assert "CASE WHEN remind_at <= $2 THEN 0 ELSE 1 END" in reminder_query
+    assert "CASE WHEN remind_at <= $2 THEN remind_at END DESC" in reminder_query
 
 
 def test_calendar_snapshot_budget_does_not_block_today():

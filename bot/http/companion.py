@@ -431,13 +431,16 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             WHERE chat_id=$1
               AND COALESCE(status, 'pending') IN ('pending', 'retry')
               AND COALESCE(is_sent, FALSE)=FALSE
-              AND remind_at >= $2
               AND remind_at < $3
-            ORDER BY remind_at ASC, id ASC
+            ORDER BY
+              CASE WHEN remind_at <= $2 THEN 0 ELSE 1 END,
+              CASE WHEN remind_at <= $2 THEN remind_at END DESC,
+              remind_at ASC,
+              id ASC
             LIMIT 50
             """,
             int(ctx.deps.admin_id or 0),
-            start_utc,
+            _utc_naive(now_utc),
             end_utc,
         )
 

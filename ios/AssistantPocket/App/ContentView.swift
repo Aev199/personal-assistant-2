@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var now = Date()
     @State private var startHelpTaskID: Int?
     @State private var startHelpSteps: [String] = []
+    @State private var startHelpCache: [Int: [String]] = [:]
     @State private var isLoadingStartHelp = false
     @State private var startHelpError: String?
     @FocusState private var captureFocused: Bool
@@ -206,6 +207,7 @@ struct ContentView: View {
             }
             .sheet(item: $editingTask) { task in
                 TaskEditView(task: task) {
+                    forgetStartHelp(for: task.id)
                     onChanged()
                     Task { await loadToday() }
                 }
@@ -1127,8 +1129,15 @@ struct ContentView: View {
     @MainActor
     private func loadStartHelp(_ task: TodayTask) async {
         startHelpTaskID = task.id
-        startHelpSteps = []
         startHelpError = nil
+
+        if let cached = startHelpCache[task.id], !cached.isEmpty {
+            startHelpSteps = cached
+            isLoadingStartHelp = false
+            return
+        }
+
+        startHelpSteps = []
         isLoadingStartHelp = true
         defer { isLoadingStartHelp = false }
 
@@ -1137,6 +1146,7 @@ struct ContentView: View {
             let response = try await client.taskStartHelp(taskID: task.id)
             guard startHelpTaskID == task.id else { return }
             startHelpSteps = response.steps
+            startHelpCache[task.id] = response.steps
         } catch {
             guard startHelpTaskID == task.id else { return }
             startHelpError = "Подсказка сейчас недоступна."
@@ -1149,6 +1159,14 @@ struct ContentView: View {
         startHelpSteps = []
         startHelpError = nil
         isLoadingStartHelp = false
+    }
+
+    @MainActor
+    private func forgetStartHelp(for taskID: Int) {
+        startHelpCache.removeValue(forKey: taskID)
+        if startHelpTaskID == taskID {
+            clearStartHelp()
+        }
     }
 
     @MainActor
@@ -1187,7 +1205,7 @@ struct ContentView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.markDone(taskID: task.id)
-            clearStartHelp()
+            forgetStartHelp(for: task.id)
             withAnimation {
                 tasks.removeAll { $0.id == task.id }
             }

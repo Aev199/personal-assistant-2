@@ -203,6 +203,14 @@ def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_wo
     assert "client.focusTask(taskID: task.id)" in home
 
 
+def test_start_help_is_cached_locally_to_avoid_repeated_llm_calls():
+    home = _read("App/ContentView.swift")
+
+    assert "startHelpCache: [Int: [String]]" in home
+    assert "if let cached = startHelpCache[task.id]" in home
+    assert "startHelpCache[task.id] = response.steps" in home
+
+
 def test_current_task_can_request_tiny_start_help_without_new_navigation():
     home = _read("App/ContentView.swift")
     api = _read("App/APIClient.swift")

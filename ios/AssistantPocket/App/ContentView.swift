@@ -70,13 +70,15 @@ struct ContentView: View {
     }
 
     private var focusEvent: TodayEvent? {
+        // An explicit task is the user's literal "Сейчас" and always wins.
+        guard manualFocusTask == nil else { return nil }
         if let activeEvent { return activeEvent }
         if let upcomingEvent { return upcomingEvent }
         return nil
     }
 
     private var focusReminder: TodayReminder? {
-        guard activeEvent == nil else { return nil }
+        guard manualFocusTask == nil, activeEvent == nil else { return nil }
         return dueReminder
     }
 

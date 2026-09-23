@@ -289,6 +289,16 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert 'Text("+15")' in widget
 
 
+def test_today_refreshes_on_foreground_and_rechecks_reentry_gap():
+    home = _read("App/ContentView.swift")
+
+    assert "if phase == .active" in home
+    assert "detectReturnGap()" in home
+    assert "didRetryPendingCalendar = false" in home
+    assert "await loadToday()" in home
+    assert "current - lastOpenedAt >= 36 * 60 * 60" in home
+
+
 def test_return_after_a_long_gap_collapses_reentry_to_one_task():
     home = _read("App/ContentView.swift")
 

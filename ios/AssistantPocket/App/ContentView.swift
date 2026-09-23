@@ -191,9 +191,11 @@ struct ContentView: View {
             }
             .onChange(of: scenePhase) { phase in
                 if phase == .active {
-                    lastOpenedAt = Date().timeIntervalSince1970
+                    detectReturnGap()
+                    didRetryPendingCalendar = false
                     consumeSystemCaptureRequest()
                     Task {
+                        await loadToday()
                         await loadPendingIntake()
                         await flushOutbox()
                         await flushVoiceOutbox()
@@ -1239,8 +1241,8 @@ struct ContentView: View {
     @MainActor
     private func detectReturnGap() {
         let current = Date().timeIntervalSince1970
-        if lastOpenedAt > 0 {
-            returningAfterBreak = current - lastOpenedAt >= 36 * 60 * 60
+        if lastOpenedAt > 0, current - lastOpenedAt >= 36 * 60 * 60 {
+            returningAfterBreak = true
         }
         lastOpenedAt = current
     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 
 private enum AppTab: Hashable {
     case today
@@ -8,6 +9,7 @@ private enum AppTab: Hashable {
 
 struct AppRootView: View {
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var selectedTab: AppTab = .today
     @State private var taskRevision = 0
@@ -44,6 +46,11 @@ struct AppRootView: View {
                 Label("Идеи", systemImage: "lightbulb")
             }
             .tag(AppTab.ideas)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            taskRevision += 1
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         }
         .onOpenURL { url in
             guard url.scheme == "assistantpocket", url.host == "capture" else { return }

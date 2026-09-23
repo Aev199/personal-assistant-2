@@ -51,6 +51,17 @@ struct TaskEditView: View {
                             }
                         } else {
                             Picker("Проект", selection: $projectCode) {
+                                if !projects.contains(where: {
+                                    $0.code.caseInsensitiveCompare(projectCode) == .orderedSame
+                                }) {
+                                    Text(
+                                        projectCode.uppercased() == "INBOX"
+                                            ? "Входящие"
+                                            : "Текущий · \(projectCode)"
+                                    )
+                                    .tag(projectCode)
+                                }
+
                                 ForEach(projects) { project in
                                     Text(project.displayName)
                                         .tag(project.code)
@@ -115,11 +126,6 @@ struct TaskEditView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             projects = try await client.loadProjects().projects
-
-            if !projects.contains(where: { $0.code.caseInsensitiveCompare(projectCode) == .orderedSame }),
-               let inbox = projects.first(where: { $0.code.uppercased() == "INBOX" }) {
-                projectCode = inbox.code
-            }
         } catch {
             errorMessage = "Не удалось загрузить проекты."
         }

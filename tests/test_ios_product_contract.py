@@ -191,6 +191,14 @@ def test_connection_settings_require_an_http_url_not_just_any_url_string():
     assert "AppSettings.isValidBaseURL(normalizedDraftURL)" in home
 
 
+def test_editing_task_never_silently_moves_unknown_project_to_inbox():
+    editor = _read("App/TaskEditView.swift")
+
+    assert '"Текущий · \\(projectCode)"' in editor
+    assert ".tag(projectCode)" in editor
+    assert "projectCode = inbox.code" not in editor
+
+
 def test_settings_edit_does_not_break_saved_connection_until_user_saves():
     home = _read("App/ContentView.swift")
 

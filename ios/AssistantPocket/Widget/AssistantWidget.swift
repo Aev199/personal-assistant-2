@@ -94,6 +94,18 @@ private enum WidgetCodec {
         return encodeToday(today)
     }
 
+    static func cacheWithoutFocus(_ taskID: Int) -> Data? {
+        guard let data = WidgetSharedSettings.cachedTodayData,
+              var today = decodeToday(data) else {
+            return nil
+        }
+        for index in today.tasks.indices where today.tasks[index].id == taskID {
+            today.tasks[index].focused = false
+            today.tasks[index].focusedSince = nil
+        }
+        return encodeToday(today)
+    }
+
     static func cacheFocusedTask(_ taskID: Int) -> Data? {
         guard let data = WidgetSharedSettings.cachedTodayData,
               var today = decodeToday(data) else {
@@ -370,6 +382,13 @@ struct ClearFocusTaskIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let originalCache = WidgetSharedSettings.cachedTodayData
+
+        if let optimisticCache = WidgetCodec.cacheWithoutFocus(taskID) {
+            WidgetSharedSettings.writeCachedTodayData(optimisticCache)
+            WidgetSharedSettings.requestCachedTodayOnce()
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        }
+
         do {
             try await WidgetNetwork.clearFocus(taskID: taskID)
             WidgetSharedSettings.clearCachedTodayPreference()
@@ -378,6 +397,8 @@ struct ClearFocusTaskIntent: AppIntent {
         } catch {
             if let originalCache {
                 WidgetSharedSettings.writeCachedTodayData(originalCache)
+            } else {
+                WidgetSharedSettings.clearCachedTodayData()
             }
             WidgetSharedSettings.requestCachedTodayOnce()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")

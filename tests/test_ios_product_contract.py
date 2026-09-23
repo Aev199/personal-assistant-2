@@ -243,8 +243,15 @@ def test_return_after_a_long_gap_collapses_reentry_to_one_task():
 
     assert '@AppStorage("assistant.lastOpenedAt")' in home
     assert "36 * 60 * 60" in home
-    assert '"Продолжить с одной задачи"' in home
+    assert '"Вернуться к одной задаче"' in home
     assert "returningAfterBreak = false" in home
+
+
+def test_returning_copy_matches_the_action_instead_of_saying_start_again():
+    home = _read("App/ContentView.swift")
+
+    assert '"Вернуться к одной задаче"' in home
+    assert '"Вернуться: \\(suggestedFocusTask.title)"' in home
 
 
 def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_work():

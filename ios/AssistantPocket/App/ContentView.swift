@@ -263,7 +263,7 @@ struct ContentView: View {
                     Text(
                         suggestedFocusTask == nil
                             ? "На сейчас ничего нет"
-                            : (returningAfterBreak ? "Продолжить с одной задачи" : "Ничего не выбрано")
+                            : (returningAfterBreak ? "Вернуться к одной задаче" : "Ничего не выбрано")
                     )
                     .font(.title3.weight(.semibold))
 
@@ -273,8 +273,12 @@ struct ContentView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "arrow.right.circle.fill")
-                                Text("Начать: \(suggestedFocusTask.title)")
-                                    .lineLimit(1)
+                                Text(
+                                    returningAfterBreak
+                                        ? "Вернуться: \(suggestedFocusTask.title)"
+                                        : "Начать: \(suggestedFocusTask.title)"
+                                )
+                                .lineLimit(2)
                             }
                         }
                         .buttonStyle(.borderedProminent)

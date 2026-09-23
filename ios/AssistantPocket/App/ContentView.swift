@@ -1010,7 +1010,8 @@ struct ContentView: View {
             )
             await sendVoiceCapture(queued)
         } catch {
-            try? FileManager.default.removeItem(at: recordingURL)
+            // If moving into the durable outbox failed, leave the temporary
+            // recording in place rather than deleting the only audio copy.
             present(error)
         }
     }

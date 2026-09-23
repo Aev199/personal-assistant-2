@@ -24,18 +24,53 @@ enum VoiceCaptureOutbox {
     }
 
     static func all() -> [QueuedVoiceCapture] {
+        let stored = storedItems()
+        var recovered = stored.filter {
+            FileManager.default.fileExists(atPath: fileURL(for: $0).path)
+        }
+        var knownFilenames = Set(recovered.map(\.filename))
+
+        // If the app was terminated after the recording moved into
+        // Application Support but before UserDefaults metadata was written,
+        // recover the UUID-named audio file instead of silently orphaning it.
+        if let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for url in files where url.pathExtension.lowercased() == "m4a" {
+                let filename = url.lastPathComponent
+                guard !knownFilenames.contains(filename),
+                      let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else {
+                    continue
+                }
+
+                let values = try? url.resourceValues(forKeys: [.creationDateKey])
+                recovered.append(
+                    QueuedVoiceCapture(
+                        id: id,
+                        filename: filename,
+                        context: nil,
+                        createdAt: values?.creationDate ?? .now
+                    )
+                )
+                knownFilenames.insert(filename)
+            }
+        }
+
+        recovered.sort { $0.createdAt < $1.createdAt }
+        if recovered.map(\.filename) != stored.map(\.filename) {
+            save(recovered)
+        }
+        return recovered
+    }
+
+    private static func storedItems() -> [QueuedVoiceCapture] {
         guard let data = UserDefaults.standard.data(forKey: key),
               let items = try? JSONDecoder().decode([QueuedVoiceCapture].self, from: data) else {
             return []
         }
-
-        let existing = items.filter {
-            FileManager.default.fileExists(atPath: fileURL(for: $0).path)
-        }
-        if existing.count != items.count {
-            save(existing)
-        }
-        return existing
+        return items
     }
 
     @discardableResult
@@ -43,6 +78,8 @@ enum VoiceCaptureOutbox {
         let id = UUID()
         let filename = "\(id.uuidString.lowercased()).m4a"
         let destination = directory.appendingPathComponent(filename)
+
+        var items = all()
 
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
@@ -55,7 +92,6 @@ enum VoiceCaptureOutbox {
             context: context,
             createdAt: .now
         )
-        var items = all()
         items.append(item)
         save(items)
         return item

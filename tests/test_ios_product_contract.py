@@ -595,6 +595,18 @@ def test_voice_capture_keeps_transcript_for_retry_when_classification_is_deferre
     assert "CaptureOutbox.enqueue(" in home
 
 
+def test_voice_outbox_recovers_audio_orphaned_between_file_move_and_metadata_write():
+    outbox = _read("App/VoiceCaptureOutbox.swift")
+    home = _read("App/ContentView.swift")
+
+    assert "private static func storedItems()" in outbox
+    assert "contentsOfDirectory(" in outbox
+    assert "UUID(uuidString:" in outbox
+    assert "recovered.append(" in outbox
+    assert "var items = all()" in outbox
+    assert '"rather than deleting the only audio copy"' in home
+
+
 def test_voice_recording_is_persisted_before_app_can_leave_foreground():
     home = _read("App/ContentView.swift")
     recorder = _read("App/VoiceRecorder.swift")

@@ -162,6 +162,21 @@ def test_timed_items_in_next_are_ordered_by_clock_time_in_app_and_widget():
     assert "reminderAt <= event.start" in widget
 
 
+def test_slow_calendar_gets_one_fast_followup_instead_of_looking_empty():
+    models = _read("App/Models.swift")
+    home = _read("App/ContentView.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert 'case calendarPending = "calendar_pending"' in models
+    assert "@State private var calendarPending = false" in home
+    assert '"Календарь загружается…"' in home
+    assert ".now() + 1.5" in home
+    assert "didRetryPendingCalendar" in home
+    assert 'case calendarPending = "calendar_pending"' in widget
+    assert "entry.error != nil || entry.calendarPending" in widget
+    assert 'accessibilityLabel("Календарь загружается")' in widget
+
+
 def test_calendar_failure_is_visible_instead_of_looking_like_a_free_day():
     home = _read("App/ContentView.swift")
     widget = _read("Widget/AssistantWidget.swift")

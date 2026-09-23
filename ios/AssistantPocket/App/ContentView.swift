@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var reminders: [TodayReminder] = []
     @State private var events: [TodayEvent] = []
     @State private var calendarUnavailable = false
+    @State private var calendarPending = false
+    @State private var didRetryPendingCalendar = false
     @State private var hasLoadedToday = false
     @State private var isLoading = false
     @State private var isSending = false
@@ -232,7 +234,15 @@ struct ContentView: View {
 
     @ViewBuilder
     private var calendarWarning: some View {
-        if calendarUnavailable {
+        if calendarPending {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Календарь загружается…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else if calendarUnavailable {
             HStack(spacing: 8) {
                 Label("Календарь не обновился", systemImage: "calendar.badge.exclamationmark")
                     .font(.caption)
@@ -858,7 +868,17 @@ struct ContentView: View {
             reminders = response.reminders
             events = response.events ?? []
             calendarUnavailable = response.calendarUnavailable ?? false
+            calendarPending = response.calendarPending ?? false
             hasLoadedToday = true
+
+            if calendarPending && !didRetryPendingCalendar {
+                didRetryPendingCalendar = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    Task { await loadToday() }
+                }
+            } else if !calendarPending {
+                didRetryPendingCalendar = false
+            }
         } catch {
             present(error)
         }

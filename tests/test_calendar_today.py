@@ -28,6 +28,7 @@ class CalendarTodayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.events, ())
         self.assertFalse(result.unavailable)
+        self.assertFalse(result.pending)
 
     async def test_configured_but_unavailable_calendar_is_explicit(self):
         result = await calendar_today.fetch_today_calendar(
@@ -37,6 +38,7 @@ class CalendarTodayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.events, ())
         self.assertTrue(result.unavailable)
+        self.assertFalse(result.pending)
 
     async def test_deduplicates_cross_calendar_copy_and_uses_short_cache(self):
         start = datetime(2026, 9, 22, 9, 0, tzinfo=timezone.utc)

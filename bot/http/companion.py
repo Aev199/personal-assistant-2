@@ -97,7 +97,7 @@ async def _calendar_snapshot_with_budget(
             pass
 
     task.add_done_callback(_consume_result)
-    return TodayCalendarSnapshot(events=(), unavailable=False)
+    return TodayCalendarSnapshot(events=(), unavailable=False, pending=True)
 
 
 def _parse_client_datetime(value: object, *, tz: ZoneInfo) -> datetime | None:
@@ -545,6 +545,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             "reminders": reminders,
             "events": events,
             "calendar_unavailable": bool(calendar_snapshot.unavailable),
+            "calendar_pending": bool(calendar_snapshot.pending),
         }
     )
 

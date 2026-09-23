@@ -25,6 +25,7 @@ UTC = timezone.utc
 class TodayCalendarSnapshot:
     events: tuple[ICloudVisibleEvent, ...]
     unavailable: bool = False
+    pending: bool = False
 
 
 _CACHE: dict[tuple[int, str, str, tuple[str, ...]], tuple[float, TodayCalendarSnapshot]] = {}

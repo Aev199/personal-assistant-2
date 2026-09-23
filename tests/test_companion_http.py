@@ -236,8 +236,11 @@ def test_calendar_snapshot_budget_does_not_block_today():
 
         assert immediate.events == ()
         assert immediate.unavailable is False
+        assert immediate.pending is True
         assert task.cancelled() is False
-        assert await task == expected
+        resolved = await task
+        assert resolved == expected
+        assert resolved.pending is False
 
     asyncio.run(scenario())
 

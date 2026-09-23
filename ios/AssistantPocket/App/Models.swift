@@ -8,10 +8,12 @@ struct TodayResponse: Decodable {
     let reminders: [TodayReminder]
     let events: [TodayEvent]?
     let calendarUnavailable: Bool?
+    let calendarPending: Bool?
 
     enum CodingKeys: String, CodingKey {
         case ok, date, timezone, tasks, reminders, events
         case calendarUnavailable = "calendar_unavailable"
+        case calendarPending = "calendar_pending"
     }
 }
 

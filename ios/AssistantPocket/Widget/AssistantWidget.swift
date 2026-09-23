@@ -46,10 +46,12 @@ private struct WidgetTodayResponse: Codable {
     var reminders: [WidgetReminder]
     var events: [WidgetEvent]?
     var calendarUnavailable: Bool?
+    var calendarPending: Bool?
 
     enum CodingKeys: String, CodingKey {
         case tasks, reminders, events
         case calendarUnavailable = "calendar_unavailable"
+        case calendarPending = "calendar_pending"
     }
 }
 
@@ -77,6 +79,7 @@ private enum WidgetCodec {
             reminders: today.reminders,
             events: today.events ?? [],
             calendarUnavailable: today.calendarUnavailable ?? false,
+            calendarPending: today.calendarPending ?? false,
             error: nil
         )
     }
@@ -423,6 +426,7 @@ private struct AssistantWidgetEntry: TimelineEntry {
     let reminders: [WidgetReminder]
     let events: [WidgetEvent]
     let calendarUnavailable: Bool
+    let calendarPending: Bool
     let error: String?
 }
 
@@ -438,6 +442,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
             reminders: [],
             events: [],
             calendarUnavailable: false,
+            calendarPending: false,
             error: nil
         )
     }
@@ -470,7 +475,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
             }
 
             let nextRefresh: Date
-            if entry.error != nil {
+            if entry.error != nil || entry.calendarPending {
                 nextRefresh = Date().addingTimeInterval(60)
             } else {
                 nextRefresh = nextRefreshDate(for: entry)
@@ -524,6 +529,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 reminders: [],
                 events: [],
                 calendarUnavailable: false,
+                calendarPending: false,
                 error: "Откройте Assistant и сохраните настройки"
             )
         }
@@ -538,6 +544,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                     reminders: [],
                     events: [],
                     calendarUnavailable: false,
+                    calendarPending: false,
                     error: "Неверный код доступа"
                 )
             }
@@ -557,6 +564,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 reminders: today.reminders,
                 events: today.events ?? [],
                 calendarUnavailable: today.calendarUnavailable ?? false,
+                calendarPending: today.calendarPending ?? false,
                 error: nil
             )
         } catch {
@@ -569,6 +577,7 @@ private struct AssistantWidgetProvider: TimelineProvider {
                 reminders: [],
                 events: [],
                 calendarUnavailable: false,
+                calendarPending: false,
                 error: "Нет связи"
             )
         }
@@ -719,7 +728,11 @@ private struct AssistantWidgetView: View {
             Text("Сейчас")
                 .font(.headline)
 
-            if entry.calendarUnavailable {
+            if entry.calendarPending {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Календарь загружается")
+            } else if entry.calendarUnavailable {
                 Image(systemName: "calendar.badge.exclamationmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)

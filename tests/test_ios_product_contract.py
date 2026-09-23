@@ -372,6 +372,16 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
     assert "Shared/TaskDeadlineFormatting.swift" in project
 
 
+def test_voice_and_pending_action_failures_use_immediate_alert_surface():
+    home = _read("App/ContentView.swift")
+
+    assert home.count("presentActionError(error)") >= 10
+    start = home.index("private func startVoiceCapture")
+    end = home.index("private func flushVoiceOutbox", start)
+    voice_block = home[start:end]
+    assert "present(error)" not in voice_block
+
+
 def test_action_failures_are_visible_on_attention_surfaces():
     home = _read("App/ContentView.swift")
     focus_picker = _read("App/FocusPickerView.swift")

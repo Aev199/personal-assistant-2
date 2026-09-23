@@ -1002,7 +1002,7 @@ struct ContentView: View {
                 await LocalSpeechTranscriber.preparePreferredAssets()
             }
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1020,7 +1020,7 @@ struct ContentView: View {
         } catch {
             // If moving into the durable outbox failed, leave the temporary
             // recording in place rather than deleting the only audio copy.
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1086,7 +1086,7 @@ struct ContentView: View {
             }
 
             // The audio stays durable if both the local and server paths fail.
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1141,7 +1141,7 @@ struct ContentView: View {
             if isRetryable(error) {
                 presentConfirmation("Голос распознан и сохранён на телефоне")
             } else {
-                present(error)
+                presentActionError(error)
             }
         }
     }
@@ -1394,7 +1394,7 @@ struct ContentView: View {
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 
@@ -1408,7 +1408,7 @@ struct ContentView: View {
                 pendingIntake.removeAll { $0.id == pending.id }
             }
         } catch {
-            present(error)
+            presentActionError(error)
         }
     }
 

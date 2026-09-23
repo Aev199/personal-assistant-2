@@ -352,7 +352,7 @@ def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_wo
 
     assert "private var suggestedFocusTask" in home
     assert "deadline < startOfTomorrow" in home
-    assert 'Text("Начать: \\(suggestedFocusTask.title)")' in home
+    assert '"Начать: \\(suggestedFocusTask.title)"' in home
     assert 'Button("Выбрать другую")' in home
     assert "client.focusTask(taskID: task.id)" in home
 
@@ -502,7 +502,7 @@ def test_voice_capture_is_fast_shared_and_loss_resistant():
     assert "voiceIntake(" in home
     assert "VoiceCaptureOutbox.enqueue" in home
     assert "flushVoiceOutbox()" in home
-    assert 'mode == "voice"' in home
+    assert "CaptureLaunchSignal.mode(from: notification) == .voice" in home
 
     assert "/api/v1/intake/audio" in api
     assert "/api/v1/companion/intake/audio" in api

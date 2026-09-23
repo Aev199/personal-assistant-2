@@ -35,6 +35,17 @@ def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
     assert 'Button("Все задачи")' not in source
 
 
+def test_widget_task_mutations_are_serialized_to_avoid_cache_races():
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "private actor WidgetMutationCoordinator" in widget
+    assert "static let shared = WidgetMutationCoordinator()" in widget
+    for intent in ("MarkTaskDoneIntent", "FocusTaskIntent", "ClearFocusTaskIntent"):
+        block = widget[widget.index(f"struct {intent}:"):]
+        block = block[:block.index("\n}\n", block.index("func perform")) + 3]
+        assert "WidgetMutationCoordinator.shared.run" in block
+
+
 def test_widget_clear_focus_updates_cached_state_optimistically_and_rolls_back():
     widget = _read("Widget/AssistantWidget.swift")
 

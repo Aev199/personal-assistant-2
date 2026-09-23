@@ -247,6 +247,20 @@ class DeepSeekAdapter:
         self._record_failure()
         raise last_error or RuntimeError("DeepSeek request failed")
 
+    async def generate_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        _ = response_schema
+        return await self._chat_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            operation="generate_json",
+        )
+
     async def classify_intake(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         return await self._chat_json(
             system_prompt=system_prompt,

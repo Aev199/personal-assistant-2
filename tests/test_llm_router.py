@@ -34,6 +34,12 @@ class FakeProvider:
             raise self.close_error
         self.closed = True
 
+    async def generate_json(self, **kwargs):
+        self.calls.append(("json", kwargs))
+        if self.error:
+            raise self.error
+        return self.result
+
     async def classify_intake(self, **kwargs):
         self.calls.append(("single", kwargs))
         if self.error:
@@ -54,6 +60,27 @@ class FakeProvider:
 
 
 class ResilientLLMAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_json_uses_generic_provider_surface(self):
+        gemini = FakeProvider(result={"steps": ["Открыть модель"]})
+        deepseek = FakeProvider(result={"steps": ["Fallback"]})
+        router = ResilientLLMAdapter(gemini=gemini, deepseek=deepseek)
+
+        schema = {
+            "type": "object",
+            "properties": {"steps": {"type": "array", "items": {"type": "string"}}},
+        }
+        result = await router.generate_json(
+            system_prompt="system",
+            user_prompt="user",
+            response_schema=schema,
+        )
+
+        self.assertEqual(result["steps"], ["Открыть модель"])
+        self.assertEqual(gemini.calls[0][0], "json")
+        self.assertEqual(gemini.calls[0][1]["response_schema"], schema)
+        self.assertEqual(deepseek.calls, [])
+
+
     async def test_primary_success_does_not_call_fallback(self):
         gemini = FakeProvider(result={"action": "task", "reply": ""})
         deepseek = FakeProvider(result={"action": "idea", "reply": ""})

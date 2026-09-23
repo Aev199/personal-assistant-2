@@ -315,6 +315,29 @@ class GeminiAdapter:
         "additionalProperties": False,
     }
 
+    async def generate_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        generation_config: dict[str, Any] = {
+            "temperature": 0,
+            "responseMimeType": "application/json",
+        }
+        if response_schema:
+            generation_config["responseJsonSchema"] = response_schema
+        payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": generation_config,
+        }
+        data = await self._generate_content_with_fallback(
+            model=self._llm_model, payload=payload, operation="generate_json"
+        )
+        return self._extract_json_object(self._extract_text(data))
+
     async def classify_intake(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         """Classify a single user message into one intent."""
         payload = {

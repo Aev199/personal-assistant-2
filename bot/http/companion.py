@@ -1406,10 +1406,25 @@ async def handle_task_steps(request: web.Request, ctx) -> web.StreamResponse:
     if project and project.upper() != "INBOX":
         user_prompt += f"\nProject: {project}"
 
+    response_schema = {
+        "type": "object",
+        "properties": {
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 3,
+            }
+        },
+        "required": ["steps"],
+        "additionalProperties": False,
+    }
+
     try:
-        payload = await llm.classify_intake(
+        payload = await llm.generate_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            response_schema=response_schema,
         )
     except Exception:
         return web.json_response({"ok": False, "error": "llm_unavailable"}, status=503)

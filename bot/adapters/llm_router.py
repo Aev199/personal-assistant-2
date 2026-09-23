@@ -113,6 +113,20 @@ class ResilientLLMAdapter:
             ) from primary_error
         raise primary_error or RuntimeError("No LLM provider is configured")
 
+    async def generate_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._call_text(
+            "generate_json",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_schema=response_schema,
+        )
+
     async def classify_intake(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         return await self._call_text(
             "classify_intake",

@@ -191,6 +191,14 @@ def test_connection_settings_require_an_http_url_not_just_any_url_string():
     assert "AppSettings.isValidBaseURL(normalizedDraftURL)" in home
 
 
+def test_editing_task_does_not_resubmit_unchanged_project_code():
+    editor = _read("App/TaskEditView.swift")
+
+    assert "let originalProjectCode" in editor
+    assert "projectCode.caseInsensitiveCompare(originalProjectCode)" in editor
+    assert "projectCode: projectChanged ? projectCode : nil" in editor
+
+
 def test_editing_task_never_silently_moves_unknown_project_to_inbox():
     editor = _read("App/TaskEditView.swift")
 

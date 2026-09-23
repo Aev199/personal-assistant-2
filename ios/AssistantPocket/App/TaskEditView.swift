@@ -143,10 +143,15 @@ struct TaskEditView: View {
 
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            let originalProjectCode = task.project.isEmpty ? "INBOX" : task.project
+            let projectChanged =
+                !task.isPersonal
+                && projectCode.caseInsensitiveCompare(originalProjectCode) != .orderedSame
+
             _ = try await client.updateTask(
                 taskID: task.id,
                 title: cleanTitle,
-                projectCode: task.isPersonal ? nil : projectCode,
+                projectCode: projectChanged ? projectCode : nil,
                 deadline: hasDeadline ? deadline : nil
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")

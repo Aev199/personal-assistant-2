@@ -190,7 +190,7 @@ async def _ack_failed(
     error_code: str,
 ) -> str:
     if int(attempt_count) >= int(max_attempts):
-        await conn.execute(
+        result = await conn.execute(
             """
             UPDATE reminders
             SET status='failed',
@@ -203,10 +203,10 @@ async def _ack_failed(
             str(claim_token),
             str(error_code),
         )
-        return "failed"
+        return "failed" if str(result).endswith("1") else "lost"
 
     retry_at = datetime.now(timezone.utc) + timedelta(seconds=_retry_delay_sec(int(attempt_count)))
-    await conn.execute(
+    result = await conn.execute(
         """
         UPDATE reminders
         SET status='retry',
@@ -222,7 +222,7 @@ async def _ack_failed(
         retry_at,
         str(error_code),
     )
-    return "retry"
+    return "retry" if str(result).endswith("1") else "lost"
 
 
 async def do_tick(
@@ -318,7 +318,7 @@ async def do_tick(
                     )
                     if new_status == "failed":
                         failed += 1
-                    else:
+                    elif new_status == "retry":
                         retried += 1
 
         if len(records) < int(batch_limit):

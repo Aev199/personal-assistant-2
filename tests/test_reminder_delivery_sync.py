@@ -4,7 +4,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.services.reminders import mark_telegram_reminder_snoozed, send_reminder
-from bot.services.tick import _ack_sent, _claim_is_current, _discard_late_telegram_reminder
+from bot.services.tick import (
+    _ack_failed,
+    _ack_sent,
+    _claim_is_current,
+    _discard_late_telegram_reminder,
+)
 
 
 class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
@@ -59,6 +64,37 @@ class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
         recheck_pos = source.index("await _claim_is_current", loop_start)
 
         self.assertLess(recheck_pos, send_pos)
+
+
+    async def test_failed_send_does_not_resurrect_reminder_after_native_action_wins(self):
+        conn = AsyncMock()
+        conn.execute.return_value = "UPDATE 0"
+
+        status = await _ack_failed(
+            conn,
+            reminder_id=7,
+            claim_token="00000000-0000-0000-0000-000000000001",
+            attempt_count=1,
+            max_attempts=6,
+            error_code="telegram_send_failed",
+        )
+
+        self.assertEqual(status, "lost")
+
+    async def test_exhausted_send_does_not_mark_newer_occurrence_failed(self):
+        conn = AsyncMock()
+        conn.execute.return_value = "UPDATE 0"
+
+        status = await _ack_failed(
+            conn,
+            reminder_id=7,
+            claim_token="00000000-0000-0000-0000-000000000001",
+            attempt_count=6,
+            max_attempts=6,
+            error_code="telegram_send_failed",
+        )
+
+        self.assertEqual(status, "lost")
 
 
     async def test_ack_sent_persists_telegram_message_id(self):

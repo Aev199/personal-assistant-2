@@ -999,12 +999,13 @@ struct ContentView: View {
             return
         }
 
-        if let textCapture = await makeLocalVoiceTextCapture(queued) {
-            await sendTranscribedVoiceCapture(textCapture)
-            return
-        }
-
         do {
+            if let textCapture = try await makeLocalVoiceTextCapture(queued) {
+                await sendTranscribedVoiceCapture(textCapture)
+                return
+            }
+
+            try Task.checkCancellation()
             let audioData = try VoiceCaptureOutbox.data(for: queued)
             let client = APIClient(
                 baseURL: settings.normalizedBaseURL,
@@ -1035,6 +1036,10 @@ struct ContentView: View {
                 response,
                 originalText: response.transcript ?? "Голосовая запись"
             )
+        } catch is CancellationError {
+            // Keep the durable audio. Cancellation must never silently turn
+            // into an upload to the server.
+            return
         } catch {
             if isRetryable(error) {
                 presentConfirmation("Голос сохранён на телефоне")
@@ -1049,8 +1054,8 @@ struct ContentView: View {
     @MainActor
     private func makeLocalVoiceTextCapture(
         _ queued: QueuedVoiceCapture
-    ) async -> QueuedCapture? {
-        let transcript = await LocalSpeechTranscriber.transcribe(
+    ) async throws -> QueuedCapture? {
+        let transcript = try await LocalSpeechTranscriber.transcribe(
             fileURL: VoiceCaptureOutbox.url(for: queued)
         )
         guard let transcript,
@@ -1118,12 +1123,13 @@ struct ContentView: View {
                 continue
             }
 
-            if let textCapture = await makeLocalVoiceTextCapture(item) {
-                await sendTranscribedVoiceCapture(textCapture)
-                continue
-            }
-
             do {
+                if let textCapture = try await makeLocalVoiceTextCapture(item) {
+                    await sendTranscribedVoiceCapture(textCapture)
+                    continue
+                }
+
+                try Task.checkCancellation()
                 let response = try await client.voiceIntake(
                     audioData: VoiceCaptureOutbox.data(for: item),
                     context: item.context,
@@ -1147,6 +1153,8 @@ struct ContentView: View {
                     response,
                     originalText: response.transcript ?? "Голосовая запись"
                 )
+            } catch is CancellationError {
+                break
             } catch {
                 break
             }

@@ -519,6 +519,18 @@ def test_voice_audio_to_text_handoff_is_recoverable_after_a_crash():
     assert "await sendTranscribedVoiceCapture(existingText)" in home
 
 
+def test_cancelled_local_transcription_never_turns_into_an_audio_upload():
+    home = _read("App/ContentView.swift")
+    local = _read("App/LocalSpeechTranscriber.swift")
+
+    assert "static func transcribe(fileURL: URL) async throws" in local
+    assert "Task.checkCancellation()" in local
+    assert "catch is CancellationError" in local
+    assert "try await makeLocalVoiceTextCapture" in home
+    assert "try Task.checkCancellation()" in home
+    assert "catch is CancellationError" in home
+
+
 def test_voice_prefers_on_device_transcription_and_keeps_server_audio_as_fallback():
     home = _read("App/ContentView.swift")
     local = _read("App/LocalSpeechTranscriber.swift")

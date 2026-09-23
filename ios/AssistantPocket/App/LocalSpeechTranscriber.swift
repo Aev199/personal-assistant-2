@@ -39,26 +39,44 @@ enum LocalSpeechTranscriber {
         }
     }
 
-    static func transcribe(fileURL: URL) async -> String? {
-
+    static func transcribe(fileURL: URL) async throws -> String? {
         for requestedLocale in preferredLocales {
-            if let text = try? await transcribeWithSpeechTranscriber(
-                fileURL: fileURL,
-                requestedLocale: requestedLocale
-            ), let clean = cleaned(text) {
-                return clean
+            try Task.checkCancellation()
+            do {
+                if let clean = cleaned(
+                    try await transcribeWithSpeechTranscriber(
+                        fileURL: fileURL,
+                        requestedLocale: requestedLocale
+                    )
+                ) {
+                    return clean
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Try the next locale, then DictationTranscriber.
             }
         }
 
         for requestedLocale in preferredLocales {
-            if let text = try? await transcribeWithDictationTranscriber(
-                fileURL: fileURL,
-                requestedLocale: requestedLocale
-            ), let clean = cleaned(text) {
-                return clean
+            try Task.checkCancellation()
+            do {
+                if let clean = cleaned(
+                    try await transcribeWithDictationTranscriber(
+                        fileURL: fileURL,
+                        requestedLocale: requestedLocale
+                    )
+                ) {
+                    return clean
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // The server audio path remains the final fallback.
             }
         }
 
+        try Task.checkCancellation()
         return nil
     }
 

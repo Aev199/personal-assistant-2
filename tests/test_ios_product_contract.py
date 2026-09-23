@@ -442,13 +442,20 @@ def test_personal_client_targets_modern_speech_stack_and_prewarms_it_during_reco
     assert "#available(iOS 26.0" not in local
 
 
-def test_text_outbox_wins_over_same_id_audio_after_handoff():
+def test_transcribed_voice_keeps_audio_backup_until_server_acknowledges_text():
     home = _read("App/ContentView.swift")
 
-    assert "private func sendTranscribedVoiceCapture" in home
-    assert "VoiceCaptureOutbox.remove(queued.id)" in home
-    assert "for item in queued" in home
-    assert "VoiceCaptureOutbox.remove(item.id)" in home
+    make_start = home.index("private func makeLocalVoiceTextCapture")
+    send_start = home.index("private func sendTranscribedVoiceCapture")
+    flush_start = home.index("private func flushVoiceOutbox")
+    make_block = home[make_start:send_start]
+    send_block = home[send_start:flush_start]
+
+    assert "CaptureOutbox.enqueue(" in make_block
+    assert "VoiceCaptureOutbox.remove(queued.id)" not in make_block
+    assert 'if response.status == "stored"' in send_block
+    assert "VoiceCaptureOutbox.remove(queued.id)" in send_block
+    assert "CaptureOutbox.remove(queued.id)" in send_block
 
 
 def test_voice_audio_to_text_handoff_is_recoverable_after_a_crash():
@@ -458,8 +465,7 @@ def test_voice_audio_to_text_handoff_is_recoverable_after_a_crash():
     assert "static func item(id: UUID)" in outbox
     assert "CaptureOutbox.item(id: queued.id)" in home
     assert "CaptureOutbox.item(id: item.id)" in home
-    assert "VoiceCaptureOutbox.remove(queued.id)" in home
-    assert "VoiceCaptureOutbox.remove(item.id)" in home
+    assert "await sendTranscribedVoiceCapture(existingText)" in home
 
 
 def test_voice_prefers_on_device_transcription_and_keeps_server_audio_as_fallback():

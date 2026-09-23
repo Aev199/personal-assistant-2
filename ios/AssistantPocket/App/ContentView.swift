@@ -940,7 +940,6 @@ struct ContentView: View {
         defer { isVoiceSending = false }
 
         if let existingText = CaptureOutbox.item(id: queued.id) {
-            VoiceCaptureOutbox.remove(queued.id)
             await sendTranscribedVoiceCapture(existingText)
             return
         }
@@ -1004,19 +1003,15 @@ struct ContentView: View {
             return nil
         }
 
-        let textCapture = CaptureOutbox.enqueue(
+        return CaptureOutbox.enqueue(
             text: transcript,
             context: queued.context,
             id: queued.id
         )
-        VoiceCaptureOutbox.remove(queued.id)
-        return textCapture
     }
 
     @MainActor
     private func sendTranscribedVoiceCapture(_ queued: QueuedCapture) async {
-        VoiceCaptureOutbox.remove(queued.id)
-
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             let response = try await client.intake(
@@ -1026,11 +1021,13 @@ struct ContentView: View {
             )
 
             if response.status == "stored" {
+                VoiceCaptureOutbox.remove(queued.id)
                 presentConfirmation("Голос распознан, разберу позже")
                 return
             }
 
             CaptureOutbox.remove(queued.id)
+            VoiceCaptureOutbox.remove(queued.id)
             await applyIntakeResponse(response, originalText: queued.text)
         } catch {
             // The transcript is already durable in CaptureOutbox. Keep it for
@@ -1062,7 +1059,6 @@ struct ContentView: View {
 
         for item in queued {
             if let existingText = CaptureOutbox.item(id: item.id) {
-                VoiceCaptureOutbox.remove(item.id)
                 await sendTranscribedVoiceCapture(existingText)
                 continue
             }
@@ -1201,16 +1197,16 @@ struct ContentView: View {
         var refreshed = false
 
         for item in queued {
-            VoiceCaptureOutbox.remove(item.id)
-
             do {
                 let response = try await client.intake(item.text, context: item.context, clientID: item.id)
                 if response.status == "stored" {
+                    VoiceCaptureOutbox.remove(item.id)
                     presentConfirmation("Сохранено, разберу позже")
                     break
                 }
 
                 CaptureOutbox.remove(item.id)
+                VoiceCaptureOutbox.remove(item.id)
                 await applyIntakeResponse(response, originalText: item.text)
                 refreshed = refreshed || !response.saved.isEmpty
             } catch {

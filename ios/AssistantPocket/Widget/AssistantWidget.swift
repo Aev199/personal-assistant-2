@@ -174,9 +174,13 @@ private actor WidgetMutationCoordinator {
         next.resume()
     }
 
-    func run(_ operation: @escaping @Sendable () async throws -> Void) async rethrows {
+    func run(_ operation: @escaping @Sendable () async throws -> Void) async throws {
         await acquire()
         defer { release() }
+
+        // A queued AppIntent may be cancelled while it waits for an older tap.
+        // Never execute that stale mutation after it finally acquires the gate.
+        try Task.checkCancellation()
         try await operation()
     }
 }

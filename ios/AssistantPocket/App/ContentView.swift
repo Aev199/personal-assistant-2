@@ -10,6 +10,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage("assistant.captureDraft") private var captureText = ""
+    @AppStorage("assistant.lastOpenedAt") private var lastOpenedAt: Double = 0
     @State private var tasks: [TodayTask] = []
     @State private var reminders: [TodayReminder] = []
     @State private var events: [TodayEvent] = []
@@ -33,6 +34,7 @@ struct ContentView: View {
     @State private var startHelpCache: [Int: [String]] = [:]
     @State private var isLoadingStartHelp = false
     @State private var startHelpError: String?
+    @State private var returningAfterBreak = false
     @FocusState private var captureFocused: Bool
 
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -151,6 +153,7 @@ struct ContentView: View {
                 await loadToday()
             }
             .task {
+                detectReturnGap()
                 if settings.isConfigured {
                     await loadToday()
                     await loadPendingIntake()
@@ -181,6 +184,7 @@ struct ContentView: View {
             }
             .onChange(of: scenePhase) { phase in
                 if phase == .active {
+                    lastOpenedAt = Date().timeIntervalSince1970
                     consumeSystemCaptureRequest()
                     Task {
                         await loadPendingIntake()
@@ -249,8 +253,12 @@ struct ContentView: View {
                 focusTaskCard(task)
             } else if settings.isConfigured && !isLoading {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(suggestedFocusTask == nil ? "На сейчас ничего нет" : "Ничего не выбрано")
-                        .font(.title3.weight(.semibold))
+                    Text(
+                        suggestedFocusTask == nil
+                            ? "На сейчас ничего нет"
+                            : (returningAfterBreak ? "Продолжить с одной задачи" : "Ничего не выбрано")
+                    )
+                    .font(.title3.weight(.semibold))
 
                     if let suggestedFocusTask {
                         Button {
@@ -1001,6 +1009,7 @@ struct ContentView: View {
         }
 
         if savedCount > 0 {
+            returningAfterBreak = false
             onChanged()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
@@ -1127,6 +1136,15 @@ struct ContentView: View {
     }
 
     @MainActor
+    private func detectReturnGap() {
+        let current = Date().timeIntervalSince1970
+        if lastOpenedAt > 0 {
+            returningAfterBreak = current - lastOpenedAt >= 36 * 60 * 60
+        }
+        lastOpenedAt = current
+    }
+
+    @MainActor
     private func loadStartHelp(_ task: TodayTask) async {
         startHelpTaskID = task.id
         startHelpError = nil
@@ -1175,6 +1193,7 @@ struct ContentView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.focusTask(taskID: task.id)
+            returningAfterBreak = false
             clearStartHelp()
             onChanged()
             await loadToday()

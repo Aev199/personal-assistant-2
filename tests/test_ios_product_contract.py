@@ -193,6 +193,15 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert 'Text("+15")' in widget
 
 
+def test_return_after_a_long_gap_collapses_reentry_to_one_task():
+    home = _read("App/ContentView.swift")
+
+    assert '@AppStorage("assistant.lastOpenedAt")' in home
+    assert "36 * 60 * 60" in home
+    assert '"Продолжить с одной задачи"' in home
+    assert "returningAfterBreak = false" in home
+
+
 def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_work():
     home = _read("App/ContentView.swift")
 

@@ -117,6 +117,16 @@ def test_capture_feedback_says_what_was_saved():
     assert '"Задача записана"' in home
 
 
+def test_connection_settings_require_an_http_url_not_just_any_url_string():
+    settings = _read("App/AppSettings.swift")
+    home = _read("App/ContentView.swift")
+
+    assert "static func isValidBaseURL" in settings
+    assert 'scheme == "http" || scheme == "https"' in settings
+    assert "url.host != nil" in settings
+    assert "AppSettings.isValidBaseURL(normalizedDraftURL)" in home
+
+
 def test_settings_edit_does_not_break_saved_connection_until_user_saves():
     home = _read("App/ContentView.swift")
 

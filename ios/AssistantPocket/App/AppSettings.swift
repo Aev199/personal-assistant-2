@@ -25,7 +25,19 @@ final class AppSettings: ObservableObject {
     }
 
     var isConfigured: Bool {
-        URL(string: normalizedBaseURL) != nil && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        Self.isValidBaseURL(normalizedBaseURL)
+            && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func isValidBaseURL(_ rawValue: String) -> Bool {
+        let clean = rawValue.trimmingCharacters(in: CharacterSet(charactersIn: " /\n\t"))
+        guard let url = URL(string: clean),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil else {
+            return false
+        }
+        return true
     }
 
     var normalizedBaseURL: String {

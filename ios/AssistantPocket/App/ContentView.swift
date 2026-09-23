@@ -1418,7 +1418,7 @@ private struct SettingsView: View {
     }
 
     private var isDraftConfigured: Bool {
-        URL(string: normalizedDraftURL) != nil
+        AppSettings.isValidBaseURL(normalizedDraftURL)
             && !tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

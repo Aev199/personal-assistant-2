@@ -143,6 +143,25 @@ def test_clean_task_steps_keeps_small_unique_actions():
     assert companion._clean_task_steps(None) == []
 
 
+def test_focus_mutations_are_serialized_across_app_and_widget_requests():
+    source = open(companion.__file__, encoding="utf-8").read()
+
+    assert "pg_advisory_xact_lock(hashtextextended($1, 0))" in source
+
+    focus_start = source.index("async def handle_task_focus")
+    steps_start = source.index("async def handle_task_steps", focus_start)
+    focus_block = source[focus_start:steps_start]
+
+    unfocus_start = source.index("async def handle_task_unfocus")
+    done_start = source.index("async def handle_task_done", unfocus_start)
+    unfocus_block = source[unfocus_start:done_start]
+    done_block = source[done_start:]
+
+    assert "_lock_attention_focus(conn" in focus_block
+    assert "_lock_attention_focus(conn" in unfocus_block
+    assert "_lock_attention_focus(conn" in done_block
+
+
 def test_focus_previous_status_is_scoped_to_the_same_task():
     state = {
         "payload": {

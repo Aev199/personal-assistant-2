@@ -155,6 +155,14 @@ def _utc_aware(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+async def _lock_attention_focus(conn: asyncpg.Connection, chat_id: int) -> None:
+    """Serialize focus mutations from app, widget and overlapping requests."""
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        f"attention_focus:{int(chat_id)}",
+    )
+
+
 def _focus_started_at(state: dict | None, task_id: int | None) -> str | None:
     if not state or task_id is None:
         return None
@@ -597,6 +605,7 @@ async def handle_reminder_ack(request: web.Request, ctx) -> web.StreamResponse:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
             row = await conn.fetchrow(
                 """
                 SELECT id, text, remind_at, repeat, status, is_sent
@@ -1447,6 +1456,7 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
             focus_state = await get_conversation_state(
                 conn,
                 int(ctx.deps.admin_id or 0),
@@ -1632,6 +1642,7 @@ async def handle_task_unfocus(request: web.Request, ctx) -> web.StreamResponse:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
             focus_state = await get_conversation_state(
                 conn,
                 int(ctx.deps.admin_id or 0),

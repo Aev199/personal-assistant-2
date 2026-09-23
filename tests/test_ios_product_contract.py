@@ -106,6 +106,19 @@ def test_capture_feedback_says_what_was_saved():
     assert '"Задача записана"' in home
 
 
+def test_settings_edit_does_not_break_saved_connection_until_user_saves():
+    home = _read("App/ContentView.swift")
+
+    assert "@State private var baseURLDraft" in home
+    assert "@State private var tokenDraft" in home
+    assert 'TextField("Адрес Assistant", text: $baseURLDraft)' in home
+    assert 'SecureField("Код доступа", text: $tokenDraft)' in home
+    assert 'Button("Сохранить")' in home
+    assert 'Button("Отмена")' in home
+    assert ".interactiveDismissDisabled(!settings.isConfigured)" in home
+    assert 'TextField("Адрес Assistant", text: $settings.baseURL)' not in home
+
+
 def test_widget_shared_keychain_does_not_hardcode_app_group_as_access_group():
     source = _read("Shared/WidgetSharedSettings.swift")
 

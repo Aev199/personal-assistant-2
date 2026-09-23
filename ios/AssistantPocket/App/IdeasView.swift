@@ -9,6 +9,7 @@ struct IdeasView: View {
     @State private var ideas: [AssistantIdea] = []
     @State private var loadGeneration = 0
     @State private var isLoading = false
+    @State private var dataStale = false
     @State private var errorMessage: String?
     @State private var actionError: String?
 
@@ -30,8 +31,11 @@ struct IdeasView: View {
                     description: Text("Сохранённые мысли появляются здесь и не попадают в список дел.")
                 )
             } else {
-                List {
-                    ForEach(ideas) { idea in
+                VStack(spacing: 0) {
+                    staleBanner
+
+                    List {
+                        ForEach(ideas) { idea in
                         Text(idea.text)
                             .font(.body)
                             .fixedSize(horizontal: false, vertical: true)
@@ -63,11 +67,12 @@ struct IdeasView: View {
                                     Label("Архив", systemImage: "archivebox")
                                 }
                             }
+                        }
                     }
-                }
-                .listStyle(.insetGrouped)
-                .refreshable {
-                    await load()
+                    .listStyle(.insetGrouped)
+                    .refreshable {
+                        await load()
+                    }
                 }
             }
         }
@@ -96,6 +101,30 @@ struct IdeasView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(actionError ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var staleBanner: some View {
+        if dataStale {
+            HStack(spacing: 8) {
+                Label("Показаны последние данные", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    Task { await load() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Повторить обновление идей")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
         }
     }
 
@@ -129,9 +158,11 @@ struct IdeasView: View {
             let response = try await client.loadIdeas()
             guard generation == loadGeneration else { return }
             ideas = response.ideas
+            dataStale = false
         } catch {
             guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
+            dataStale = !ideas.isEmpty
         }
     }
 

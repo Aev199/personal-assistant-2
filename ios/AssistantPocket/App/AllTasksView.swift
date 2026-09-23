@@ -26,6 +26,7 @@ struct AllTasksView: View {
     @State private var scope: TaskScope = .work
     @State private var loadGeneration = 0
     @State private var isLoading = false
+    @State private var dataStale = false
     @State private var errorMessage: String?
     @State private var actionError: String?
     @State private var editingTask: TodayTask?
@@ -52,6 +53,8 @@ struct AllTasksView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
                     .padding(.bottom, 6)
+
+                    staleBanner
 
                     TabView(selection: $scope) {
                         taskPage(.work)
@@ -111,6 +114,30 @@ struct AllTasksView: View {
                 }
             }
         )
+    }
+
+    @ViewBuilder
+    private var staleBanner: some View {
+        if dataStale {
+            HStack(spacing: 8) {
+                Label("Показаны последние данные", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    Task { await load() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Повторить обновление задач")
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 4)
+        }
     }
 
     @ViewBuilder
@@ -247,12 +274,15 @@ struct AllTasksView: View {
             let response = try await client.loadTasks()
             guard generation == loadGeneration else { return }
             tasks = response.tasks
+            dataStale = false
         } catch let APIClientError.http(code, _) where code == 404 {
             guard generation == loadGeneration else { return }
             errorMessage = "Обновите backend Assistant до версии с полным API."
+            dataStale = !tasks.isEmpty
         } catch {
             guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
+            dataStale = !tasks.isEmpty
         }
     }
 

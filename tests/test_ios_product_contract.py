@@ -104,6 +104,19 @@ def test_capture_is_one_tap_from_tasks_and_ideas_without_duplicating_intake_ui()
     assert 'selectedTab = .today' in root
 
 
+def test_tasks_and_ideas_mark_retained_data_as_stale_after_refresh_failure():
+    tasks = _read("App/AllTasksView.swift")
+    ideas = _read("App/IdeasView.swift")
+
+    for source in (tasks, ideas):
+        assert "@State private var dataStale = false" in source
+        assert 'Label("Показаны последние данные", systemImage: "wifi.slash")' in source
+        assert "dataStale = false" in source
+
+    assert "dataStale = !tasks.isEmpty" in tasks
+    assert "dataStale = !ideas.isEmpty" in ideas
+
+
 def test_overlapping_refreshes_cannot_overwrite_newer_primary_tab_state():
     home = _read("App/ContentView.swift")
     tasks = _read("App/AllTasksView.swift")

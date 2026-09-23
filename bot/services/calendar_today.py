@@ -118,7 +118,14 @@ async def fetch_today_calendar(
         events=_dedupe_events(all_events),
         unavailable=unavailable,
     )
-    _CACHE[key] = (now_mono + max(10.0, float(cache_ttl_sec)), snapshot)
+
+    # Cache only a complete refresh. A failed/partial CalDAV read must stay
+    # retryable: otherwise the explicit refresh button can keep returning the
+    # same cached error for up to cache_ttl_sec even after connectivity recovers.
+    if unavailable:
+        _CACHE.pop(key, None)
+    else:
+        _CACHE[key] = (now_mono + max(10.0, float(cache_ttl_sec)), snapshot)
 
     # Do not retain stale days/configurations indefinitely.
     if len(_CACHE) > 12:

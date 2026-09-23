@@ -151,6 +151,20 @@ def _utc_aware(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _focus_started_at(state: dict | None, task_id: int | None) -> str | None:
+    if not state or task_id is None:
+        return None
+    payload = state.get("payload") or {}
+    try:
+        focused_id = int(payload.get("task_id"))
+    except (TypeError, ValueError):
+        return None
+    if focused_id != int(task_id):
+        return None
+    value = payload.get("started_at")
+    return str(value).strip() if value else None
+
+
 def _attention_sort_key(
     row: dict,
     now_utc: datetime,
@@ -340,6 +354,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
     )
 
     focus_task_id: int | None = None
+    focus_started_at: str | None = None
     async with pool.acquire() as conn:
         focus_state = await get_conversation_state(
             conn,
@@ -351,6 +366,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 focus_task_id = int((focus_state.get("payload") or {}).get("task_id"))
             except (TypeError, ValueError):
                 focus_task_id = None
+        focus_started_at = _focus_started_at(focus_state, focus_task_id)
 
         dismissed_event_state = await get_conversation_state(
             conn,
@@ -418,6 +434,11 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 "deadline": deadline_local.isoformat() if deadline_local else None,
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
                 "focused": focus_task_id is not None and int(row["id"]) == focus_task_id,
+                "focused_since": (
+                    focus_started_at
+                    if focus_task_id is not None and int(row["id"]) == focus_task_id
+                    else None
+                ),
             }
         )
 
@@ -652,6 +673,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
     now_utc = datetime.now(timezone.utc)
 
     focus_task_id: int | None = None
+    focus_started_at: str | None = None
     async with pool.acquire() as conn:
         focus_state = await get_conversation_state(
             conn,
@@ -663,6 +685,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
                 focus_task_id = int((focus_state.get("payload") or {}).get("task_id"))
             except (TypeError, ValueError):
                 focus_task_id = None
+        focus_started_at = _focus_started_at(focus_state, focus_task_id)
 
         rows = await conn.fetch(
             """
@@ -704,6 +727,11 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
                 "deadline": deadline_local.isoformat() if deadline_local else None,
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
                 "focused": focus_task_id is not None and int(row["id"]) == focus_task_id,
+                "focused_since": (
+                    focus_started_at
+                    if focus_task_id is not None and int(row["id"]) == focus_task_id
+                    else None
+                ),
             }
         )
 
@@ -1243,6 +1271,15 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
         return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
 
     async with pool.acquire() as conn:
+        focus_state = await get_conversation_state(
+            conn,
+            int(ctx.deps.admin_id or 0),
+            "attention_focus",
+        )
+        started_at = _focus_started_at(focus_state, task_id)
+        if started_at is None:
+            started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
         row = await conn.fetchrow(
             """
             SELECT t.id, t.title, t.status, t.kind, t.project_id, p.code AS project_code
@@ -1278,11 +1315,18 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
             int(ctx.deps.admin_id or 0),
             "attention_focus",
             step="active",
-            payload={"task_id": task_id},
+            payload={"task_id": task_id, "started_at": started_at},
             ttl_sec=None,
         )
 
-    return web.json_response({"ok": True, "task_id": task_id, "status": "in_progress"})
+    return web.json_response(
+        {
+            "ok": True,
+            "task_id": task_id,
+            "status": "in_progress",
+            "focused_since": started_at,
+        }
+    )
 
 
 async def handle_task_unfocus(request: web.Request, ctx) -> web.StreamResponse:

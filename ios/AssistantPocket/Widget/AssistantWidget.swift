@@ -11,6 +11,12 @@ private struct WidgetTask: Codable, Identifiable {
     let deadline: Date?
     let overdue: Bool
     var focused: Bool? = nil
+    var focusedSince: Date? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, project, status, deadline, overdue, focused
+        case focusedSince = "focused_since"
+    }
 
     var inProgress: Bool {
         status?.lowercased() == "in_progress"
@@ -87,6 +93,11 @@ private enum WidgetCodec {
             today.tasks[index].focused = isTarget
             if isTarget {
                 today.tasks[index].status = "in_progress"
+                if today.tasks[index].focusedSince == nil {
+                    today.tasks[index].focusedSince = Date()
+                }
+            } else {
+                today.tasks[index].focusedSince = nil
             }
         }
         return encodeToday(today)
@@ -775,6 +786,11 @@ private struct AssistantWidgetView: View {
 
             if task.inProgress {
                 Text("в работе")
+            }
+
+            if task.isFocused, let focusedSince = task.focusedSince {
+                Text("с")
+                Text(focusedSince, format: .dateTime.hour().minute())
             }
         }
         .font(.caption2)

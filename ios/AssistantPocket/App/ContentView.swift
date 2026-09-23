@@ -531,6 +531,11 @@ struct ContentView: View {
             if !task.assignee.isEmpty {
                 Text(task.assignee)
             }
+
+            if task.isFocused, let focusedSince = task.focusedSince {
+                Text("с")
+                Text(focusedSince, format: .dateTime.hour().minute())
+            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)

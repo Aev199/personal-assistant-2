@@ -193,6 +193,19 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert 'Text("+15")' in widget
 
 
+def test_explicit_focus_exposes_when_it_started_without_adding_a_timer_mode():
+    models = _read("App/Models.swift")
+    home = _read("App/ContentView.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert 'case focusedSince = "focused_since"' in models
+    assert "task.focusedSince" in home
+    assert 'Text("с")' in home
+    assert 'case focusedSince = "focused_since"' in widget
+    assert "task.focusedSince" in widget
+    assert "focusedSince = Date()" in widget
+
+
 def test_now_requires_explicit_focus_instead_of_promoting_first_task_implicitly():
     home = _read("App/ContentView.swift")
     widget = _read("Widget/AssistantWidget.swift")

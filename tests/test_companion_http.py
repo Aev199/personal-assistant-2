@@ -113,6 +113,19 @@ def test_utc_aware_normalizes_naive_and_aware_values():
     assert companion._utc_aware(None) is None
 
 
+def test_focus_started_at_requires_matching_task():
+    state = {
+        "payload": {
+            "task_id": 42,
+            "started_at": "2026-09-23T10:15:00+00:00",
+        }
+    }
+
+    assert companion._focus_started_at(state, 42) == "2026-09-23T10:15:00+00:00"
+    assert companion._focus_started_at(state, 41) is None
+    assert companion._focus_started_at(None, 42) is None
+
+
 def test_attention_selector_keeps_unscheduled_work_visible():
     now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
     end = datetime(2026, 9, 21, 21, 0, tzinfo=timezone.utc)

@@ -89,6 +89,12 @@ struct TodayTask: Decodable, Identifiable {
     let deadline: Date?
     let overdue: Bool
     let focused: Bool?
+    let focusedSince: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, project, kind, assignee, status, deadline, overdue, focused
+        case focusedSince = "focused_since"
+    }
 
     var inProgress: Bool {
         status?.lowercased() == "in_progress"

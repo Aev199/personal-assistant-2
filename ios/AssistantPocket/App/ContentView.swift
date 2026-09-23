@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var calendarPending = false
     @State private var didRetryPendingCalendar = false
     @State private var hasLoadedToday = false
+    @State private var todayStale = false
     @State private var isLoading = false
     @State private var isSending = false
     @State private var errorMessage: String?
@@ -127,6 +128,7 @@ struct ContentView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 26) {
                     focusSection
+                    dataFreshnessWarning
                     calendarWarning
                     nextSection
                     captureSection
@@ -224,6 +226,28 @@ struct ContentView: View {
                     Task { await loadToday() }
                 }
                 .environmentObject(settings)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var dataFreshnessWarning: some View {
+        if todayStale {
+            HStack(spacing: 8) {
+                Label("Не удалось обновить · показаны последние данные", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    Task { await loadToday() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Повторить обновление")
             }
         }
     }
@@ -866,6 +890,7 @@ struct ContentView: View {
             calendarUnavailable = response.calendarUnavailable ?? false
             calendarPending = response.calendarPending ?? false
             hasLoadedToday = true
+            todayStale = false
 
             if calendarPending && !didRetryPendingCalendar {
                 didRetryPendingCalendar = true
@@ -876,7 +901,11 @@ struct ContentView: View {
                 didRetryPendingCalendar = false
             }
         } catch {
-            present(error)
+            if hasLoadedToday {
+                todayStale = true
+            } else {
+                present(error)
+            }
         }
     }
 

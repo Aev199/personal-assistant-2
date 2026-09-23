@@ -102,6 +102,17 @@ def test_primary_tabs_share_one_revision_so_capture_and_mutations_do_not_leave_s
     assert ".onChange(of: refreshToken)" in ideas
 
 
+def test_today_keeps_last_good_state_but_marks_it_stale_after_refresh_failure():
+    home = _read("App/ContentView.swift")
+
+    assert "@State private var todayStale = false" in home
+    assert "private var dataFreshnessWarning" in home
+    assert '"Не удалось обновить · показаны последние данные"' in home
+    assert "if hasLoadedToday" in home
+    assert "todayStale = true" in home
+    assert "todayStale = false" in home
+
+
 def test_today_does_not_misreport_empty_day_when_first_load_failed():
     home = _read("App/ContentView.swift")
 

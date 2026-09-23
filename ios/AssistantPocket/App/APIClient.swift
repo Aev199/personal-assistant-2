@@ -286,6 +286,16 @@ struct APIClient {
         return try decode(DoneResponse.self, data: data, response: response)
     }
 
+    func clearFocus(taskID: Int) async throws -> DoneResponse {
+        let req = try request(
+            path: "/api/v1/tasks/\(taskID)/unfocus",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        let (data, response) = try await URLSession.shared.data(for: req)
+        return try decode(DoneResponse.self, data: data, response: response)
+    }
+
     func snoozeReminder(reminderID: Int, minutes: Int = 15) async throws -> AttentionMutationResponse {
         let body = try JSONSerialization.data(withJSONObject: ["minutes": minutes])
         let req = try request(

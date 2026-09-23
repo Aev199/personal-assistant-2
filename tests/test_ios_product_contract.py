@@ -96,8 +96,11 @@ def test_today_keeps_local_focus_action_and_tasks_page_between_work_personal():
     assert 'Picker("Тип задач", selection: $scope)' in tasks
     assert "TabView(selection: $scope)" in tasks
     assert ".tabViewStyle(.page(indexDisplayMode: .never))" in tasks
-    assert "swipeActions" not in tasks
-    assert 'Image(systemName: "play.fill")' in tasks
+    assert ".swipeActions(edge: .leading" in tasks
+    assert ".swipeActions(edge: .trailing" in tasks
+    assert 'Label("Сейчас", systemImage: "scope")' in tasks
+    assert 'Label("Готово", systemImage: "checkmark")' in tasks
+    assert 'Image(systemName: "play.fill")' not in tasks
     assert "taskDeadlineText(deadline)" in home
     assert "taskDeadlineText(deadline)" in tasks
     assert '"сегодня' in deadline
@@ -135,6 +138,9 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert "client.loadTasks()" in focus_picker
     assert ".searchable(" in focus_picker
     assert "focusTask(taskID: task.id)" in focus_picker
+    assert "clearFocus(taskID: task.id)" in home
+    assert "clearFocus(taskID: taskID)" in focus_picker
+    assert "/api/v1/tasks/\(taskID)/unfocus" in api
     assert "snoozeReminder(reminderID: reminder.id, minutes: 15)" in home
     assert "/api/v1/reminders/\\(reminderID)/snooze" in api
 
@@ -145,13 +151,23 @@ def test_now_can_be_changed_and_reminders_can_be_snoozed():
     assert 'Text("+15")' in widget
 
 
+def test_now_requires_explicit_focus_instead_of_promoting_first_task_implicitly():
+    home = _read("App/ContentView.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "return focusEvent == nil && focusReminder == nil ? tasks.first : nil" not in home
+    assert "return focusEvent == nil && focusReminder == nil ? entry.tasks.first : nil" not in widget
+    assert 'Text(tasks.isEmpty ? "На сейчас ничего нет" : "Ничего не выбрано")' in home
+    assert 'Text("Ничего не выбрано")' in widget
+
+
 def test_widget_can_promote_visible_next_task_to_now():
     widget = _read("Widget/AssistantWidget.swift")
 
     assert "FocusTaskIntent" in widget
     assert "WidgetNetwork.focusTask" in widget
     assert "cacheFocusedTask" in widget
-    assert 'Image(systemName: "play.fill")' in widget
+    assert 'Text("Сейчас")' in widget
     assert 'accessibilityLabel("Сейчас")' in widget
 
 

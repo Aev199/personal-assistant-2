@@ -103,6 +103,22 @@ struct AllTasksView: View {
                         .onTapGesture {
                             editingTask = task
                         }
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            if !task.isFocused {
+                                Button {
+                                    Task { await focus(task) }
+                                } label: {
+                                    Label("Сейчас", systemImage: "scope")
+                                }
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button {
+                                Task { await complete(task) }
+                            } label: {
+                                Label("Готово", systemImage: "checkmark")
+                            }
+                        }
                 }
             }
             .listStyle(.plain)
@@ -178,19 +194,6 @@ struct AllTasksView: View {
             }
 
             Spacer(minLength: 8)
-
-            if !task.isFocused {
-                Button {
-                    Task { await focus(task) }
-                } label: {
-                    Image(systemName: "play.fill")
-                        .font(.subheadline)
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Сейчас")
-            }
         }
         .padding(.vertical, 4)
     }

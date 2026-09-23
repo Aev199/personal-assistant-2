@@ -95,6 +95,15 @@ struct FocusPickerView: View {
             .navigationTitle("Что сейчас?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if let currentTaskID {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Не сейчас") {
+                            Task { await clearCurrent(taskID: currentTaskID) }
+                        }
+                        .disabled(isApplying)
+                    }
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Готово") {
                         dismiss()
@@ -123,6 +132,24 @@ struct FocusPickerView: View {
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             tasks = try await client.loadTasks().tasks
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func clearCurrent(taskID: Int) async {
+        guard !isApplying else { return }
+        isApplying = true
+        errorMessage = nil
+        defer { isApplying = false }
+
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.clearFocus(taskID: taskID)
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+            onChanged()
+            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -272,6 +272,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _focus(request: web.Request) -> web.StreamResponse:
         return await handle_task_focus(request, ctx)
 
+    async def _unfocus(request: web.Request) -> web.StreamResponse:
+        return await handle_task_unfocus(request, ctx)
+
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
@@ -296,6 +299,7 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/intake/{pending_action_id}/confirm", _intake_confirm)
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
     app.router.add_post("/api/v1/tasks/{task_id}/focus", _focus)
+    app.router.add_post("/api/v1/tasks/{task_id}/unfocus", _unfocus)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
     app.router.add_post("/api/v1/attention/dismiss-event", _dismiss_event)
     app.router.add_post("/api/v1/reminders/{reminder_id}/snooze", _snooze_reminder)
@@ -1279,6 +1283,40 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
         )
 
     return web.json_response({"ok": True, "task_id": task_id, "status": "in_progress"})
+
+
+async def handle_task_unfocus(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    try:
+        task_id = int(request.match_info["task_id"])
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
+
+    async with pool.acquire() as conn:
+        focus_state = await get_conversation_state(
+            conn,
+            int(ctx.deps.admin_id or 0),
+            "attention_focus",
+        )
+        try:
+            focused_id = int((focus_state or {}).get("payload", {}).get("task_id"))
+        except (TypeError, ValueError):
+            focused_id = None
+
+        if focused_id == task_id:
+            await clear_conversation_state(
+                conn,
+                int(ctx.deps.admin_id or 0),
+                "attention_focus",
+            )
+
+    return web.json_response({"ok": True, "task_id": task_id, "status": "unfocused"})
 
 
 async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:

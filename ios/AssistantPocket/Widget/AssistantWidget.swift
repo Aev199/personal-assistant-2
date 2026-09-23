@@ -590,8 +590,7 @@ private struct AssistantWidgetView: View {
     }
 
     private var focusTaskItem: WidgetTask? {
-        if let manualFocusTask { return manualFocusTask }
-        return focusEvent == nil && focusReminder == nil ? entry.tasks.first : nil
+        manualFocusTask
     }
 
     var body: some View {
@@ -651,6 +650,8 @@ private struct AssistantWidgetView: View {
                 }
 
                 Spacer(minLength: 0)
+            } else if !entry.tasks.isEmpty {
+                noFocusState
             } else {
                 emptyState
             }
@@ -730,8 +731,8 @@ private struct AssistantWidgetView: View {
             }
 
             Button(intent: FocusTaskIntent(taskID: task.id)) {
-                Image(systemName: "play.fill")
-                    .font(.caption2)
+                Text("Сейчас")
+                    .font(.caption2.weight(.medium))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Сейчас")
@@ -875,6 +876,23 @@ private struct AssistantWidgetView: View {
                 Text("Настройка виджета выполняется в приложении")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var noFocusState: some View {
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 8 : 5) {
+            Text("Ничего не выбрано")
+                .font(.subheadline.weight(.semibold))
+
+            Text("Дальше")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ForEach(Array(entry.tasks.prefix(visibleTaskCount))) { task in
+                compactTask(task)
             }
 
             Spacer(minLength: 0)

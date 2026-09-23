@@ -66,8 +66,7 @@ struct ContentView: View {
     }
 
     private var focusTask: TodayTask? {
-        if let manualFocusTask { return manualFocusTask }
-        return focusEvent == nil && focusReminder == nil ? tasks.first : nil
+        manualFocusTask
     }
 
     private var remainingTasks: [TodayTask] {
@@ -205,7 +204,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                if !tasks.isEmpty {
+                if manualFocusTask != nil {
                     Button("Изменить") {
                         showFocusPicker = true
                     }
@@ -228,9 +227,18 @@ struct ContentView: View {
             } else if let task = focusTask {
                 focusTaskCard(task)
             } else if settings.isConfigured && !isLoading {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Ничего обязательного")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(tasks.isEmpty ? "На сейчас ничего нет" : "Ничего не выбрано")
                         .font(.title3.weight(.semibold))
+
+                    if !tasks.isEmpty {
+                        Button("Выбрать из Дальше") {
+                            showFocusPicker = true
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("Выбрать текущую задачу")
+                    }
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -273,6 +281,13 @@ struct ContentView: View {
                 .accessibilityLabel("Выполнено")
             }
 
+            Button("Не сейчас") {
+                Task { await clearFocus(task) }
+            }
+            .font(.subheadline.weight(.medium))
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Убрать задачу из Сейчас")
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -967,6 +982,19 @@ struct ContentView: View {
             withAnimation {
                 events.removeAll { $0.id == event.id }
             }
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
+        } catch {
+            present(error)
+        }
+    }
+
+    @MainActor
+    private func clearFocus(_ task: TodayTask) async {
+        errorMessage = nil
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            _ = try await client.clearFocus(taskID: task.id)
+            await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
         } catch {
             present(error)

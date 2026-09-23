@@ -60,7 +60,7 @@ struct IdeasView: View {
             }
         }
         .navigationTitle("Идеи")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .task {
             await load()
         }

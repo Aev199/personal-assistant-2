@@ -104,7 +104,7 @@ async def _ack_sent(
     remind_at,
     tz_name: str,
     telegram_message_id: int,
-) -> None:
+) -> bool:
     rep = (repeat or "none").strip().lower()
     if rep != "none":
         nxt = next_repeat_time_utc_naive(remind_at, rep, tz_name=tz_name)
@@ -115,7 +115,7 @@ async def _ack_sent(
                 tz_name=tz_name,
                 store_tz=False,
             )
-            await conn.execute(
+            result = await conn.execute(
                 """
                 UPDATE reminders
                 SET status='pending',
@@ -126,17 +126,18 @@ async def _ack_sent(
                     claim_token=NULL,
                     is_sent=FALSE,
                     error_code=NULL,
-                    telegram_message_id=NULL
+                    telegram_message_id=$5
                 WHERE id=$1 AND claim_token=$2::uuid
                 """,
                 int(reminder_id),
                 str(claim_token),
                 next_attempt_at,
                 nxt_db,
+                int(telegram_message_id),
             )
-            return
+            return str(result).endswith("1")
 
-    await conn.execute(
+    result = await conn.execute(
         """
         UPDATE reminders
         SET status='sent',
@@ -152,6 +153,30 @@ async def _ack_sent(
         str(claim_token),
         int(telegram_message_id),
     )
+    return str(result).endswith("1")
+
+
+async def _discard_late_telegram_reminder(
+    *,
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+) -> None:
+    """Best-effort cleanup when native action wins during Telegram send."""
+    try:
+        await bot.delete_message(chat_id=int(chat_id), message_id=int(message_id))
+        return
+    except Exception:
+        pass
+
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=int(chat_id),
+            message_id=int(message_id),
+            reply_markup=None,
+        )
+    except Exception:
+        pass
 
 
 async def _ack_failed(
@@ -264,7 +289,7 @@ async def do_tick(
             )
             async with pool.acquire() as conn:
                 if telegram_message_id is not None:
-                    await _ack_sent(
+                    accepted = await _ack_sent(
                         conn,
                         reminder_id=reminder_id,
                         claim_token=claim_token,
@@ -273,7 +298,14 @@ async def do_tick(
                         tz_name=tz_name,
                         telegram_message_id=int(telegram_message_id),
                     )
-                    delivered += 1
+                    if accepted:
+                        delivered += 1
+                    else:
+                        await _discard_late_telegram_reminder(
+                            bot=bot,
+                            chat_id=int(record["chat_id"] or admin_id),
+                            message_id=int(telegram_message_id),
+                        )
                 else:
                     new_status = await _ack_failed(
                         conn,

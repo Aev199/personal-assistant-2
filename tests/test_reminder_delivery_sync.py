@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.services.reminders import mark_telegram_reminder_snoozed, send_reminder
-from bot.services.tick import _ack_sent, _claim_is_current
+from bot.services.tick import _ack_sent, _claim_is_current, _discard_late_telegram_reminder
 
 
 class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
@@ -53,8 +53,9 @@ class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ack_sent_persists_telegram_message_id(self):
         conn = AsyncMock()
+        conn.execute.return_value = "UPDATE 1"
 
-        await _ack_sent(
+        accepted = await _ack_sent(
             conn,
             reminder_id=7,
             claim_token="00000000-0000-0000-0000-000000000001",
@@ -68,6 +69,38 @@ class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("telegram_message_id=$3", sql)
         self.assertEqual(reminder_id, 7)
         self.assertEqual(message_id, 321)
+        self.assertTrue(accepted)
+
+    async def test_ack_sent_reports_lost_claim_instead_of_counting_delivery(self):
+        conn = AsyncMock()
+        conn.execute.return_value = "UPDATE 0"
+
+        accepted = await _ack_sent(
+            conn,
+            reminder_id=7,
+            claim_token="00000000-0000-0000-0000-000000000001",
+            repeat="none",
+            remind_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            tz_name="Europe/Moscow",
+            telegram_message_id=321,
+        )
+
+        self.assertFalse(accepted)
+
+    async def test_late_telegram_message_is_deleted_when_native_action_wins_send_race(self):
+        bot = SimpleNamespace(
+            delete_message=AsyncMock(),
+            edit_message_reply_markup=AsyncMock(),
+        )
+
+        await _discard_late_telegram_reminder(
+            bot=bot,
+            chat_id=42,
+            message_id=321,
+        )
+
+        bot.delete_message.assert_awaited_once_with(chat_id=42, message_id=321)
+        bot.edit_message_reply_markup.assert_not_awaited()
 
     async def test_native_snooze_marks_telegram_alert_inactive(self):
         bot = SimpleNamespace(

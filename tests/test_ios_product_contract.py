@@ -559,6 +559,34 @@ def test_voice_capture_keeps_transcript_for_retry_when_classification_is_deferre
     assert "CaptureOutbox.enqueue(" in home
 
 
+def test_voice_recording_is_persisted_before_app_can_leave_foreground():
+    home = _read("App/ContentView.swift")
+    recorder = _read("App/VoiceRecorder.swift")
+
+    assert "else if voiceRecorder.isRecording" in home
+    assert "persistInterruptedVoiceCapture()" in home
+    assert "VoiceCaptureOutbox.enqueue(" in home
+    assert "try? session.setActive(false" in recorder
+
+
+def test_clarification_can_be_cancelled_explicitly():
+    home = _read("App/ContentView.swift")
+
+    assert 'accessibilityLabel("Отменить уточнение")' in home
+    assert "private func clearClarification()" in home
+
+
+def test_failed_text_capture_remains_durable_for_later_retry():
+    home = _read("App/ContentView.swift")
+
+    assert '"Не удалось отправить. Запись сохранена на телефоне."' in home
+    capture_start = home.index("private func capture() async")
+    apply_start = home.index("private func applyIntakeResponse", capture_start)
+    capture_block = home[capture_start:apply_start]
+    catch_block = capture_block[capture_block.rindex("catch {"):]
+    assert "CaptureOutbox.remove(queued.id)" not in catch_block
+
+
 def test_voice_capture_is_fast_shared_and_loss_resistant():
     home = _read("App/ContentView.swift")
     api = _read("App/APIClient.swift")

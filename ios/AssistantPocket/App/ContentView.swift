@@ -195,6 +195,8 @@ struct ContentView: View {
                         await flushOutbox()
                         await flushVoiceOutbox()
                     }
+                } else if voiceRecorder.isRecording {
+                    persistInterruptedVoiceCapture()
                 }
             }
             .onChange(of: refreshToken) { _, _ in
@@ -808,10 +810,22 @@ struct ContentView: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "questionmark.circle")
                         .foregroundStyle(.secondary)
+
                     Text(clarificationPrompt)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 6)
+
+                    Button {
+                        clearClarification()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Отменить уточнение")
                 }
             }
 
@@ -943,6 +957,22 @@ struct ContentView: View {
             pendingIntake = try await client.loadPendingIntake().pending
         } catch {
             // A background restore failure should not interrupt the Today surface.
+        }
+    }
+
+    @MainActor
+    private func persistInterruptedVoiceCapture() {
+        guard let recordingURL = voiceRecorder.stop() else { return }
+        let context = clarificationContext.isEmpty ? nil : clarificationContext
+
+        do {
+            _ = try VoiceCaptureOutbox.enqueue(
+                recordingURL: recordingURL,
+                context: context
+            )
+        } catch {
+            // Keep the temporary recording rather than deleting a capture
+            // that failed to move into the durable outbox.
         }
     }
 
@@ -1191,15 +1221,14 @@ struct ContentView: View {
             CaptureOutbox.remove(queued.id)
             await applyIntakeResponse(response, originalText: text)
         } catch {
-            if isRetryable(error) {
-                captureText = ""
-                captureFocused = false
-                presentConfirmation("Сохранено на телефоне")
-                return
-            }
+            captureText = ""
+            captureFocused = false
 
-            CaptureOutbox.remove(queued.id)
-            present(error)
+            if isRetryable(error) {
+                presentConfirmation("Сохранено на телефоне")
+            } else {
+                actionError = "Не удалось отправить. Запись сохранена на телефоне."
+            }
         }
     }
 
@@ -1245,6 +1274,13 @@ struct ContentView: View {
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
         }
+    }
+
+    @MainActor
+    private func clearClarification() {
+        clarificationPrompt = ""
+        clarificationContext = ""
+        captureFocused = false
     }
 
     @MainActor

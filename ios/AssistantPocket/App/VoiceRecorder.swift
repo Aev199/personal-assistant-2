@@ -32,30 +32,37 @@ final class VoiceRecorder: NSObject, ObservableObject {
         guard granted else { throw VoiceRecorderError.permissionDenied }
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .default)
-        try session.setActive(true)
+        do {
+            try session.setCategory(.record, mode: .default)
+            try session.setActive(true)
 
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("assistant-voice-\(UUID().uuidString.lowercased()).m4a")
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("assistant-voice-\(UUID().uuidString.lowercased()).m4a")
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 48_000,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
-        ]
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 16_000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 48_000,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            ]
 
-        let newRecorder = try AVAudioRecorder(url: url, settings: settings)
-        newRecorder.prepareToRecord()
-        guard newRecorder.record() else {
+            let newRecorder = try AVAudioRecorder(url: url, settings: settings)
+            newRecorder.prepareToRecord()
+            guard newRecorder.record() else {
+                throw VoiceRecorderError.couldNotStart
+            }
+
+            recorder = newRecorder
+            recordingURL = url
+            isRecording = true
+        } catch {
+            recorder = nil
+            recordingURL = nil
+            isRecording = false
             try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-            throw VoiceRecorderError.couldNotStart
+            throw error
         }
-
-        recorder = newRecorder
-        recordingURL = url
-        isRecording = true
     }
 
     func stop() -> URL? {

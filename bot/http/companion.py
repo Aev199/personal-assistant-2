@@ -461,7 +461,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             SELECT id, text, remind_at
             FROM reminders
             WHERE chat_id=$1
-              AND COALESCE(status, 'pending') IN ('pending', 'retry')
+              AND COALESCE(status, 'pending') IN ('pending', 'retry', 'claimed')
               AND COALESCE(is_sent, FALSE)=FALSE
               AND remind_at < $3
             ORDER BY

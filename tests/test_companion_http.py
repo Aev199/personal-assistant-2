@@ -292,6 +292,16 @@ def test_native_reminder_ack_preserves_repeat_and_ignores_stale_future_occurrenc
     assert "claim_token=NULL" in block
 
 
+def test_today_keeps_claimed_due_reminder_visible_while_telegram_delivery_is_in_flight():
+    source = open(companion.__file__, encoding="utf-8").read()
+    start = source.index("reminder_rows = await conn.fetch")
+    end = source.index("selected_task_rows =", start)
+    reminder_query = source[start:end]
+
+    assert "('pending', 'retry', 'claimed')" in reminder_query
+    assert "COALESCE(is_sent, FALSE)=FALSE" in reminder_query
+
+
 def test_today_keeps_missed_reminders_visible_without_letting_the_oldest_win():
     source = open(companion.__file__, encoding="utf-8").read()
     start = source.index("reminder_rows = await conn.fetch")

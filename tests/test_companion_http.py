@@ -155,6 +155,17 @@ def test_focus_previous_status_is_scoped_to_the_same_task():
     assert companion._focus_previous_status({"payload": {"task_id": 42, "previous_status": "in_progress"}}, 42) is None
 
 
+def test_focus_does_not_release_current_task_before_new_target_is_validated():
+    source = open(companion.__file__, encoding="utf-8").read()
+    start = source.index("async def handle_task_focus")
+    end = source.index("async def handle_task_steps", start)
+    block = source[start:end]
+
+    validate_pos = block.index('if not row:')
+    release_pos = block.index("previous_focus_id is not None and previous_focus_id != task_id")
+    assert validate_pos < release_pos
+
+
 def test_focus_handlers_restore_status_they_promoted():
     source = open(companion.__file__, encoding="utf-8").read()
     focus_start = source.index("async def handle_task_focus")

@@ -1332,19 +1332,6 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
             except (TypeError, ValueError):
                 previous_focus_id = None
 
-            if previous_focus_id is not None and previous_focus_id != task_id:
-                previous_status = _focus_previous_status(focus_state, previous_focus_id)
-                if previous_status:
-                    await conn.execute(
-                        """
-                        UPDATE tasks
-                        SET status=$2, updated_at=NOW()
-                        WHERE id=$1 AND status='in_progress'
-                        """,
-                        previous_focus_id,
-                        previous_status,
-                    )
-
             started_at = _focus_started_at(focus_state, task_id)
             if started_at is None:
                 started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -1366,6 +1353,19 @@ async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
             current_status = str(row["status"] or "todo").lower()
             if current_status in {"done", "postponed"}:
                 return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
+
+            if previous_focus_id is not None and previous_focus_id != task_id:
+                previous_status = _focus_previous_status(focus_state, previous_focus_id)
+                if previous_status:
+                    await conn.execute(
+                        """
+                        UPDATE tasks
+                        SET status=$2, updated_at=NOW()
+                        WHERE id=$1 AND status='in_progress'
+                        """,
+                        previous_focus_id,
+                        previous_status,
+                    )
 
             if previous_focus_id == task_id:
                 previous_status = _focus_previous_status(focus_state, task_id)

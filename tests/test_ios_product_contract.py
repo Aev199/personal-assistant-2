@@ -55,6 +55,13 @@ def test_task_page_swipe_does_not_compete_with_row_action_swipes():
     assert 'Image(systemName: "circle")' in tasks
 
 
+def test_promoting_idea_reconciles_widget_attention_state():
+    ideas = _read("App/IdeasView.swift")
+
+    assert "import WidgetKit" in ideas
+    assert 'WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")' in ideas
+
+
 def test_ideas_keep_actions_without_permanent_instructional_noise():
     ideas = _read("App/IdeasView.swift")
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 
 struct IdeasView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -173,6 +174,7 @@ struct IdeasView: View {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.promoteIdea(ideaID: idea.id)
             ideas.removeAll { $0.id == idea.id }
+            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             onTaskCreated()
         } catch {
             actionError = error.localizedDescription

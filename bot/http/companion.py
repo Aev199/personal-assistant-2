@@ -178,12 +178,21 @@ def _utc_aware(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-async def _lock_attention_focus(conn: asyncpg.Connection, chat_id: int) -> None:
-    """Serialize focus mutations from app, widget and overlapping requests."""
+async def _lock_attention_state(
+    conn: asyncpg.Connection,
+    chat_id: int,
+    flow: str,
+) -> None:
+    """Serialize read-modify-write attention state across every client."""
     await conn.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        f"attention_focus:{int(chat_id)}",
+        f"{flow}:{int(chat_id)}",
     )
+
+
+async def _lock_attention_focus(conn: asyncpg.Connection, chat_id: int) -> None:
+    """Serialize focus mutations from app, widget and overlapping requests."""
+    await _lock_attention_state(conn, chat_id, "attention_focus")
 
 
 def _focus_started_at(state: dict | None, task_id: int | None) -> str | None:
@@ -953,24 +962,30 @@ async def handle_event_dismiss(request: web.Request, ctx) -> web.StreamResponse:
 
     chat_id = int(ctx.deps.admin_id or 0)
     async with pool.acquire() as conn:
-        state = await get_conversation_state(
-            conn,
-            chat_id,
-            ATTENTION_DISMISSED_EVENTS_FLOW,
-        )
-        items = _active_dismissed_event_items(state, now_utc=now_utc)
-        items = [item for item in items if item["id"] != event_id]
-        items.append({"id": event_id, "until": until_utc.isoformat()})
-        items = items[-50:]
+        async with conn.transaction():
+            await _lock_attention_state(
+                conn,
+                chat_id,
+                ATTENTION_DISMISSED_EVENTS_FLOW,
+            )
+            state = await get_conversation_state(
+                conn,
+                chat_id,
+                ATTENTION_DISMISSED_EVENTS_FLOW,
+            )
+            items = _active_dismissed_event_items(state, now_utc=now_utc)
+            items = [item for item in items if item["id"] != event_id]
+            items.append({"id": event_id, "until": until_utc.isoformat()})
+            items = items[-50:]
 
-        await set_conversation_state(
-            conn,
-            chat_id,
-            ATTENTION_DISMISSED_EVENTS_FLOW,
-            step="active",
-            payload={"items": items},
-            ttl_sec=2 * 24 * 3600,
-        )
+            await set_conversation_state(
+                conn,
+                chat_id,
+                ATTENTION_DISMISSED_EVENTS_FLOW,
+                step="active",
+                payload={"items": items},
+                ttl_sec=2 * 24 * 3600,
+            )
 
     return web.json_response(
         {

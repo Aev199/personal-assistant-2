@@ -166,6 +166,11 @@ struct ContentView: View {
             }
             .task {
                 detectReturnGap()
+
+                // A widget/deep-link capture is the user's foreground intent.
+                // Start it before any refresh or retry work on a cold launch.
+                consumeSystemCaptureRequest()
+
                 if settings.isConfigured {
                     await loadToday()
                     await loadPendingIntake()
@@ -174,7 +179,6 @@ struct ContentView: View {
                 } else {
                     showSettings = true
                 }
-                consumeSystemCaptureRequest()
             }
             .onReceive(NotificationCenter.default.publisher(for: CaptureLaunchSignal.notification)) { notification in
                 let mode = CaptureLaunchSignal.mode(from: notification)

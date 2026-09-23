@@ -84,6 +84,17 @@ def test_capture_deep_links_are_routed_at_root_after_switching_to_today():
     assert "enum CaptureLaunchMode" in intents
 
 
+def test_cold_start_capture_runs_before_refresh_and_outbox_work():
+    home = _read("App/ContentView.swift")
+
+    task_start = home.index(".task {")
+    task_end = home.index(".onReceive(", task_start)
+    task_block = home[task_start:task_end]
+
+    assert task_block.index("consumeSystemCaptureRequest()") < task_block.index("await loadToday()")
+    assert task_block.index("consumeSystemCaptureRequest()") < task_block.index("await flushOutbox()")
+
+
 def test_capture_mode_is_durable_across_cold_start_or_late_subscription():
     shared = _read("Shared/WidgetSharedSettings.swift")
     intents = _read("Shared/CaptureIntents.swift")

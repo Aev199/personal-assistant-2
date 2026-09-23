@@ -65,6 +65,10 @@ enum VoiceCaptureOutbox {
         try Data(contentsOf: fileURL(for: item))
     }
 
+    static func url(for item: QueuedVoiceCapture) -> URL {
+        fileURL(for: item)
+    }
+
     static func remove(_ id: UUID) {
         let items = all()
         if let item = items.first(where: { $0.id == id }) {

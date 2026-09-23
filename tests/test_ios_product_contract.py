@@ -407,6 +407,23 @@ def test_reminder_delivery_and_widget_state_do_not_compete():
     assert "event.end.addingTimeInterval(5)" in widget
 
 
+def test_voice_prefers_on_device_transcription_and_keeps_server_audio_as_fallback():
+    home = _read("App/ContentView.swift")
+    local = _read("App/LocalSpeechTranscriber.swift")
+    outbox = _read("App/VoiceCaptureOutbox.swift")
+
+    assert "makeLocalVoiceTextCapture" in home
+    assert "LocalSpeechTranscriber.transcribe" in home
+    assert "sendTranscribedVoiceCapture" in home
+    assert "client.voiceIntake(" in home
+    assert "static func url(for item: QueuedVoiceCapture)" in outbox
+    assert "SpeechAnalyzer" in local
+    assert "SpeechTranscriber" in local
+    assert "DictationTranscriber" in local
+    assert "AssetInventory.assetInstallationRequest" in local
+    assert 'Locale(identifier: "ru-RU")' in local
+
+
 def test_voice_capture_keeps_transcript_for_retry_when_classification_is_deferred():
     home = _read("App/ContentView.swift")
     outbox = _read("App/CaptureOutbox.swift")

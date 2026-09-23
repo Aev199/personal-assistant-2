@@ -942,6 +942,11 @@ struct ContentView: View {
         confirmation = nil
         defer { isVoiceSending = false }
 
+        if let textCapture = await makeLocalVoiceTextCapture(queued) {
+            await sendTranscribedVoiceCapture(textCapture)
+            return
+        }
+
         do {
             let audioData = try VoiceCaptureOutbox.data(for: queued)
             let client = APIClient(
@@ -979,9 +984,59 @@ struct ContentView: View {
                 return
             }
 
-            // Keep the recording in the outbox even for an unexpected backend
-            // error. A capture must never disappear silently.
+            // The audio stays durable if both the local and server paths fail.
             present(error)
+        }
+    }
+
+    @MainActor
+    private func makeLocalVoiceTextCapture(
+        _ queued: QueuedVoiceCapture
+    ) async -> QueuedCapture? {
+        guard #available(iOS 26.0, *) else { return nil }
+
+        let transcript = await LocalSpeechTranscriber.transcribe(
+            fileURL: VoiceCaptureOutbox.url(for: queued)
+        )
+        guard let transcript,
+              !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let textCapture = CaptureOutbox.enqueue(
+            text: transcript,
+            context: queued.context,
+            id: queued.id
+        )
+        VoiceCaptureOutbox.remove(queued.id)
+        return textCapture
+    }
+
+    @MainActor
+    private func sendTranscribedVoiceCapture(_ queued: QueuedCapture) async {
+        do {
+            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
+            let response = try await client.intake(
+                queued.text,
+                context: queued.context,
+                clientID: queued.id
+            )
+
+            if response.status == "stored" {
+                presentConfirmation("Голос распознан, разберу позже")
+                return
+            }
+
+            CaptureOutbox.remove(queued.id)
+            await applyIntakeResponse(response, originalText: queued.text)
+        } catch {
+            // The transcript is already durable in CaptureOutbox. Keep it for
+            // any failure so a successful local recognition can never be lost.
+            if isRetryable(error) {
+                presentConfirmation("Голос распознан и сохранён на телефоне")
+            } else {
+                present(error)
+            }
         }
     }
 
@@ -1003,6 +1058,11 @@ struct ContentView: View {
         )
 
         for item in queued {
+            if let textCapture = await makeLocalVoiceTextCapture(item) {
+                await sendTranscribedVoiceCapture(textCapture)
+                continue
+            }
+
             do {
                 let response = try await client.voiceIntake(
                     audioData: VoiceCaptureOutbox.data(for: item),

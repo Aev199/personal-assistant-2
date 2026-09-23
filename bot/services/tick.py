@@ -47,6 +47,7 @@ async def _claim_due_reminders(
             last_attempt_at_utc=NOW(),
             attempt_count=COALESCE(r.attempt_count, 0) + 1,
             error_code=NULL,
+            telegram_message_id=NULL,
             next_attempt_at_utc=COALESCE(r.next_attempt_at_utc, r.remind_at AT TIME ZONE 'UTC')
         FROM due
         WHERE r.id = due.id

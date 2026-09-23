@@ -25,6 +25,16 @@ class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message_id, 321)
         bot.send_message.assert_awaited_once()
 
+    async def test_new_claim_invalidates_previous_occurrence_message_id(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] / "bot" / "services" / "tick.py").read_text(encoding="utf-8")
+        start = source.index("async def _claim_due_reminders")
+        end = source.index("async def _claim_is_current", start)
+        claim_block = source[start:end]
+
+        self.assertIn("telegram_message_id=NULL", claim_block)
+
+
     async def test_claim_recheck_detects_native_action_before_telegram_send(self):
         conn = AsyncMock()
         conn.fetchval.return_value = False

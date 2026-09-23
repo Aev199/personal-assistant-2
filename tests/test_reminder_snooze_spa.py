@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from bot.handlers.reminders import cb_rem_snooze
+from bot.handlers.reminders import cb_rem_close, cb_rem_snooze
 
 
 class _Tx:
@@ -63,6 +63,62 @@ class _Pool:
 
 
 class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_close_consumes_exact_delivered_occurrence_marker(self) -> None:
+        callback = SimpleNamespace(
+            data="rem:close:5:tok123",
+            message=SimpleNamespace(chat=SimpleNamespace(id=10), message_id=777),
+            answer=AsyncMock(),
+        )
+        conn = _Conn(
+            alert_row={
+                "text": "Напомнить",
+                "chat_id": 10,
+                "repeat": "daily",
+                "status": "pending",
+                "telegram_message_id": 777,
+                "claim_token": None,
+            }
+        )
+
+        with patch("bot.handlers.reminders.try_delete_user_message", AsyncMock()) as delete_msg:
+            await cb_rem_close(
+                callback,
+                _Pool(conn),
+                SimpleNamespace(
+                    tz_name="Europe/Moscow",
+                    db_reminders_remind_at_timestamptz=False,
+                ),
+            )
+
+        self.assertTrue(
+            any(
+                "telegram_message_id=NULL" in call.args[0]
+                for call in conn.execute.await_args_list
+            )
+        )
+        delete_msg.assert_awaited_once()
+
+    async def test_legacy_close_still_dismisses_old_popup(self) -> None:
+        callback = SimpleNamespace(
+            data="rem:close",
+            message=SimpleNamespace(chat=SimpleNamespace(id=10), message_id=777),
+            answer=AsyncMock(),
+        )
+
+        with patch("bot.handlers.reminders.try_delete_user_message", AsyncMock()) as delete_msg:
+            await cb_rem_close(
+                callback,
+                _Pool(_Conn()),
+                SimpleNamespace(
+                    tz_name="Europe/Moscow",
+                    db_reminders_remind_at_timestamptz=False,
+                ),
+            )
+
+        callback.answer.assert_awaited_once()
+        delete_msg.assert_awaited_once()
+
+
     async def test_snooze_from_alert_deletes_popup_and_rerenders_current_screen(self) -> None:
         callback = SimpleNamespace(
             data="rem:snooze:15:5:tok123",

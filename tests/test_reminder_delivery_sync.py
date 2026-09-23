@@ -29,6 +29,11 @@ class ReminderDeliverySyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message_id, 321)
         bot.send_message.assert_awaited_once()
+        markup = bot.send_message.await_args.kwargs["reply_markup"]
+        self.assertEqual(
+            markup.inline_keyboard[0][0].callback_data,
+            "rem:close:7:abc",
+        )
 
     async def test_new_claim_invalidates_previous_occurrence_message_id(self):
         from pathlib import Path

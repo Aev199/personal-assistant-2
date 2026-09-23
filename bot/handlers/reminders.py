@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.db.runtime_state import record_action_journal
 from bot.deps import AppDeps
-from bot.services.reminders import reschedule_reminder
+from bot.services.reminders import next_repeat_time_utc_naive, reschedule_reminder
 from bot.tz import to_db_utc, resolve_tz_name
 from zoneinfo import ZoneInfo
 from bot.ui.state import ui_get_state, _ui_payload_get, ui_payload_with_toast, ui_set_state
@@ -51,7 +51,112 @@ async def cb_rem_pick(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppD
     )
 
 
-async def cb_rem_close(callback: CallbackQuery, deps: AppDeps) -> None:
+def _telegram_alert_matches(row, *, message_id: int, action_token: str) -> bool:
+    stored_message_id = int(row["telegram_message_id"] or 0)
+    stored_token = str(row["claim_token"] or "").replace("-", "")[:16]
+    return (
+        (message_id > 0 and stored_message_id == message_id)
+        or (bool(stored_token) and bool(action_token) and stored_token == action_token)
+    )
+
+
+async def cb_rem_close(
+    callback: CallbackQuery,
+    db_pool: asyncpg.Pool,
+    deps: AppDeps,
+) -> None:
+    parts = (callback.data or "").split(":")
+    try:
+        reminder_id = int(parts[2]) if len(parts) >= 3 else None
+    except (TypeError, ValueError):
+        reminder_id = None
+    action_token = str(parts[3] or "").strip() if len(parts) >= 4 else ""
+
+    if reminder_id is not None:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, remind_at, COALESCE(repeat, 'none') AS repeat,
+                           COALESCE(status, 'pending') AS status,
+                           telegram_message_id, claim_token
+                    FROM reminders
+                    WHERE id=$1 AND cancelled_at_utc IS NULL
+                    FOR UPDATE
+                    """,
+                    reminder_id,
+                )
+                message_id = int(getattr(callback.message, "message_id", 0) or 0)
+                if row and _telegram_alert_matches(
+                    row,
+                    message_id=message_id,
+                    action_token=action_token,
+                ):
+                    status = str(row["status"] or "pending").strip().lower()
+                    repeat = str(row["repeat"] or "none").strip().lower()
+
+                    if status == "claimed" and row["claim_token"]:
+                        if repeat != "none":
+                            nxt = next_repeat_time_utc_naive(
+                                row["remind_at"],
+                                repeat,
+                                tz_name=resolve_tz_name(deps.tz_name),
+                            )
+                            if nxt is not None:
+                                next_aware = nxt.replace(tzinfo=timezone.utc)
+                                next_db = to_db_utc(
+                                    next_aware,
+                                    tz_name=deps.tz_name,
+                                    store_tz=bool(
+                                        getattr(
+                                            deps,
+                                            "db_reminders_remind_at_timestamptz",
+                                            False,
+                                        )
+                                    ),
+                                )
+                                await conn.execute(
+                                    """
+                                    UPDATE reminders
+                                    SET status='pending',
+                                        remind_at=$2,
+                                        next_attempt_at_utc=$3,
+                                        is_sent=FALSE,
+                                        sent_at_utc=NOW(),
+                                        claimed_at_utc=NULL,
+                                        claim_token=NULL,
+                                        error_code=NULL,
+                                        telegram_message_id=NULL
+                                    WHERE id=$1
+                                    """,
+                                    reminder_id,
+                                    next_db,
+                                    next_aware,
+                                )
+                        else:
+                            await conn.execute(
+                                """
+                                UPDATE reminders
+                                SET status='sent',
+                                    is_sent=TRUE,
+                                    sent_at_utc=NOW(),
+                                    claimed_at_utc=NULL,
+                                    claim_token=NULL,
+                                    next_attempt_at_utc=NULL,
+                                    error_code=NULL,
+                                    telegram_message_id=NULL
+                                WHERE id=$1
+                                """,
+                                reminder_id,
+                            )
+                    else:
+                        # Delivery was already acknowledged by tick. Clearing
+                        # the marker makes stale widget/iOS actions harmless.
+                        await conn.execute(
+                            "UPDATE reminders SET telegram_message_id=NULL WHERE id=$1",
+                            reminder_id,
+                        )
+
     await callback.answer()
     await try_delete_user_message(callback.message)
 
@@ -93,13 +198,11 @@ async def cb_rem_snooze(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: Ap
                 return await callback.answer("Это напоминание уже неактуально")
 
             callback_message_id = int(getattr(callback.message, "message_id", 0) or 0)
-            stored_message_id = int(alert_row["telegram_message_id"] or 0)
-            stored_token = str(alert_row["claim_token"] or "").replace("-", "")[:16]
-            alert_is_current = (
-                (callback_message_id > 0 and stored_message_id == callback_message_id)
-                or (bool(stored_token) and stored_token == action_token)
-            )
-            if not alert_is_current:
+            if not _telegram_alert_matches(
+                alert_row,
+                message_id=callback_message_id,
+                action_token=action_token,
+            ):
                 return await callback.answer("Это напоминание уже неактуально")
 
         action_key = (
@@ -285,7 +388,7 @@ async def cb_cancel_reminder_ask(callback: CallbackQuery, db_pool: asyncpg.Pool,
 
 
 def register(dp: Dispatcher) -> None:
-    dp.callback_query.register(cb_rem_close, F.data == "rem:close")
+    dp.callback_query.register(cb_rem_close, F.data.startswith("rem:close"))
     dp.callback_query.register(cb_rem_pick, F.data.startswith("rem:pick:"))
     dp.callback_query.register(cb_rem_snooze, F.data.startswith("rem:snooze:"))
     dp.callback_query.register(cb_cancel_reminder_ask, F.data.startswith("rem:cancel_ask:"))

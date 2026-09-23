@@ -49,10 +49,11 @@ async def send_reminder(
     snooze_1h = f"rem:snooze:60:{reminder_id}:{token}" if token else f"rem:snooze:60:{reminder_id}"
     snooze_18 = f"rem:snooze:at18:{reminder_id}:{token}" if token else f"rem:snooze:at18:{reminder_id}"
     snooze_tom = f"rem:snooze:tom:{reminder_id}:{token}" if token else f"rem:snooze:tom:{reminder_id}"
+    close = f"rem:close:{reminder_id}:{token}" if token else f"rem:close:{reminder_id}"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="ОК", callback_data="rem:close"),
+                InlineKeyboardButton(text="ОК", callback_data=close),
                 InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{reminder_id}"),
             ],
             [

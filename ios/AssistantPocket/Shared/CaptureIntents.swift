@@ -37,11 +37,20 @@ enum CaptureLaunchSignal {
 @available(iOS 18.0, *)
 enum AssistantOpenTarget: String, AppEnum {
     case capture
-    case voiceCapture
 
     static var typeDisplayRepresentation = TypeDisplayRepresentation("Assistant")
     static var caseDisplayRepresentations: [AssistantOpenTarget: DisplayRepresentation] = [
-        .capture: DisplayRepresentation(title: "Быстрый ввод"),
+        .capture: DisplayRepresentation(title: "Быстрый ввод")
+    ]
+}
+
+/// App Intents require every OpenIntent to have its own target type.
+@available(iOS 18.0, *)
+enum AssistantVoiceOpenTarget: String, AppEnum {
+    case voiceCapture
+
+    static var typeDisplayRepresentation = TypeDisplayRepresentation("Assistant — голос")
+    static var caseDisplayRepresentations: [AssistantVoiceOpenTarget: DisplayRepresentation] = [
         .voiceCapture: DisplayRepresentation(title: "Голосовая запись")
     ]
 }
@@ -76,13 +85,13 @@ struct OpenAssistantVoiceCaptureIntent: OpenIntent {
     static var description = IntentDescription("Открывает Personal Assistant и сразу начинает голосовую запись.")
 
     @Parameter(title: "Экран")
-    var target: AssistantOpenTarget
+    var target: AssistantVoiceOpenTarget
 
     init() {
         target = .voiceCapture
     }
 
-    init(target: AssistantOpenTarget) {
+    init(target: AssistantVoiceOpenTarget) {
         self.target = target
     }
 

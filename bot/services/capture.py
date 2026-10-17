@@ -1,7 +1,7 @@
 """Lossless capture, with transaction-scoped retry keys shared by clients."""
 import hashlib
 import json
-from bot.db import db_add_event, ensure_inbox_project_id
+from bot.db import db_add_event
 
 
 class CaptureConflict(Exception):
@@ -22,7 +22,9 @@ async def save_capture(conn, *, chat_id: int, text: str,
                 raise CaptureConflict()
             value = previous['result_json']
             return json.loads(value) if isinstance(value, str) else dict(value)
-    project_id = await ensure_inbox_project_id(conn)
+    project_id = await conn.fetchval("""INSERT INTO projects(code,name,status)
+        VALUES ('INBOX','Входящие','active')
+        ON CONFLICT (code) DO UPDATE SET status='active' RETURNING id""")
     task_id = int(await conn.fetchval('''INSERT INTO tasks (project_id, title, status, kind)
         VALUES ($1, $2, 'todo', 'task') RETURNING id''', int(project_id), text))
     await db_add_event(conn, 'task_created', int(project_id), task_id,

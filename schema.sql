@@ -225,3 +225,21 @@ CREATE TABLE IF NOT EXISTS capture_requests (
     result_json JSONB NOT NULL,
     PRIMARY KEY(chat_id, request_id)
 );
+
+-- All writers (including legacy Telegram actions) advance the browser edit version.
+CREATE OR REPLACE FUNCTION assistant_touch_task_version() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at := GREATEST(clock_timestamp(), OLD.updated_at + interval '1 microsecond');
+    RETURN NEW;
+END;
+$$;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                   WHERE tgname='assistant_task_version' AND tgrelid='tasks'::regclass) THEN
+        CREATE TRIGGER assistant_task_version BEFORE UPDATE ON tasks
+        FOR EACH ROW EXECUTE FUNCTION assistant_touch_task_version();
+    END IF;
+END;
+$$;

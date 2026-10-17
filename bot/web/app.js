@@ -37,9 +37,9 @@ function todayView(){
  const events=(data.events||[]).filter(e=>e.kind===state.scope||e.kind==='calendar');
  const schedule=events.length?`<div class="agenda">${events.map(e=>`<div class="meeting"><time>${time(e.start)}</time><div class="meeting-body ${e.kind==='personal'?'personal':''}"><div class="meeting-title">${html(e.title)}</div><div class="meeting-meta">до ${time(e.end)}</div></div></div>`).join('')}</div>`:(!data.calendar_unavailable&&!data.calendar_pending?'<div class="empty">Предстоящих встреч нет.</div>':'');
  const day=new Intl.DateTimeFormat('ru-RU',{timeZone:state.tz,weekday:'long',day:'numeric',month:'long'}).format(new Date());
- return heading(day)+`<div class="columns"><div><section class="section"><div class="section-head"><h2>Задачи на сегодня</h2><span class="count">${due.length} в подборке</span></div>${rows(due)}</section><section class="section"><div class="section-head"><h2>Остальные задачи</h2><button class="text-button" data-page="tasks">Открыть все →</button></div>${rows(other)}<p class="subtitle">Здесь короткая подборка. Полный список — в задачах.</p></section></div><aside class="right-column"><section><div class="section-head"><h2>Расписание</h2></div>${schedule}${data.calendar_unavailable?'<p class="calendar-note">Календарь временно недоступен. Расписание может быть неполным.</p>':data.calendar_pending?'<p class="calendar-note">Календарь обновляется…</p>':''}${state.calendarUpdated?`<p class="subtitle">Обновлён в ${time(state.calendarUpdated)}</p>`:''}</section>${(data.reminders||[]).length?`<section class="mini-inbox"><div class="section-head"><h2>Напоминания</h2></div>${data.reminders.map(r=>`<div class="mini-row">${html(r.text)}<div class="subtitle">${r.at?time(r.at):''}</div></div>`).join('')}</section>`:''}<section class="mini-inbox"><div class="section-head"><h2>Входящие</h2><button class="text-button" data-page="inbox">Все записи →</button></div><div class="list">${state.inbox.slice(0,3).map(t=>`<div class="mini-row"><button data-open="${t.id}">${html(t.title)}</button></div>`).join('')||'<div class="empty">Нет новых записей.</div>'}</div></section></aside></div>`;
+ return heading(day)+`<div class="columns"><div><section class="section"><div class="section-head"><h2>Задачи на сегодня</h2><span class="count">${due.length} в подборке</span></div>${rows(due)}</section><section class="section"><div class="section-head"><h2>Остальные задачи</h2><button class="text-button" data-page="tasks">Открыть все →</button></div>${rows(other)}<p class="subtitle">Здесь короткая подборка. Полный список — в задачах.</p></section></div><aside class="right-column"><section><div class="section-head"><h2>Расписание</h2></div>${schedule}${data.calendar_unavailable?'<p class="calendar-note">Календарь временно недоступен. Расписание может быть неполным.</p>':data.calendar_pending?'<p class="calendar-note">Календарь обновляется…</p>':''}${state.calendarUpdated?`<p class="subtitle">Обновлён в ${time(state.calendarUpdated)}</p>`:''}</section>${(data.reminders||[]).length?`<section class="mini-inbox"><div class="section-head"><h2>Напоминания</h2></div>${data.reminders.map(r=>`<div class="mini-row">${html(r.text)}<div class="subtitle">${r.at?time(r.at):''}</div></div>`).join('')}</section>`:''}<section class="mini-inbox"><div class="section-head"><h2>Входящие</h2><button class="text-button" data-page="inbox">Все записи →</button></div><div class="list">${state.inbox.slice(0,3).map(t=>`<div class="mini-row"><button data-open="${t.id}">${html(t.title)}</button></div>`).join('')||(state.inboxUnavailable?'<div class="empty">Входящие пока не загружены.</div>':'<div class="empty">Нет новых записей.</div>')}</div>${state.inboxUnavailable?'<p class="calendar-note">Не удалось обновить Входящие. Показаны последние загруженные записи.</p>':''}</section></aside></div>`;
 }
-function render(){nav();const content=$('content');
+function render(){nav();state.renderedKey=state.page+':'+state.scope;const content=$('content');
  if(state.page==='today')content.innerHTML=todayView();
  if(state.page==='tasks')content.innerHTML=heading('Рабочие и личные дела')+`<div class="task-area" id="swipe-area"><div class="list-caption">${state.tasks.length}${state.cursor!==null?' и ещё': ''} записей</div>${rows(state.tasks)}${state.cursor!==null?'<button class="load-more" data-more="tasks">Загрузить ещё</button>':''}</div>`;
  if(state.page==='inbox')content.innerHTML=heading('Записи без объекта. Можно уточнить задачу или перенести её в идеи.',false)+`<div class="task-area"><div class="list">${state.tasks.map(t=>`<div class="inbox-row"><span class="entry-title">${html(t.title)}</span><div class="entry-actions"><button data-open="${t.id}">Изменить</button><button data-idea="${t.id}">В идеи</button></div></div>`).join('')||'<div class="empty">Нет неразобранных записей.</div>'}</div>${state.cursor!==null?'<button class="load-more" data-more="tasks">Загрузить ещё</button>':''}</div>`;
@@ -49,10 +49,15 @@ async function loadPage({more=false,quiet=false}={}){
  if(!state.connected)return;
  const generation=++state.generation,page=state.page,scope=state.scope;
  state.controller?.abort();state.controller=new AbortController();const signal=state.controller.signal;
- if(!quiet&&!more){nav();$('content').innerHTML='<p class="loading"><span class="loading-dot"></span>Загрузка…</p>';}
+ if(!quiet&&!more&&state.renderedKey!==page+':'+scope){nav();$('content').innerHTML='<p class="loading"><span class="loading-dot"></span>Загрузка…</p>';}
  try{
   let result;
-  if(page==='today')result=await Promise.all([api('/today',{signal}),api('/tasks?scope=all&inbox=true&limit=3',{signal})]);
+  if(page==='today'){
+   const [day,inbox]=await Promise.allSettled([api('/today',{signal}),api('/tasks?scope=all&inbox=true&limit=3',{signal})]);
+   if(day.status==='rejected')throw day.reason;
+   result=[day.value,inbox.status==='fulfilled'?inbox.value:{tasks:state.inbox}];
+   result.inboxUnavailable=inbox.status!=='fulfilled';
+  }
   else if(page==='ideas')result=await api('/ideas?limit=200',{signal});
   else {
    const base=`/tasks?scope=${page==='inbox'?'all':scope}&inbox=${page==='inbox'}&limit=100`;
@@ -67,11 +72,11 @@ async function loadPage({more=false,quiet=false}={}){
    }
   }
   if(generation!==state.generation||page!==state.page||scope!==state.scope)return;
-  if(page==='today'){state.today=result[0];state.tz=result[0].timezone||state.tz;state.inbox=result[1].tasks;if(!state.today.calendar_unavailable&&!state.today.calendar_pending)state.calendarUpdated=new Date().toISOString();}
+  if(page==='today'){state.today=result[0];state.inboxUnavailable=result.inboxUnavailable;state.tz=result[0].timezone||state.tz;state.inbox=result[1].tasks;if(!state.today.calendar_unavailable&&!state.today.calendar_pending)state.calendarUpdated=new Date().toISOString();}
   else if(page==='ideas')state.ideas=result.ideas||[];
   else{state.tasks=more?[...state.tasks,...result.tasks.filter(t=>!state.tasks.some(x=>x.id===t.id))]:result.tasks;state.cursor=result.next_cursor??null;state.tz=result.timezone||state.tz;}
   $('page-error').hidden=true;$('connection-state').textContent='Подключено к серверу';render();
- }catch(e){if(e.name==='AbortError'||generation!==state.generation)return;$('page-error').hidden=false;$('page-error').textContent=message(e);$('connection-state').textContent='Связь недоступна';if(!quiet&&!more)$('content').innerHTML='<button class="secondary" data-refresh="1">Повторить загрузку</button>';}
+ }catch(e){if(e.name==='AbortError'||generation!==state.generation)return;$('page-error').hidden=false;$('page-error').textContent=message(e);$('connection-state').textContent='Связь недоступна';if(!quiet&&!more&&state.renderedKey!==page+':'+scope)$('content').innerHTML='<button class="secondary" data-refresh="1">Повторить загрузку</button>';}
 }
 async function connect(){state.connected=true;$('login').hidden=true;$('shell').hidden=false;$('capture').value=storageGet('assistant.draft')||'';const pending=readPending();if(pending)$('capture-status').innerHTML='Есть неподтверждённая запись. <button type="button" data-retry="1">Повторить сохранение</button>';loadPage();try{const r=await api('/projects');state.projects=r.projects||[];}catch{/* Tasks remain usable; project choices can be retried on opening details. */}}
 $('connect-form').addEventListener('submit',async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{const r=await api('/session',{method:'POST',body:{token:$('access-key').value}});state.csrf=r.csrf_token;$('access-key').value='';await connect();}catch(err){$('login-error').textContent=message(err);}finally{b.disabled=false;}});

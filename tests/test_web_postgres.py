@@ -13,13 +13,17 @@ pytestmark = pytest.mark.skipif(not os.getenv('TEST_DATABASE_URL'), reason='set 
 
 
 @asynccontextmanager
-async def database():
+async def database(*, runtime=False):
     conn=await asyncpg.connect(os.environ['TEST_DATABASE_URL'], statement_cache_size=0)
     schema='web_test_'+uuid4().hex
     await conn.execute(f'CREATE SCHEMA {schema}')
     await conn.execute(f'SET search_path TO {schema}')
-    sql=Path('schema.sql').read_text()
-    await conn.execute(sql)
+    if runtime:
+        from bot.db.schema import ensure_schema
+        await ensure_schema(conn)
+        await ensure_schema(conn)
+    else:
+        await conn.execute(Path('schema.sql').read_text())
     async def init(c):
         await c.execute(f'SET search_path TO {schema}')
     pool=await asyncpg.create_pool(os.environ['TEST_DATABASE_URL'], min_size=1,max_size=2,statement_cache_size=0,setup=init)
@@ -168,4 +172,16 @@ def test_distinct_concurrent_captures_create_inbox_safely():
             assert a['task']['id'] != b['task']['id']
             assert await conn.fetchval('SELECT count(*) FROM tasks') == 2
             assert await conn.fetchval("SELECT count(*) FROM projects WHERE code='INBOX'") == 1
+    asyncio.run(run())
+
+
+def test_runtime_bootstrap_is_repeatable_with_task_version_trigger():
+    async def run():
+        async with database(runtime=True) as (conn,pool):
+            pid=await conn.fetchval("INSERT INTO projects(code) VALUES('INBOX') RETURNING id")
+            tid=await conn.fetchval("INSERT INTO tasks(project_id,title) VALUES($1,'version') RETURNING id",pid)
+            before=await conn.fetchval('SELECT updated_at FROM tasks WHERE id=$1',tid)
+            await conn.execute("UPDATE tasks SET title='changed' WHERE id=$1",tid)
+            assert await conn.fetchval('SELECT updated_at FROM tasks WHERE id=$1',tid) > before
+            assert await conn.fetchval("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('web_sessions','capture_requests')") == 2
     asyncio.run(run())

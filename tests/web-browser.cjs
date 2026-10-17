@@ -15,7 +15,7 @@ let tasks=[
  {id:5,title:'Проверить экспорт в PLAXIS',project:'SoilStiffness',kind:'task',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',focused:false}
 ];
 let ideas=[{id:1,text:'Контекстный поиск по рабочему архиву'}];
-let conflict=false;
+let conflict=false,failTasksOnce=false,failInboxOnce=false;
 const server=http.createServer(async(req,res)=>{
  const u=new URL(req.url,'http://localhost');let body='';for await(const c of req)body+=c;
  const data=body?JSON.parse(body):{};
@@ -30,6 +30,7 @@ const server=http.createServer(async(req,res)=>{
   if(u.pathname==='/api/v1/today')return json({ok:true,date:today,timezone:'Europe/Moscow',tasks:tasks.filter(t=>t.status!=='done').slice(0,3),events:[{id:'m1',title:'Совещание с проектировщиками',start:today+'T12:00:00+03:00',end:today+'T13:00:00+03:00',kind:'work'}],reminders:[],calendar_unavailable:true,calendar_pending:false});
   if(u.pathname==='/api/v1/projects')return json({ok:true,projects:[{code:'Лимонарий',name:'Лимонарий'},{code:'Жилой комплекс',name:'Жилой комплекс'},{code:'SoilStiffness',name:'SoilStiffness'},{code:'INBOX',name:'Входящие'}]});
   if(u.pathname==='/api/v1/tasks'){
+   if(failTasksOnce||(failInboxOnce&&u.searchParams.get('inbox')==='true')){failTasksOnce=false;failInboxOnce=false;return json({ok:false,error:'db_unavailable'},503);}
    const scope=u.searchParams.get('scope');let list=tasks.filter(t=>t.status!=='done');
    if(scope==='personal')list=list.filter(t=>t.kind==='personal');
    if(scope==='work')list=list.filter(t=>t.kind!=='personal');
@@ -77,6 +78,11 @@ const server=http.createServer(async(req,res)=>{
   await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
   await page.waitForTimeout(150);
   assert.equal(await page.getByText('Проверить экспорт в PLAXIS',{exact:true}).count(),1,'refresh must preserve loaded pages');
+  failTasksOnce=true;await page.getByRole('button',{name:'Задачи',exact:true}).first().click();await page.waitForTimeout(150);
+  assert.equal(await page.getByText('Проверить экспорт в PLAXIS',{exact:true}).count(),1,'outage must not hide loaded tasks');
+  failInboxOnce=true;await page.getByRole('button',{name:'Сегодня',exact:true}).first().click();await page.waitForTimeout(150);
+  assert.equal(await page.getByText(tasks[0].title,{exact:true}).count(),1,'Inbox failure must not hide Today');
+  await page.getByRole('button',{name:'Задачи',exact:true}).first().click();await page.getByText(tasks[0].title,{exact:true}).waitFor();
   await page.getByRole('button',{name:'Сейчас',exact:true}).first().click();assert(tasks[0].focused);
   await page.getByText(tasks[0].title,{exact:true}).click();
   await page.getByLabel('Название').fill('Изменённая задача');conflict=true;

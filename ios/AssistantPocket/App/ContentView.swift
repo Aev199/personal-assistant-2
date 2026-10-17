@@ -10,7 +10,6 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage("assistant.captureDraft") private var captureText = ""
-    @AppStorage("assistant.lastOpenedAt") private var lastOpenedAt: Double = 0
     @State private var tasks: [TodayTask] = []
     @State private var reminders: [TodayReminder] = []
     @State private var events: [TodayEvent] = []
@@ -38,7 +37,6 @@ struct ContentView: View {
     @State private var showFocusPicker = false
     @State private var justUnfocusedTaskID: Int?
     @State private var now = Date()
-    @State private var returningAfterBreak = false
     @FocusState private var captureFocused: Bool
 
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -162,8 +160,6 @@ struct ContentView: View {
                 await loadToday()
             }
             .task {
-                detectReturnGap()
-
                 // A widget/deep-link capture is the user's foreground intent.
                 // Start it before any refresh or retry work on a cold launch.
                 consumeSystemCaptureRequest()
@@ -187,7 +183,6 @@ struct ContentView: View {
             }
             .onChange(of: scenePhase) { phase in
                 if phase == .active {
-                    detectReturnGap()
                     didRetryPendingCalendar = false
                     consumeSystemCaptureRequest()
                     Task {
@@ -256,15 +251,9 @@ struct ContentView: View {
 
     @ViewBuilder
     private var calendarWarning: some View {
-        if calendarPending {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Календарь загружается…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } else if calendarUnavailable {
+        // A slow calendar is retried quietly; only a real failure is shown,
+        // so an unknown calendar never looks like a free day.
+        if calendarUnavailable && !calendarPending {
             HStack(spacing: 8) {
                 Label("Календарь не обновился", systemImage: "calendar.badge.exclamationmark")
                     .font(.caption)
@@ -334,12 +323,8 @@ struct ContentView: View {
                 focusTaskCard(task)
             } else if settings.isConfigured && !isLoading {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(
-                        suggestedFocusTask == nil
-                            ? "На сейчас ничего нет"
-                            : (returningAfterBreak ? "Вернуться к одной задаче" : "Ничего не выбрано")
-                    )
-                    .font(.title3.weight(.semibold))
+                    Text(suggestedFocusTask == nil ? "На сейчас ничего нет" : "Ничего не выбрано")
+                        .font(.title3.weight(.semibold))
 
                     if let suggestedFocusTask {
                         Button {
@@ -347,16 +332,12 @@ struct ContentView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "arrow.right.circle.fill")
-                                Text(
-                                    returningAfterBreak
-                                        ? "Вернуться: \(suggestedFocusTask.title)"
-                                        : "Начать: \(suggestedFocusTask.title)"
-                                )
-                                .lineLimit(2)
+                                Text("Сделать сейчас: \(suggestedFocusTask.title)")
+                                    .lineLimit(2)
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .accessibilityLabel("Начать задачу \(suggestedFocusTask.title)")
+                        .accessibilityLabel("Сделать сейчас: \(suggestedFocusTask.title)")
 
                         Button("Выбрать другую") {
                             showFocusPicker = true
@@ -504,7 +485,7 @@ struct ContentView: View {
     private var nextSection: some View {
         if !nextTasks.isEmpty || nextEvent != nil || nextReminder != nil {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Дальше")
+                Text("Следующие")
                     .font(.headline)
 
                 nextTimedRows
@@ -554,12 +535,6 @@ struct ContentView: View {
                     .lineLimit(2)
 
                 taskMeta(task)
-
-                if task.isFocused && focusTask == nil {
-                    Text("↩︎ вернуться")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -567,6 +542,15 @@ struct ContentView: View {
             }
 
             Spacer(minLength: 0)
+
+            if !task.isFocused {
+                Button("Сейчас") {
+                    Task { await focus(task) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Сделать сейчас: \(task.title)")
+            }
         }
         .padding(.vertical, 5)
     }
@@ -1232,7 +1216,9 @@ struct ContentView: View {
         }
 
         let savedCount = response.saved.count
-        if savedCount == 1, let item = response.saved.first {
+        if response.inboxFallback == true {
+            presentConfirmation("Записано во Входящие")
+        } else if savedCount == 1, let item = response.saved.first {
             switch item.kind.lowercased() {
             case "idea":
                 presentConfirmation("Идея сохранена")
@@ -1250,7 +1236,6 @@ struct ContentView: View {
         }
 
         if savedCount > 0 {
-            returningAfterBreak = false
             onChanged()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             await loadToday()
@@ -1414,22 +1399,12 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func detectReturnGap() {
-        let current = Date().timeIntervalSince1970
-        if lastOpenedAt > 0, current - lastOpenedAt >= 36 * 60 * 60 {
-            returningAfterBreak = true
-        }
-        lastOpenedAt = current
-    }
-
-    @MainActor
     private func focus(_ task: TodayTask) async {
         errorMessage = nil
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
             _ = try await client.focusTask(taskID: task.id)
             justUnfocusedTaskID = nil
-            returningAfterBreak = false
             onChanged()
             await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")

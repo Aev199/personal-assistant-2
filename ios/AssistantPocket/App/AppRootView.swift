@@ -9,7 +9,7 @@ private enum AppTab: Hashable {
 
 // Build marker kept in source so a release-candidate commit can trigger the
 // iOS-only workflow without changing runtime behavior.
-private let iosReleaseCandidate = "2026-09-23-concurrency-hardening"
+private let iosReleaseCandidate = "2026-10-17-daily-loop"
 
 struct AppRootView: View {
     @EnvironmentObject private var settings: AppSettings

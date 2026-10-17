@@ -103,10 +103,14 @@ struct TodayTask: Decodable, Identifiable {
     let overdue: Bool
     let focused: Bool?
     let focusedSince: Date?
+    /// Server edit version, sent back unchanged so an edit cannot silently
+    /// overwrite a change made from the web or Telegram.
+    let updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id, title, project, kind, assignee, status, deadline, overdue, focused
         case focusedSince = "focused_since"
+        case updatedAt = "updated_at"
     }
 
     var inProgress: Bool {
@@ -143,11 +147,14 @@ struct NativeIntakeResponse: Decodable {
     let pending: [NativeIntakePending]
     let context: String?
     let transcript: String?
+    /// The model was unavailable, so the text went to Inbox as is.
+    let inboxFallback: Bool?
 
     enum CodingKeys: String, CodingKey {
         case ok, status, message, saved, pending, context, transcript
         case captureId = "capture_id"
         case needsInput = "needs_input"
+        case inboxFallback = "inbox_fallback"
     }
 }
 

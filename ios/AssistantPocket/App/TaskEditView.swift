@@ -152,7 +152,8 @@ struct TaskEditView: View {
                 taskID: task.id,
                 title: cleanTitle,
                 projectCode: projectChanged ? projectCode : nil,
-                deadline: hasDeadline ? deadline : nil
+                deadline: hasDeadline ? deadline : nil,
+                expectedUpdatedAt: task.updatedAt
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             onSaved()

@@ -7,7 +7,7 @@ The iPhone client is an attention aid, not a smaller project-management system.
 The Home Screen widget and **Сегодня** answer only three questions:
 
 1. **Сейчас** — what deserves attention now?
-2. **Дальше** — what is next, in a deliberately short list?
+2. **Следующие** — what is next, in a deliberately short list?
 3. **Запомнить** — how do I get a thought out of my head immediately?
 
 The app has three stable top-level destinations: **Сегодня**, **Задачи**, and **Идеи**. Ideas never enter the attention queue until promoted. Projects are context, not top-level navigation.
@@ -15,15 +15,16 @@ The app has three stable top-level destinations: **Сегодня**, **Зада�
 ## ADHD-first rules
 
 - Capture must survive bad network, VPN changes, app suspension and accidental interruption.
+- Capture must not depend on the model: without a timely model answer the text becomes a visible Inbox task.
 - Voice capture is a first-class capture path, not a separate feature: audio is persisted first, transcribed on-device with SpeechAnalyzer when available, and only the transcript is sent to the normal backend/Gemini intake path. Server audio transcription is the fallback. Recorded audio stays available until the handoff is acknowledged.
 - An unfinished capture must survive relaunch.
 - There is one explicit task focus. Choosing a new task focus must not require reorganizing the backlog. A due reminder or active meeting may temporarily occupy **Сейчас**, but the explicit task remains remembered underneath and can resume afterwards.
-- A reminder takes **Сейчас** only when it is due. Upcoming reminders remain time anchors in **Дальше** instead of interrupting work early.
+- A reminder takes **Сейчас** only when it is due. Upcoming reminders remain time anchors in **Следующие** instead of interrupting work early.
 - A due reminder has one default escape hatch: **+15 мин**. More complex rescheduling stays off the primary surface.
 - Telegram is the reminder delivery channel for now; iOS and the widget are attention/state surfaces. A delivered reminder disappears from native Today on refresh. Native snooze makes the previously delivered Telegram alert inactive instead of leaving two live controls for the same reminder.
 - A meeting already in progress may interrupt **Сейчас** while preserving the paused explicit task for return. An upcoming meeting within 15 minutes can take **Сейчас** only when no explicit task is selected. Calendar context stays compact rather than becoming a full calendar screen.
 - Acknowledging a calendar event hides it from attention until the event ends; it never deletes or edits the source calendar event. Both the app and widget use a compact explicit dismiss control; the primary surface does not depend on hidden gestures.
-- **Дальше** stays deliberately short: at most four rows on the main screen.
+- **Следующие** stays deliberately short: at most four rows on the main screen.
 - Safe capture actions happen without a confirmation ceremony.
 - Ask one concrete follow-up only when required information is genuinely missing.
 - Calendar creation is confirmed because it is an external side effect.
@@ -35,7 +36,8 @@ The app has three stable top-level destinations: **Сегодня**, **Зада�
 - Use the standard iOS bottom tab bar for the three stable destinations: **Сегодня**, **Задачи**, **Идеи**. Do not add more permanent tabs without clear evidence.
 - **Сегодня** contains attention and capture only; it does not duplicate global navigation with a **Все задачи** button or whole-screen navigation swipe.
 - **Задачи** has exactly two visible scopes: **Рабочие** and **Личные**. The segmented control is explicit; horizontal paging is the fast accelerator between them.
-- Horizontal swipes inside **Задачи** belong to scope navigation, so task-row actions must not compete for the same gesture. **Выполнено** and **Сейчас** remain explicit row controls.
+- Horizontal swipes inside **Задачи** belong to scope navigation, so task-row actions must not compete for the same gesture. **Выполнено** and **Сейчас** remain explicit row controls, both in **Задачи** and in **Следующие**.
+- Calendar loading is retried quietly; only an actual calendar failure is shown, so an unknown calendar never looks like a free day.
 - Task deadlines always include day context: today/tomorrow or an explicit calendar date.
 - No chat clone in the native app.
 - No model picker, AI badge, “thinking” copy, generated summaries of obvious UI state, or decorative assistant persona.

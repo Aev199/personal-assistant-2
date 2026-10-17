@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -22,6 +23,33 @@ class _FakeLLM:
     async def classify_intake_batch(self, **_kwargs):
         self.batch_calls += 1
         return {"actions": [self.payload], "reply": ""}
+
+
+class _FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+class _FakeConn:
+    def transaction(self):
+        return _FakeTransaction()
+
+
+class _FakePool:
+    def acquire(self):
+        conn = _FakeConn()
+
+        class _Acquire:
+            async def __aenter__(self_inner):
+                return conn
+
+            async def __aexit__(self_inner, *_exc):
+                return False
+
+        return _Acquire()
 
 
 class NativeIntakeTests(unittest.IsolatedAsyncioTestCase):
@@ -80,6 +108,70 @@ class NativeIntakeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "stored")
         self.assertGreaterEqual(save.await_count, 2)
+
+    async def _capture_without_model(self, *, classify, capture_result=None, capture_error=None):
+        save_receipt = AsyncMock()
+        save_capture = AsyncMock(
+            return_value=capture_result
+            or {"ok": True, "task": {"id": 77, "title": "важная мысль", "project": "INBOX"}},
+            side_effect=capture_error,
+        )
+        with (
+            patch("bot.services.native_intake._save_receipt", save_receipt),
+            patch("bot.services.native_intake._load_receipt", AsyncMock(return_value=None)),
+            patch(
+                "bot.services.native_intake._load_context",
+                AsyncMock(return_value=("lead", None, "INBOX", [], [])),
+            ),
+            patch("bot.services.native_intake._classify", classify),
+            patch("bot.services.native_intake.save_capture", save_capture),
+        ):
+            result = await process_native_capture(
+                text="важная мысль",
+                deps=SimpleNamespace(llm=None, tz_name="Europe/Moscow"),
+                db_pool=_FakePool(),
+                chat_id=42,
+                capture_id="abc-123",
+            )
+        return result, save_capture, save_receipt
+
+    async def test_model_failure_puts_text_into_visible_inbox(self):
+        result, save_capture, save_receipt = await self._capture_without_model(
+            classify=AsyncMock(side_effect=RuntimeError("llm_unavailable")),
+        )
+
+        self.assertEqual(result["status"], "saved")
+        self.assertTrue(result["inbox_fallback"])
+        self.assertEqual(result["saved"][0]["kind"], "task")
+        self.assertEqual(result["saved"][0]["task_id"], 77)
+        kwargs = save_capture.await_args.kwargs
+        self.assertEqual(kwargs["text"], "важная мысль")
+        # The client capture id is the shared retry key: a retry cannot duplicate.
+        self.assertEqual(kwargs["client_request_id"], "native:abc-123")
+        # The final receipt stores the saved result for idempotent retries.
+        self.assertEqual(save_receipt.await_args.kwargs["result"], result)
+
+    async def test_slow_model_does_not_keep_capture_waiting(self):
+        async def slow(*_args, **_kwargs):
+            await asyncio.sleep(5)
+
+        with patch.dict("os.environ", {"NATIVE_INTAKE_CLASSIFY_TIMEOUT_SEC": "1"}):
+            started = asyncio.get_running_loop().time()
+            result, _save_capture, save_receipt = await self._capture_without_model(classify=slow)
+            elapsed = asyncio.get_running_loop().time() - started
+
+        self.assertLess(elapsed, 3)
+        self.assertEqual(result["status"], "saved")
+        self.assertEqual(save_receipt.await_args.kwargs["items"][0]["error"], "classify_timeout")
+
+    async def test_inbox_failure_still_keeps_raw_capture_for_retry(self):
+        result, _save_capture, save_receipt = await self._capture_without_model(
+            classify=AsyncMock(side_effect=RuntimeError("llm_unavailable")),
+            capture_error=RuntimeError("db down"),
+        )
+
+        self.assertEqual(result["status"], "stored")
+        self.assertEqual(save_receipt.await_args.kwargs["result"]["status"], "stored")
 
     async def test_incomplete_intent_returns_one_concrete_question(self):
         deps = SimpleNamespace(llm=SimpleNamespace(last_provider="gemini"), tz_name="Europe/Moscow")

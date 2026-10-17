@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -424,3 +425,60 @@ def test_dismissed_event_items_drop_expired_values():
     items = companion._active_dismissed_event_items(state, now_utc=now)
 
     assert items == [{"id": "keep", "until": "2026-09-22T10:00:00+00:00"}]
+
+
+def test_native_backlog_is_complete_and_carries_edit_version(monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    monkeypatch.setenv("ASSISTANT_API_TOKEN", "app")
+    version = datetime(2026, 10, 17, 9, 30, 0, 123456, tzinfo=timezone.utc)
+    rows = [
+        {
+            "id": index,
+            "title": f"Задача {index}",
+            "deadline": None,
+            "status": "todo",
+            "kind": "task",
+            "created_at": version,
+            "updated_at": version,
+            "project_code": "INBOX",
+            "assignee": "",
+        }
+        for index in range(1, 301)
+    ]
+    captured = {}
+
+    class Conn:
+        async def fetch(self, query, *args):
+            captured["args"] = args
+            return rows
+
+    class Pool:
+        def acquire(self):
+            conn = Conn()
+
+            class Acquire:
+                async def __aenter__(self):
+                    return conn
+
+                async def __aexit__(self, *_exc):
+                    return False
+
+            return Acquire()
+
+    class Request:
+        headers = {"Authorization": "Bearer app"}
+        query = {"limit": "500"}
+        cookies = {}
+
+    ctx = SimpleNamespace(deps=SimpleNamespace(db_pool=Pool(), tz_name="Europe/Moscow", admin_id=1))
+    with patch.object(companion, "get_conversation_state", AsyncMock(return_value=None)):
+        response = asyncio.run(companion.handle_tasks(Request(), ctx))
+
+    body = json.loads(response.body)
+    assert response.status == 200
+    assert len(body["tasks"]) == 300
+    assert captured["args"] == (companion.TASK_BACKLOG_LIMIT,)
+    assert body["tasks"][0]["updated_at"] == version.isoformat()

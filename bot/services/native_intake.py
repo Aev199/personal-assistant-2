@@ -5,6 +5,7 @@ structured results instead of rendering Telegram UI.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 from dataclasses import asdict
@@ -26,6 +27,7 @@ from bot.db.runtime_state import (
 )
 from bot.persona import is_solo_mode
 from bot.services import freeform_intake as intake
+from bot.services.capture import save_capture
 from bot.services.pending_actions import execute_pending_action
 from bot.tz import resolve_tz_name
 
@@ -422,6 +424,91 @@ async def _persist_action(
         raise
 
 
+def _classify_timeout_sec() -> float:
+    try:
+        value = float(os.getenv("NATIVE_INTAKE_CLASSIFY_TIMEOUT_SEC", "") or 10)
+    except ValueError:
+        value = 10.0
+    return max(1.0, value)
+
+
+async def _save_to_inbox_without_parsing(
+    *,
+    text: str,
+    raw_text: str,
+    error: str,
+    db_pool: asyncpg.Pool,
+    chat_id: int,
+    source: str,
+    capture_id: str,
+) -> dict:
+    """Without a model the text still becomes a visible Inbox task.
+
+    The capture id doubles as the shared capture retry key, so a client retry
+    after a lost response returns the same task instead of creating another.
+    """
+    stored = {
+        "ok": True,
+        "capture_id": capture_id,
+        "status": "stored",
+        "message": "Записано. Разбор временно недоступен.",
+        "saved": [],
+        "needs_input": [],
+        "pending": [],
+    }
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                result = await save_capture(
+                    conn,
+                    chat_id=int(chat_id),
+                    text=text,
+                    client_request_id=f"native:{capture_id}",
+                    source=source,
+                )
+    except Exception as inbox_exc:
+        # Last resort: keep the raw receipt so the client retries later.
+        await _save_receipt(
+            db_pool,
+            chat_id=int(chat_id),
+            capture_id=capture_id,
+            raw_text=raw_text,
+            source=source,
+            items=[{"status": "unprocessed", "error": f"{error}; inbox: {inbox_exc}"}],
+            result=stored,
+        )
+        return stored
+
+    task = result.get("task") or {}
+    response = {
+        "ok": True,
+        "capture_id": capture_id,
+        "status": "saved",
+        "message": "Записано во Входящие",
+        "inbox_fallback": True,
+        "saved": [
+            {
+                "status": "saved",
+                "kind": "task",
+                "title": str(task.get("title") or text),
+                "task_id": task.get("id"),
+            }
+        ],
+        "needs_input": [],
+        "pending": [],
+    }
+    await _save_receipt(
+        db_pool,
+        chat_id=int(chat_id),
+        capture_id=capture_id,
+        raw_text=raw_text,
+        source=source,
+        items=[{"status": "inbox_fallback", "error": error, "task_id": task.get("id")}],
+        result=response,
+    )
+    return response
+
+
 async def process_native_capture(
     *,
     text: str,
@@ -460,34 +547,28 @@ async def process_native_capture(
     )
 
     try:
-        intents = await _classify(
-            text,
-            deps=deps,
-            current_project_code=current_project_code,
-            projects=projects,
-            team=team,
-            prepend_text=prepend_text,
+        intents = await asyncio.wait_for(
+            _classify(
+                text,
+                deps=deps,
+                current_project_code=current_project_code,
+                projects=projects,
+                team=team,
+                prepend_text=prepend_text,
+            ),
+            timeout=_classify_timeout_sec(),
         )
     except Exception as exc:
-        response = {
-            "ok": True,
-            "capture_id": capture_id,
-            "status": "stored",
-            "message": "Записано. Разбор временно недоступен.",
-            "saved": [],
-            "needs_input": [],
-            "pending": [],
-        }
-        await _save_receipt(
-            db_pool,
-            chat_id=int(chat_id),
-            capture_id=capture_id,
+        error = "classify_timeout" if isinstance(exc, asyncio.TimeoutError) else str(exc)
+        return await _save_to_inbox_without_parsing(
+            text=intake._merge_freeform_text(prepend_text, text),
             raw_text=text,
+            error=error,
+            db_pool=db_pool,
+            chat_id=int(chat_id),
             source=source,
-            items=[{"status": "unprocessed", "error": str(exc)}],
-            result=response,
+            capture_id=capture_id,
         )
-        return response
 
     saved = []
     needs_input = []

@@ -34,6 +34,7 @@ MAX_VOICE_BYTES = 8 * 1024 * 1024
 ATTENTION_TASK_LIMIT = 5
 ATTENTION_URGENT_LIMIT = 3
 ATTENTION_DISMISSED_EVENTS_FLOW = "attention_dismissed_events"
+TASK_BACKLOG_LIMIT = 500
 
 
 def _configured_token() -> str:
@@ -74,6 +75,14 @@ def _auth_error(*, allow_widget: bool = False) -> web.Response:
             status=503,
         )
     return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+
+
+def _iso_version(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 def _utc_naive(value: datetime) -> datetime:
@@ -484,7 +493,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
 
         task_rows = await conn.fetch(
             """
-            SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at,
+            SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at, t.updated_at,
                    p.code AS project_code, COALESCE(tm.name, '') AS assignee
             FROM tasks t
             JOIN projects p ON p.id=t.project_id
@@ -567,6 +576,9 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                     if focus_task_id is not None and int(row["id"]) == focus_task_id
                     else None
                 ),
+                # Edit version: clients send it back so an edit never silently
+                # overwrites a change made by another client.
+                "updated_at": _iso_version(row.get("updated_at")),
             }
         )
 
@@ -1015,9 +1027,10 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
         return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
 
     try:
-        limit = max(1, min(200, int(request.query.get("limit", "100"))))
+        requested_limit = int(request.query.get("limit", "100"))
     except (TypeError, ValueError):
         return web.json_response({"ok": False, "error": "invalid_limit"}, status=400)
+    limit = max(1, min(200, requested_limit))
 
     if any(key in request.query for key in ('scope','cursor','inbox')):
         from bot.services.task_browser import list_tasks, TaskError
@@ -1034,6 +1047,8 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
         result['timezone']=resolve_tz_name(ctx.deps.tz_name)
         return web.json_response(result)
 
+    # The native backlog is one complete list, so it may ask for all fetched rows.
+    limit = max(1, min(TASK_BACKLOG_LIMIT, requested_limit))
     tz_name = resolve_tz_name(ctx.deps.tz_name)
     tz = ZoneInfo(tz_name)
     now_local = datetime.now(tz)
@@ -1057,7 +1072,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
 
         rows = await conn.fetch(
             """
-            SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at,
+            SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at, t.updated_at,
                    p.code AS project_code, COALESCE(tm.name, '') AS assignee
             FROM tasks t
             JOIN projects p ON p.id=t.project_id
@@ -1066,8 +1081,9 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
               AND t.kind != 'super'
               AND p.status IN ('active', 'system')
             ORDER BY t.created_at ASC, t.id ASC
-            LIMIT 500
-            """
+            LIMIT $1
+            """,
+            TASK_BACKLOG_LIMIT,
         )
 
     ordered = sorted(
@@ -1100,6 +1116,9 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
                     if focus_task_id is not None and int(row["id"]) == focus_task_id
                     else None
                 ),
+                # Edit version: clients send it back so an edit never silently
+                # overwrites a change made by another client.
+                "updated_at": _iso_version(row.get("updated_at")),
             }
         )
 

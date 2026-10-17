@@ -14,6 +14,9 @@ enum APIClientError: LocalizedError {
             return "Некорректный адрес сервера."
         case let .http(code, message):
             if code == 401 { return "Неверный код доступа." }
+            if code == 409 && message == "task_conflict" {
+                return "Задачу уже изменили на другом устройстве. Откройте её заново."
+            }
             if code == 503 { return "Assistant временно недоступен." }
             return message.isEmpty ? "Ошибка сервера: \(code)" : message
         case .invalidResponse:
@@ -86,8 +89,8 @@ struct APIClient {
         return try decode(TodayResponse.self, data: data, response: response)
     }
 
-    func loadTasks(limit: Int = 100) async throws -> TasksResponse {
-        let safeLimit = max(1, min(200, limit))
+    func loadTasks(limit: Int = 500) async throws -> TasksResponse {
+        let safeLimit = max(1, min(500, limit))
         let (data, response) = try await send(path: "/api/v1/tasks?limit=\(safeLimit)")
         return try decode(TasksResponse.self, data: data, response: response)
     }
@@ -129,7 +132,8 @@ struct APIClient {
         taskID: Int,
         title: String,
         projectCode: String?,
-        deadline: Date?
+        deadline: Date?,
+        expectedUpdatedAt: String? = nil
     ) async throws -> TaskMutationResponse {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -143,6 +147,9 @@ struct APIClient {
         }
         if let deadline {
             payload["deadline"] = formatter.string(from: deadline)
+        }
+        if let expectedUpdatedAt, !expectedUpdatedAt.isEmpty {
+            payload["expected_updated_at"] = expectedUpdatedAt
         }
 
         let body = try JSONSerialization.data(withJSONObject: payload)

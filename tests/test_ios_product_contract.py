@@ -30,7 +30,8 @@ def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
     assert 'Label("Задачи", systemImage: "checkmark.circle")' in root
     assert 'Label("Идеи", systemImage: "lightbulb")' in root
     assert 'Text("Сейчас")' in source
-    assert 'Text("Дальше")' in source
+    assert 'Text("Следующие")' in source
+    assert 'Text("Дальше")' not in source
     assert 'assistant.captureDraft' in source
     assert 'Button("Все задачи")' not in source
 
@@ -356,12 +357,13 @@ def test_slow_calendar_gets_one_fast_followup_instead_of_looking_empty():
 
     assert 'case calendarPending = "calendar_pending"' in models
     assert "@State private var calendarPending = false" in home
-    assert '"Календарь загружается…"' in home
+    # The slow calendar is retried quietly instead of adding a status line.
+    assert "Календарь загружается" not in home
     assert ".now() + 1.5" in home
     assert "didRetryPendingCalendar" in home
     assert 'case calendarPending = "calendar_pending"' in widget
     assert "entry.error != nil || entry.calendarPending" in widget
-    assert 'accessibilityLabel("Календарь загружается")' in widget
+    assert "Календарь загружается" not in widget
 
 
 def test_calendar_failure_is_visible_instead_of_looking_like_a_free_day():
@@ -526,9 +528,7 @@ def test_today_foreground_recovery_does_not_duplicate_root_refresh():
     home = _read("App/ContentView.swift")
 
     assert "if phase == .active" in home
-    assert "detectReturnGap()" in home
     assert "didRetryPendingCalendar = false" in home
-    assert "current - lastOpenedAt >= 36 * 60 * 60" in home
 
     scene_start = home.index(".onChange(of: scenePhase)")
     refresh_start = home.index(".onChange(of: refreshToken)", scene_start)
@@ -542,20 +542,12 @@ def test_today_foreground_recovery_does_not_duplicate_root_refresh():
     assert "ContentView(refreshToken: taskRevision)" in root
 
 
-def test_return_after_a_long_gap_collapses_reentry_to_one_task():
+def test_empty_now_uses_one_plain_copy_instead_of_reentry_variants():
     home = _read("App/ContentView.swift")
 
-    assert '@AppStorage("assistant.lastOpenedAt")' in home
-    assert "36 * 60 * 60" in home
-    assert '"Вернуться к одной задаче"' in home
-    assert "returningAfterBreak = false" in home
-
-
-def test_returning_copy_matches_the_action_instead_of_saying_start_again():
-    home = _read("App/ContentView.swift")
-
-    assert '"Вернуться к одной задаче"' in home
-    assert '"Вернуться: \\(suggestedFocusTask.title)"' in home
+    assert "returningAfterBreak" not in home
+    assert "assistant.lastOpenedAt" not in home
+    assert "Вернуться к одной задаче" not in home
 
 
 def test_not_now_does_not_immediately_recommend_the_same_task_again():
@@ -572,7 +564,7 @@ def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_wo
 
     assert "private var suggestedFocusTask" in home
     assert "deadline < startOfTomorrow" in home
-    assert '"Начать: \\(suggestedFocusTask.title)"' in home
+    assert '"Сделать сейчас: \\(suggestedFocusTask.title)"' in home
     assert 'Button("Выбрать другую")' in home
     assert "client.focusTask(taskID: task.id)" in home
 
@@ -868,3 +860,44 @@ def test_capture_is_loss_resistant():
     assert "CaptureOutbox.enqueue" in content
     assert "flushOutbox()" in content
     assert "UserDefaults.standard" in outbox
+
+
+def test_now_is_one_visible_tap_from_task_lists():
+    tasks = _read("App/AllTasksView.swift")
+    home = _read("App/ContentView.swift")
+
+    row = tasks[tasks.index("private func taskRow"):tasks.index("private func load()")]
+    assert 'Button("Сейчас")' in row
+    assert "await focus(task)" in row
+    assert "if !task.isFocused" in row
+
+    next_row = home[home.index("private func compactTaskRow"):home.index("private func compactEventRow")]
+    assert 'Button("Сейчас")' in next_row
+    assert "await focus(task)" in next_row
+
+
+def test_task_list_is_the_complete_backlog():
+    api = _read("App/APIClient.swift")
+
+    assert "func loadTasks(limit: Int = 500)" in api
+    assert "min(500, limit)" in api
+
+
+def test_ios_edit_sends_server_version_and_explains_conflict():
+    models = _read("App/Models.swift")
+    api = _read("App/APIClient.swift")
+    edit = _read("App/TaskEditView.swift")
+
+    assert 'case updatedAt = "updated_at"' in models
+    assert 'payload["expected_updated_at"] = expectedUpdatedAt' in api
+    assert 'message == "task_conflict"' in api
+    assert "expectedUpdatedAt: task.updatedAt" in edit
+
+
+def test_capture_without_model_reports_inbox_instead_of_vague_saved():
+    models = _read("App/Models.swift")
+    home = _read("App/ContentView.swift")
+
+    assert 'case inboxFallback = "inbox_fallback"' in models
+    assert "response.inboxFallback == true" in home
+    assert 'presentConfirmation("Записано во Входящие")' in home

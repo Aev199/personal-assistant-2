@@ -185,3 +185,44 @@ def test_runtime_bootstrap_is_repeatable_with_task_version_trigger():
             assert await conn.fetchval('SELECT updated_at FROM tasks WHERE id=$1',tid) > before
             assert await conn.fetchval("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('web_sessions','capture_requests')") == 2
     asyncio.run(run())
+
+
+def test_native_capture_without_model_lands_in_inbox_once():
+    async def run():
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from bot.services.native_intake import process_native_capture
+        async with database(runtime=True) as (conn,pool):
+            capture_id=str(uuid4())
+            async def capture():
+                with patch('bot.services.native_intake._load_context',
+                           AsyncMock(return_value=('lead',None,'INBOX',[],[]))):
+                    return await process_native_capture(
+                        text='позвонить в банк', deps=SimpleNamespace(llm=None, tz_name='Europe/Moscow'),
+                        db_pool=pool, chat_id=9, source='ios', capture_id=capture_id)
+            first=await capture()
+            assert first['status'] == 'saved' and first['inbox_fallback'] is True
+            # A retry after a lost response must return the same task.
+            assert await capture() == first
+            rows=await conn.fetch("""SELECT t.title FROM tasks t JOIN projects p ON p.id=t.project_id
+                WHERE p.code='INBOX' AND t.status='todo'""")
+            assert [r['title'] for r in rows] == ['позвонить в банк']
+    asyncio.run(run())
+
+
+def test_native_edit_version_from_list_is_accepted_and_stale_one_rejected():
+    async def run():
+        from bot.http.companion import _iso_version
+        from bot.services.task_browser import update_task, TaskError
+        async with database(runtime=True) as (conn,pool):
+            project=await conn.fetchval("INSERT INTO projects(code,name,status) VALUES('INBOX','Входящие','active') RETURNING id")
+            task_id=await conn.fetchval("INSERT INTO tasks(project_id,title,status,kind) VALUES($1,'черновик','todo','task') RETURNING id",project)
+            version=_iso_version(await conn.fetchval('SELECT updated_at FROM tasks WHERE id=$1',task_id))
+            async with conn.transaction():
+                await update_task(conn,task_id=task_id,changes={'title':'с телефона'},expected_updated_at=version)
+            with pytest.raises(TaskError) as stale:
+                async with conn.transaction():
+                    await update_task(conn,task_id=task_id,changes={'title':'старая копия'},expected_updated_at=version)
+            assert stale.value.code == 'task_conflict'
+            assert await conn.fetchval('SELECT title FROM tasks WHERE id=$1',task_id) == 'с телефона'
+    asyncio.run(run())

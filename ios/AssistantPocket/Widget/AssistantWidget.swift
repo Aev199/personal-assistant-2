@@ -859,7 +859,7 @@ private struct AssistantWidgetView: View {
     @ViewBuilder
     private var nextContent: some View {
         if hasNextContent {
-            Text("Дальше")
+            Text("Следующие")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -924,11 +924,8 @@ private struct AssistantWidgetView: View {
             Text("Сейчас")
                 .font(.headline)
 
-            if entry.calendarPending {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("Календарь загружается")
-            } else if entry.calendarUnavailable {
+            // A slow calendar is refreshed quietly; only a failure is marked.
+            if entry.calendarUnavailable && !entry.calendarPending {
                 Image(systemName: "calendar.badge.exclamationmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -251,6 +251,16 @@ struct AllTasksView: View {
             }
 
             Spacer(minLength: 8)
+
+            // Explicit control: horizontal swipes belong to the work/personal pages.
+            if !task.isFocused {
+                Button("Сейчас") {
+                    Task { await focus(task) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Сделать сейчас: \(task.title)")
+            }
         }
         .padding(.vertical, 4)
     }

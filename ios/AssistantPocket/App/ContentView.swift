@@ -34,16 +34,11 @@ struct ContentView: View {
     @State private var isVoiceSending = false
     @StateObject private var voiceRecorder = VoiceRecorder()
     @State private var editingTask: TodayTask?
-    @State private var showFocusPicker = false
-    @State private var justUnfocusedTaskID: Int?
+    @State private var showPlanPicker = false
     @State private var now = Date()
     @FocusState private var captureFocused: Bool
 
     private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
-
-    private var manualFocusTask: TodayTask? {
-        tasks.first(where: { $0.isFocused })
-    }
 
     private var activeEvent: TodayEvent? {
         events.first { $0.start <= now && $0.end > now }
@@ -57,76 +52,55 @@ struct ContentView: View {
     }
 
     private var upcomingEvent: TodayEvent? {
-        guard manualFocusTask == nil, activeEvent == nil, dueReminder == nil else { return nil }
+        guard activeEvent == nil, dueReminder == nil else { return nil }
         let cutoff = now.addingTimeInterval(15 * 60)
         return events.first { $0.start > now && $0.start <= cutoff && $0.end > now }
     }
 
-    private var focusEvent: TodayEvent? {
-        // An explicit task is the user's literal "Сейчас" and always wins.
-        guard manualFocusTask == nil else { return nil }
-        if let activeEvent { return activeEvent }
-        if let upcomingEvent { return upcomingEvent }
-        return nil
+    /// A meeting in progress or starting soon, or a due reminder, is shown
+    /// above «На сегодня» without changing the plan itself.
+    private var attentionEvent: TodayEvent? {
+        activeEvent ?? upcomingEvent
     }
 
-    private var focusReminder: TodayReminder? {
-        guard manualFocusTask == nil, activeEvent == nil else { return nil }
+    private var attentionReminder: TodayReminder? {
+        guard activeEvent == nil else { return nil }
         return dueReminder
     }
 
-    private var focusTask: TodayTask? {
-        guard focusEvent == nil, focusReminder == nil else { return nil }
-        return manualFocusTask
+    private var planTasks: [TodayTask] {
+        tasks.filter { $0.isInTodayPlan }
     }
 
-    private var suggestedFocusTask: TodayTask? {
-        let startOfTomorrow = Calendar.current.startOfDay(for: now).addingTimeInterval(24 * 60 * 60)
-        return tasks.first { task in
-            guard !task.isFocused else { return false }
-            guard task.id != justUnfocusedTaskID else { return false }
-            guard let deadline = task.deadline else { return true }
-            return task.overdue || deadline < startOfTomorrow
-        }
+    private var suggestedTasks: [TodayTask] {
+        Array(tasks.filter { !$0.isInTodayPlan }.prefix(3))
     }
 
-    private var remainingTasks: [TodayTask] {
-        guard let focusTask else { return tasks }
-        return tasks.filter { $0.id != focusTask.id }
+    private var laterEvents: [TodayEvent] {
+        events.filter { $0.end > now && $0.id != attentionEvent?.id }
     }
 
-    private var remainingReminders: [TodayReminder] {
-        guard let focusReminder else { return reminders }
-        return reminders.filter { $0.id != focusReminder.id }
-    }
-
-    private var remainingEvents: [TodayEvent] {
-        let activeOrFuture = events.filter { $0.end > now }
-        guard let focusEvent else { return activeOrFuture }
-        return activeOrFuture.filter { $0.id != focusEvent.id }
+    private var laterReminders: [TodayReminder] {
+        reminders.filter { $0.id != attentionReminder?.id }
     }
 
     private var nextEvent: TodayEvent? {
-        remainingEvents.first
+        laterEvents.first
     }
 
     private var nextReminder: TodayReminder? {
-        remainingReminders.first
-    }
-
-    private var nextTasks: [TodayTask] {
-        let reservedTimed = (nextEvent == nil ? 0 : 1) + (nextReminder == nil ? 0 : 1)
-        return Array(remainingTasks.prefix(max(0, 4 - reservedTimed)))
+        laterReminders.first
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 26) {
-                    focusSection
+                    attentionSection
+                    planSection
                     dataFreshnessWarning
                     calendarWarning
-                    nextSection
+                    laterSection
                     captureSection
 
                     if let confirmation {
@@ -210,10 +184,12 @@ struct ContentView: View {
                 SettingsView()
                     .environmentObject(settings)
             }
-            .sheet(isPresented: $showFocusPicker) {
-                FocusPickerView(currentTaskID: manualFocusTask?.id) {
+            .sheet(isPresented: $showPlanPicker, onDismiss: {
+                Task { await loadToday() }
+            }) {
+                PlanPickerView {
                     onChanged()
-                    Task { await loadToday() }
+                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
                 }
                 .environmentObject(settings)
             }
@@ -274,27 +250,34 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var focusSection: some View {
+    private var attentionSection: some View {
+        if let event = attentionEvent {
+            eventFocusCard(event)
+        } else if let reminder = attentionReminder {
+            reminderFocusCard(reminder)
+        }
+    }
+
+    @ViewBuilder
+    private var planSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Сейчас")
+                Text("На сегодня")
                     .font(.headline)
 
                 Spacer()
 
-                if focusTask != nil {
-                    Button("Изменить") {
-                        showFocusPicker = true
-                    }
-                    .font(.subheadline.weight(.medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Изменить текущую задачу")
-                }
-
                 if isLoading {
                     ProgressView()
                         .controlSize(.small)
+                }
+
+                if hasLoadedToday {
+                    Button("Добавить") {
+                        showPlanPicker = true
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .accessibilityLabel("Добавить дела на сегодня")
                 }
             }
 
@@ -303,7 +286,7 @@ struct ContentView: View {
                     Label("Не удалось обновить", systemImage: "wifi.exclamationmark")
                         .font(.title3.weight(.semibold))
 
-                    Text("Проверьте соединение или VPN. Ничего не помечаю как свободное, пока данные не загрузились.")
+                    Text("Проверьте соединение или VPN.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
@@ -315,92 +298,97 @@ struct ContentView: View {
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
-            } else if let event = focusEvent {
-                eventFocusCard(event)
-            } else if let reminder = focusReminder {
-                reminderFocusCard(reminder)
-            } else if let task = focusTask {
-                focusTaskCard(task)
-            } else if settings.isConfigured && !isLoading {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(suggestedFocusTask == nil ? "На сейчас ничего нет" : "Ничего не выбрано")
-                        .font(.title3.weight(.semibold))
-
-                    if let suggestedFocusTask {
-                        Button {
-                            Task { await focus(suggestedFocusTask) }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.right.circle.fill")
-                                Text("Сделать сейчас: \(suggestedFocusTask.title)")
-                                    .lineLimit(2)
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityLabel("Сделать сейчас: \(suggestedFocusTask.title)")
-
-                        Button("Выбрать другую") {
-                            showFocusPicker = true
-                        }
-                        .font(.subheadline.weight(.medium))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
             } else if !settings.isConfigured {
                 Button("Подключить Assistant") {
                     showSettings = true
                 }
                 .buttonStyle(.borderedProminent)
+            } else if !planTasks.isEmpty {
+                ForEach(planTasks) { task in
+                    planRow(task)
+                }
+            } else if hasLoadedToday {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Пока ничего не выбрано")
+                        .font(.title3.weight(.semibold))
+
+                    if !suggestedTasks.isEmpty {
+                        Text("Добавьте 2–3 дела:")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        ForEach(suggestedTasks) { task in
+                            suggestionRow(task)
+                        }
+                    }
+                }
             }
         }
     }
 
-    private func focusTaskCard(_ task: TodayTask) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(task.title)
-                        .font(.title3.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
+    private func planRow(_ task: TodayTask) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Button {
+                Task { await complete(task) }
+            } label: {
+                Image(systemName: "circle")
+                    .font(.title3)
+                    .padding(.top, 1)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Выполнено: \(task.title)")
 
-                    taskMeta(task)
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    editingTask = task
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(task.title)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                Spacer(minLength: 8)
-
-                Button {
-                    Task { await complete(task) }
-                } label: {
-                    Image(systemName: "checkmark")
-                        .font(.headline)
-                        .frame(width: 38, height: 38)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Выполнено")
+                taskMeta(task)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                editingTask = task
             }
 
-            HStack(spacing: 14) {
-                Button("Не сейчас") {
-                    Task { await clearFocus(task) }
-                }
-                .font(.subheadline.weight(.medium))
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Убрать задачу из Сейчас")
+            Spacer(minLength: 0)
+
+            Button {
+                Task { await setPlanned(task, false) }
+            } label: {
+                Image(systemName: "minus.circle")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Убрать из «На сегодня»: \(task.title)")
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.vertical, 5)
+    }
+
+    private func suggestionRow(_ task: TodayTask) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(task.title)
+                    .font(.body)
+                    .lineLimit(2)
+
+                taskMeta(task)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                editingTask = task
+            }
+
+            Spacer(minLength: 0)
+
+            Button("На сегодня") {
+                Task { await setPlanned(task, true) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityLabel("Добавить на сегодня: \(task.title)")
+        }
+        .padding(.vertical, 5)
     }
 
     private func eventFocusCard(_ event: TodayEvent) -> some View {
@@ -415,13 +403,6 @@ struct ContentView: View {
                 Text(event.start, format: .dateTime.hour().minute())
                     + Text("–")
                     + Text(event.end, format: .dateTime.hour().minute())
-
-                if let paused = manualFocusTask {
-                    Text("После встречи: \(paused.title)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
             }
             .font(.subheadline)
 
@@ -482,17 +463,13 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var nextSection: some View {
-        if !nextTasks.isEmpty || nextEvent != nil || nextReminder != nil {
+    private var laterSection: some View {
+        if nextEvent != nil || nextReminder != nil {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Следующие")
+                Text("Позже сегодня")
                     .font(.headline)
 
                 nextTimedRows
-
-                ForEach(nextTasks) { task in
-                    compactTaskRow(task)
-                }
             }
         }
     }
@@ -515,44 +492,6 @@ struct ContentView: View {
                 compactReminderRow(reminder)
             }
         }
-    }
-
-    private func compactTaskRow(_ task: TodayTask) -> some View {
-        HStack(alignment: .top, spacing: 11) {
-            Button {
-                Task { await complete(task) }
-            } label: {
-                Image(systemName: "circle")
-                    .font(.title3)
-                    .padding(.top, 1)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Выполнено")
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.body)
-                    .lineLimit(2)
-
-                taskMeta(task)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                editingTask = task
-            }
-
-            Spacer(minLength: 0)
-
-            if !task.isFocused {
-                Button("Сейчас") {
-                    Task { await focus(task) }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel("Сделать сейчас: \(task.title)")
-            }
-        }
-        .padding(.vertical, 5)
     }
 
     private func compactEventRow(_ event: TodayEvent) -> some View {
@@ -661,10 +600,6 @@ struct ContentView: View {
                 Text(task.assignee)
             }
 
-            if task.isFocused, let focusedSince = task.focusedSince {
-                Text("с")
-                Text(focusedSince, format: .dateTime.hour().minute())
-            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -1399,27 +1334,15 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func focus(_ task: TodayTask) async {
+    private func setPlanned(_ task: TodayTask, _ planned: Bool) async {
         errorMessage = nil
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.focusTask(taskID: task.id)
-            justUnfocusedTaskID = nil
-            onChanged()
-            await loadToday()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func clearFocus(_ task: TodayTask) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.clearFocus(taskID: task.id)
-            justUnfocusedTaskID = task.id
+            if planned {
+                _ = try await client.planTask(taskID: task.id)
+            } else {
+                _ = try await client.unplanTask(taskID: task.id)
+            }
             onChanged()
             await loadToday()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")

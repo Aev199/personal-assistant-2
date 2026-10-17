@@ -17,8 +17,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import bot.services.product_mode as product_mode
 from bot.services.onboarding_state import load_onboarding_status
 from bot.tz import resolve_tz_name
+from bot.ui.day_plan import ui_render_day_plan
 from bot.ui.render import ui_render
-from bot.utils import h
 
 
 _installed = False
@@ -46,10 +46,12 @@ def _habit_policy(
     inbox_threshold = max(1, _env_int("ASSISTANT_EVENING_INBOX_THRESHOLD", 3))
 
     ready = bool(onboarding_completed or int(active_internal or 0) >= min_items)
+    # «Что сегодня?» is useful whenever there is anything to choose from.
     actionable_morning = (
         int(snapshot.get("today") or 0)
         + int(snapshot.get("overdue") or 0)
         + int(snapshot.get("reminders") or 0)
+        + int(snapshot.get("active") or 0)
     ) > 0
     morning_allowed = ready and actionable_morning and (not weekend or weekend_enabled)
     evening_allowed = (
@@ -73,31 +75,6 @@ def _habit_policy(
         "evening_allowed": evening_allowed,
         "reason": reason,
     }
-
-
-def _focus_line(focus: dict[str, Any] | None, tz: ZoneInfo) -> str | None:
-    if not focus:
-        return None
-    title = str(focus.get("title") or "").strip()
-    if not title:
-        return None
-    project = str(focus.get("code") or "").strip()
-    if project.upper() == "INBOX":
-        project = ""
-    deadline = focus.get("deadline")
-    when = ""
-    if deadline is not None:
-        try:
-            if getattr(deadline, "tzinfo", None) is None:
-                from datetime import timezone
-
-                deadline = deadline.replace(tzinfo=timezone.utc)
-            when = deadline.astimezone(tz).strftime("%H:%M")
-        except Exception:
-            when = ""
-    meta = " · ".join(value for value in (project, when) if value)
-    suffix = f" · {h(meta)}" if meta else ""
-    return f"🎯 {h(title)}{suffix}"
 
 
 async def _replace_spa_anchor(
@@ -139,8 +116,8 @@ async def maybe_send_habit_messages_spa(
     resolved_tz_name = resolve_tz_name(tz_name)
     tz = ZoneInfo(resolved_tz_name)
     now_local = datetime.now(tz)
-    morning_hour = product_mode._env_hour("ASSISTANT_MORNING_BRIEF_HOUR", 8)
-    evening_hour = product_mode._env_hour("ASSISTANT_EVENING_NUDGE_HOUR", 19)
+    morning_hour = product_mode._env_hour("ASSISTANT_MORNING_BRIEF_HOUR", 10)
+    evening_hour = product_mode._env_hour("ASSISTANT_EVENING_NUDGE_HOUR", 17)
     if evening_hour <= morning_hour:
         evening_hour = min(23, morning_hour + 8)
 
@@ -177,30 +154,18 @@ async def maybe_send_habit_messages_spa(
         morning_hour=morning_hour,
         evening_hour=evening_hour,
     ):
-        lines = [
-            "☀️ <b>Сегодня</b>",
-            f"Дел на сегодня: <b>{snapshot['today']}</b> · напоминаний: <b>{snapshot['reminders']}</b>",
-        ]
-        if int(snapshot.get("overdue") or 0):
-            lines.append(f"Просрочено: <b>{snapshot['overdue']}</b>")
-        focus_line = _focus_line(snapshot.get("focus"), tz)
-        if focus_line:
-            lines.extend(["", focus_line])
-
-        await _replace_spa_anchor(
-            pool,
+        # «Что сегодня?»: one tap per task adds it to the shared today list,
+        # which the widget, the app and the web interface show immediately.
+        message_id = await ui_render_day_plan(
             bot=bot,
+            db_pool=pool,
             chat_id=int(chat_id),
-            text="\n".join(lines),
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text="Сегодня", callback_data="nav:today"),
-                        InlineKeyboardButton(text="Дела", callback_data="nav:home"),
-                    ]
-                ]
-            ),
+            tz_name=resolved_tz_name,
+            greeting=True,
+            force_new=True,
         )
+        if message_id <= 0:
+            raise RuntimeError("failed to send the morning plan message")
         async with pool.acquire() as conn:
             await product_mode._mark_habit_sent(
                 conn,

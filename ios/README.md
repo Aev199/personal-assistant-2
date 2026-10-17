@@ -15,11 +15,11 @@ The same Task/Reminder data is used by every client. Calendar events are supplie
 
 The main screen remains deliberately small:
 
-1. **Сейчас** — one attention task or reminder.
-2. **Следующие** — a short continuation, not the whole backlog. Each task row has a visible **Сейчас** button.
+1. **На сегодня** — the shared list of today's tasks (planned for today, or due today and not removed). A meeting now or a due reminder is shown above it.
+2. **Позже сегодня** — the next meeting and reminder.
 3. **Запомнить** — fast capture.
 
-The bottom tabs are **Сегодня**, **Задачи**, **Идеи**. **Задачи** loads the complete active backlog (up to 500 tasks) and every row has explicit **Выполнено** and **Сейчас** controls.
+The bottom tabs are **Сегодня**, **Задачи**, **Идеи**. **Задачи** loads the complete active backlog (up to 500 tasks) and every row has explicit **Выполнено** and **На сегодня** controls.
 
 The standard bottom tab bar contains **Сегодня**, **Задачи**, and **Идеи**. Tasks provides the complete active backlog with work/personal scopes and local search. Ideas stay outside the attention queue until explicitly promoted to a task.
 
@@ -37,6 +37,7 @@ Canonical native-client routes:
 - POST /api/v1/capture with a JSON text field
 - POST /api/v1/intake/audio with multipart AAC/M4A voice data
 - POST /api/v1/tasks/{id}/done
+- POST /api/v1/tasks/{id}/plan and /unplan — add to or remove from «На сегодня»; tasks carry `today_plan`
 - PATCH /api/v1/tasks/{id} with `expected_updated_at`; a change made meanwhile from the web or Telegram returns 409 `task_conflict` instead of being overwritten
 
 Legacy /api/v1/companion/... routes remain as compatibility aliases. Current iOS builds try the canonical route first and fall back to legacy routes where possible, so the app can survive a rolling backend upgrade.
@@ -57,7 +58,7 @@ The app writes the server URL and token to a dedicated Keychain service using th
 
 ## System quick capture
 
-On iOS 18+, **Быстрый ввод** is exposed as a Control for Control Center, Lock Screen and Action Button, and as an App Shortcut. It opens Assistant directly into the capture field.
+On iOS 18+, **Быстрый ввод** is exposed as a Control for Control Center, Lock Screen and Action Button, and as an App Shortcut. It opens Assistant directly into the capture field. **Голосовая запись** is a second Control and App Shortcut that opens Assistant and starts recording immediately.
 
 ## First run
 
@@ -65,7 +66,8 @@ On iOS 18+, **Быстрый ввод** is exposed as a Control for Control Cent
 2. Open Assistant.
 3. Enter the HTTPS base URL and full API token once.
 4. Tap **Готово**; the app syncs configuration to the widget automatically.
-5. Add **Assistant — Сейчас** to the Home Screen.
+5. Add **Assistant — На сегодня** to the Home Screen.
+6. Optional: assign **Голосовая запись** to the Action Button or the Lock Screen; one press starts recording.
 
 No separate widget token entry is required.
 

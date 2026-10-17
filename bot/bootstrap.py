@@ -83,6 +83,8 @@ def build_core(
     dp.callback_query.middleware.register(fsm_persistence)
     from bot.handlers.captures import register as register_captures
     register_captures(dp)
+    from bot.handlers.day_plan import register as register_day_plan
+    register_day_plan(dp)
     register_nav(dp)
     register_projects(dp)
     register_tasks(dp)

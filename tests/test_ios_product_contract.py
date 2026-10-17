@@ -17,11 +17,12 @@ def test_ios_product_docs_match_current_tabs_voice_and_attention_semantics():
     assert "No tab bar" not in readme
     assert "on-device SpeechAnalyzer transcription first" in readme
     assert "transcribed on-device with SpeechAnalyzer" in product
-    assert "A reminder takes **Сейчас** only when it is due" in product
-    assert "explicit task remains remembered underneath" in product
+    assert "A reminder takes attention only when it is due" in product
+    assert "There is no single-task focus mode" in product
+    assert "«На сегодня» is one list shared by Telegram" in product
 
 
-def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
+def test_ios_uses_three_stable_native_tabs_while_today_shows_one_plan():
     root = _read("App/AppRootView.swift")
     source = _read("App/ContentView.swift")
 
@@ -29,8 +30,9 @@ def test_ios_uses_three_stable_native_tabs_while_today_stays_attention_first():
     assert 'Label("Сегодня", systemImage: "house")' in root
     assert 'Label("Задачи", systemImage: "checkmark.circle")' in root
     assert 'Label("Идеи", systemImage: "lightbulb")' in root
-    assert 'Text("Сейчас")' in source
-    assert 'Text("Следующие")' in source
+    assert 'Text("На сегодня")' in source
+    assert 'Text("Позже сегодня")' in source
+    assert 'Text("Сейчас")' not in source
     assert 'Text("Дальше")' not in source
     assert 'assistant.captureDraft' in source
     assert 'Button("Все задачи")' not in source
@@ -50,8 +52,7 @@ def test_widget_mutations_use_a_non_reentrant_gate_to_avoid_cache_races():
 
     for intent in (
         "MarkTaskDoneIntent",
-        "FocusTaskIntent",
-        "ClearFocusTaskIntent",
+        "PlanTaskIntent",
         "DismissCalendarEventIntent",
         "AcknowledgeReminderIntent",
         "SnoozeReminderIntent",
@@ -61,12 +62,13 @@ def test_widget_mutations_use_a_non_reentrant_gate_to_avoid_cache_races():
         assert "WidgetMutationCoordinator.shared.run" in block
 
 
-def test_widget_clear_focus_updates_cached_state_optimistically_and_rolls_back():
+def test_widget_plan_updates_cached_state_optimistically_and_rolls_back():
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "static func cacheWithoutFocus(_ taskID: Int)" in widget
-    block = widget[widget.index("struct ClearFocusTaskIntent"):]
-    assert "WidgetCodec.cacheWithoutFocus(taskID)" in block
+    assert "static func cachePlannedTask(_ taskID: Int)" in widget
+    block = widget[widget.index("struct PlanTaskIntent"):]
+    assert "WidgetCodec.cachePlannedTask(taskID)" in block
+    assert "WidgetNetwork.planTask(taskID: taskID)" in block
     assert "WidgetSharedSettings.writeCachedTodayData(originalCache)" in block
     assert "WidgetSharedSettings.clearCachedTodayData()" in block
 
@@ -81,15 +83,17 @@ def test_app_refreshes_primary_data_when_returning_to_foreground():
     assert 'WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")' in root
 
 
-def test_explicit_now_always_wins_over_calendar_attention_in_app():
+def test_meeting_and_due_reminder_sit_above_the_plan_without_changing_it():
     home = _read("App/ContentView.swift")
+    widget = _read("Widget/AssistantWidget.swift")
 
-    focus_event = home[home.index("private var focusEvent:"):home.index("private var focusReminder:")]
-    focus_reminder = home[home.index("private var focusReminder:"):home.index("private var focusTask:")]
-
-    assert 'guard manualFocusTask == nil else { return nil }' in focus_event
-    assert 'guard manualFocusTask == nil, activeEvent == nil else { return nil }' in focus_reminder
-    assert 'Text("↩︎ вернуться")' not in home
+    for source in (home, widget):
+        assert "private var attentionEvent" in source
+        assert "activeEvent ?? upcomingEvent" in source
+        assert "guard activeEvent == nil else { return nil }" in source
+        assert "manualFocusTask" not in source
+    body = home[home.index("var body: some View"):]
+    assert body.index("attentionSection") < body.index("planSection") < body.index("laterSection")
 
 
 def test_ios_does_not_embed_model_or_classifier_logic():
@@ -334,10 +338,8 @@ def test_due_reminders_take_attention_only_when_due_without_growing_today():
     assert "return at <= now" in home
     assert "private var dueReminder" in widget
     assert "return at <= entry.date" in widget
-    assert "focusReminder" in home
-    assert "focusReminder" in widget
-    assert "reservedTimed" in home
-    assert "4 - reservedTimed" in home
+    assert "attentionReminder" in home
+    assert "attentionReminder" in widget
 
 
 def test_timed_items_in_next_are_ordered_by_clock_time_in_app_and_widget():
@@ -378,17 +380,22 @@ def test_calendar_failure_is_visible_instead_of_looking_like_a_free_day():
     assert 'accessibilityLabel("Календарь не обновился")' in widget
 
 
-def test_widget_explicit_focus_has_same_priority_and_clear_action_as_app():
+def test_widget_shows_the_same_today_plan_as_the_app():
     widget = _read("Widget/AssistantWidget.swift")
+    home = _read("App/ContentView.swift")
+    models = _read("App/Models.swift")
 
-    assert "static func clearFocus(taskID: Int) async throws" in widget
-    assert "struct ClearFocusTaskIntent: AppIntent" in widget
-    assert "guard manualFocusTask == nil else { return nil }" in widget
-    assert 'Text("Не сейчас")' in widget
-    assert 'Text("вернуться")' not in widget
+    assert 'case todayPlan = "today_plan"' in widget
+    assert 'case todayPlan = "today_plan"' in models
+    assert "entry.tasks.filter(\\.isInTodayPlan)" in widget
+    assert "tasks.filter { $0.isInTodayPlan }" in home
+    assert 'Text("На сегодня")' in widget
+    assert "MarkTaskDoneIntent(taskID: task.id)" in widget
+    for gone in ("FocusTaskIntent", "ClearFocusTaskIntent", 'Text("Не сейчас")', "Assistant — Сейчас"):
+        assert gone not in widget
 
 
-def test_calendar_context_interrupts_without_losing_explicit_focus():
+def test_calendar_context_interrupts_without_touching_the_plan():
     home = _read("App/ContentView.swift")
     models = _read("App/Models.swift")
     widget = _read("Widget/AssistantWidget.swift")
@@ -398,23 +405,24 @@ def test_calendar_context_interrupts_without_losing_explicit_focus():
     assert "activeEvent" in home
     assert "upcomingEvent" in home
     assert "eventFocusCard" in home
-    assert 'Text("После встречи: \\(paused.title)")' in home
+    assert "paused" not in home
     assert ".onReceive(clock)" in home
     assert "WidgetEvent" in widget
     assert "focusEventView" in widget
-    assert 'Text("После: \\(paused.title)")' in widget
+    assert "paused" not in widget
     assert "event.start.addingTimeInterval(-15 * 60)" in widget
     assert "event.end.addingTimeInterval(5)" in widget
-    assert "private var nextContent" in widget
+    assert "private var nextTimedContent" in widget
 
 
-def test_today_keeps_local_focus_action_and_tasks_page_between_work_personal():
+def test_today_plan_can_be_changed_and_tasks_page_stays_between_work_personal():
     root = _read("App/AppRootView.swift")
     home = _read("App/ContentView.swift")
     tasks = _read("App/AllTasksView.swift")
     deadline = _read("Shared/TaskDeadlineFormatting.swift")
 
-    assert 'Button("Изменить")' in home
+    assert 'Button("Добавить")' in home
+    assert "PlanPickerView" in home
     assert 'Button("Все задачи")' not in home
     assert "showAllTasks" not in home
     assert "dx < -90" not in home
@@ -425,7 +433,7 @@ def test_today_keeps_local_focus_action_and_tasks_page_between_work_personal():
     assert ".tabViewStyle(.page(indexDisplayMode: .never))" in tasks
     assert ".swipeActions(" not in tasks
     assert ".contextMenu" in tasks
-    assert 'Label("Сейчас", systemImage: "scope")' in tasks
+    assert 'Label("На сегодня", systemImage: "sun.max")' in tasks
     assert 'Label("Готово", systemImage: "checkmark")' in tasks
     assert 'Image(systemName: "play.fill")' not in tasks
     assert "taskDeadlineText(deadline)" in home
@@ -476,12 +484,12 @@ def test_voice_and_pending_action_failures_use_immediate_alert_surface():
 
 def test_action_failures_are_visible_on_attention_surfaces():
     home = _read("App/ContentView.swift")
-    focus_picker = _read("App/FocusPickerView.swift")
+    picker = _read("App/PlanPickerView.swift")
 
     assert 'alert("Не удалось выполнить действие"' in home
     assert "presentActionError(error)" in home
-    assert 'alert("Не удалось изменить «Сейчас»"' in focus_picker
-    assert "errorMessage != nil && !tasks.isEmpty" in focus_picker
+    assert 'alert("Не удалось изменить план"' in picker
+    assert "errorMessage != nil && !tasks.isEmpty" in picker
 
 
 def test_due_reminder_can_be_acknowledged_in_app_or_widget_to_stop_future_delivery():
@@ -497,29 +505,29 @@ def test_due_reminder_can_be_acknowledged_in_app_or_widget_to_stop_future_delive
     assert 'accessibilityLabel("Закрыть напоминание")' in widget
 
 
-def test_now_can_be_changed_and_reminders_can_be_snoozed():
+def test_plan_can_be_changed_and_reminders_can_be_snoozed():
     home = _read("App/ContentView.swift")
-    focus_picker = _read("App/FocusPickerView.swift")
+    picker = _read("App/PlanPickerView.swift")
     api = _read("App/APIClient.swift")
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "FocusPickerView" in home
-    assert "manualFocusTask" in home
-    assert "tasks.prefix(5)" not in home
-    assert 'navigationTitle("Что сейчас?")' in focus_picker
-    assert "client.loadTasks()" in focus_picker
-    assert ".searchable(" in focus_picker
-    assert "focusTask(taskID: task.id)" in focus_picker
-    assert "clearFocus(taskID: task.id)" in home
-    assert "clearFocus(taskID: taskID)" in focus_picker
-    assert "/api/v1/tasks/\(taskID)/unfocus" in api
+    assert 'navigationTitle("На сегодня")' in picker
+    assert "client.loadTasks()" in picker
+    assert ".searchable(" in picker
+    assert "client.planTask(taskID: task.id)" in picker
+    assert "client.unplanTask(taskID: task.id)" in picker
+    # Rows keep their place while toggling.
+    assert "initiallyPlannedIDs" in picker
+    assert "setPlanned(task, false)" in home
+    assert "setPlanned(task, true)" in home
+    assert "/api/v1/tasks/\\(taskID)/plan" in api
+    assert "/api/v1/tasks/\\(taskID)/unplan" in api
+    assert "/focus" not in api
     assert "snoozeReminder(reminderID: reminder.id, minutes: 15)" in home
     assert "/api/v1/reminders/\\(reminderID)/snooze" in api
 
     assert "SnoozeReminderIntent" in widget
     assert "cacheWithoutReminder" in widget
-    assert "manualFocusTask" in widget
-    assert "focused == true" in widget
     assert 'Text("+15")' in widget
 
 
@@ -550,23 +558,16 @@ def test_empty_now_uses_one_plain_copy_instead_of_reentry_variants():
     assert "Вернуться к одной задаче" not in home
 
 
-def test_not_now_does_not_immediately_recommend_the_same_task_again():
+def test_empty_plan_offers_a_few_one_tap_suggestions():
     home = _read("App/ContentView.swift")
+    widget = _read("Widget/AssistantWidget.swift")
 
-    assert "@State private var justUnfocusedTaskID" in home
-    assert "task.id != justUnfocusedTaskID" in home
-    assert "justUnfocusedTaskID = task.id" in home
-    assert "justUnfocusedTaskID = nil" in home
-
-
-def test_empty_now_offers_one_low_friction_start_without_auto_focusing_future_work():
-    home = _read("App/ContentView.swift")
-
-    assert "private var suggestedFocusTask" in home
-    assert "deadline < startOfTomorrow" in home
-    assert '"Сделать сейчас: \\(suggestedFocusTask.title)"' in home
-    assert 'Button("Выбрать другую")' in home
-    assert "client.focusTask(taskID: task.id)" in home
+    assert "private var suggestedTasks" in home
+    assert ".prefix(3)" in home
+    assert '"Пока ничего не выбрано"' in home
+    assert 'Button("На сегодня")' in home
+    assert "PlanTaskIntent(taskID: task.id)" in widget
+    assert 'Text("Ничего не выбрано")' in widget
 
 
 def test_today_surface_has_no_llm_start_help_hints():
@@ -575,40 +576,6 @@ def test_today_surface_has_no_llm_start_help_hints():
     assert 'Button("Первый шаг")' not in home
     assert "startHelp" not in home
     assert "taskStartHelp" not in home
-
-
-def test_explicit_focus_exposes_when_it_started_without_adding_a_timer_mode():
-    models = _read("App/Models.swift")
-    home = _read("App/ContentView.swift")
-    widget = _read("Widget/AssistantWidget.swift")
-
-    assert 'case focusedSince = "focused_since"' in models
-    assert "task.focusedSince" in home
-    assert 'Text("с")' in home
-    assert 'case focusedSince = "focused_since"' in widget
-    assert "task.focusedSince" in widget
-    assert "focusedSince = Date()" in widget
-
-
-def test_now_requires_explicit_focus_instead_of_promoting_first_task_implicitly():
-    home = _read("App/ContentView.swift")
-    widget = _read("Widget/AssistantWidget.swift")
-
-    assert "return focusEvent == nil && focusReminder == nil ? tasks.first : nil" not in home
-    assert "return focusEvent == nil && focusReminder == nil ? entry.tasks.first : nil" not in widget
-    assert '"Ничего не выбрано"' in home
-    assert '"На сейчас ничего нет"' in home
-    assert 'Text("Ничего не выбрано")' in widget
-
-
-def test_widget_can_promote_visible_next_task_to_now():
-    widget = _read("Widget/AssistantWidget.swift")
-
-    assert "FocusTaskIntent" in widget
-    assert "WidgetNetwork.focusTask" in widget
-    assert "cacheFocusedTask" in widget
-    assert 'Text("Сейчас")' in widget
-    assert 'accessibilityLabel("Сейчас")' in widget
 
 
 def test_reminder_delivery_and_widget_state_do_not_compete():
@@ -862,18 +829,27 @@ def test_capture_is_loss_resistant():
     assert "UserDefaults.standard" in outbox
 
 
-def test_now_is_one_visible_tap_from_task_lists():
+def test_today_plan_is_one_visible_tap_from_task_lists():
     tasks = _read("App/AllTasksView.swift")
-    home = _read("App/ContentView.swift")
 
     row = tasks[tasks.index("private func taskRow"):tasks.index("private func load()")]
-    assert 'Button("Сейчас")' in row
-    assert "await focus(task)" in row
-    assert "if !task.isFocused" in row
+    assert 'Button("На сегодня")' in row
+    assert 'Button("Сегодня ✓")' in row
+    assert "await setPlanned(task, true)" in row
+    assert "await setPlanned(task, false)" in row
 
-    next_row = home[home.index("private func compactTaskRow"):home.index("private func compactEventRow")]
-    assert 'Button("Сейчас")' in next_row
-    assert "await focus(task)" in next_row
+
+def test_voice_capture_is_one_press_from_action_button_and_lock_screen():
+    intents = _read("Shared/CaptureIntents.swift")
+    widget = _read("Widget/AssistantWidget.swift")
+    shortcuts = _read("App/AssistantAppShortcuts.swift")
+
+    assert "struct OpenAssistantVoiceCaptureIntent: OpenIntent" in intents
+    assert "CaptureLaunchSignal.request(mode: .voice)" in intents
+    assert "struct AssistantVoiceCaptureControl: ControlWidget" in widget
+    assert "ControlWidgetButton(action: OpenAssistantVoiceCaptureIntent())" in widget
+    assert "AssistantVoiceCaptureControl()" in widget
+    assert "OpenAssistantVoiceCaptureIntent()" in shortcuts
 
 
 def test_task_list_is_the_complete_backlog():

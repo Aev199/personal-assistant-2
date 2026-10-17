@@ -226,3 +226,60 @@ def test_native_edit_version_from_list_is_accepted_and_stale_one_rejected():
             assert stale.value.code == 'task_conflict'
             assert await conn.fetchval('SELECT title FROM tasks WHERE id=$1',task_id) == 'с телефона'
     asyncio.run(run())
+
+
+def test_today_plan_is_shared_and_removable_for_due_tasks():
+    async def run():
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+        from bot.services.day_plan import set_planned, load_plan, load_candidates, local_today, DayPlanError
+        from bot.services.task_browser import list_tasks
+        async with database(runtime=True) as (conn,pool):
+            tz='Europe/Moscow'; today=local_today(tz)
+            project=await conn.fetchval("INSERT INTO projects(code,name,status) VALUES('INBOX','Входящие','active') RETURNING id")
+            add=lambda title,deadline=None: conn.fetchval("INSERT INTO tasks(project_id,title,status,kind,deadline) VALUES($1,$2,'todo','task',$3) RETURNING id",project,title,deadline)
+            now_naive=datetime.now(timezone.utc).replace(tzinfo=None)
+            chosen=await add('выбрано'); due=await add('срок сегодня',datetime.combine(today,datetime.min.time().replace(hour=12),ZoneInfo(tz)).astimezone(timezone.utc).replace(tzinfo=None))
+            overdue=await add('просрочено',now_naive-timedelta(days=3)); plain=await add('без срока')
+            async with conn.transaction():
+                await set_planned(conn,task_id=chosen,planned=True,today=today)
+            plan=[r['id'] for r in await load_plan(conn,tz_name=tz,today=today)]
+            assert set(plan)=={chosen,due}
+            candidates=[r['id'] for r in await load_candidates(conn,tz_name=tz,today=today)]
+            assert candidates[0]==overdue and plain in candidates and chosen not in candidates
+            # Removing a due-today task keeps it removed for today only.
+            async with conn.transaction():
+                await set_planned(conn,task_id=due,planned=False,today=today)
+            assert [r['id'] for r in await load_plan(conn,tz_name=tz,today=today)]==[chosen]
+            listed={t['id']:t for t in (await list_tasks(conn,scope='all',inbox=False,limit=10,cursor=None,tz_name=tz))['tasks']}
+            assert listed[chosen]['today_plan'] and listed[chosen]['planned']
+            assert not listed[due]['today_plan']
+            await conn.execute("UPDATE tasks SET status='done' WHERE id=$1",plain)
+            with pytest.raises(DayPlanError):
+                async with conn.transaction():
+                    await set_planned(conn,task_id=plain,planned=True,today=today)
+    asyncio.run(run())
+
+
+def test_today_and_backlog_endpoints_mark_today_plan():
+    async def run():
+        import json
+        from types import SimpleNamespace
+        from bot.http import companion
+        from bot.services.day_plan import set_planned, local_today
+        async with database(runtime=True) as (conn,pool):
+            os.environ['ASSISTANT_API_TOKEN']='app'
+            project=await conn.fetchval("INSERT INTO projects(code,name,status) VALUES('INBOX','Входящие','active') RETURNING id")
+            ids=[await conn.fetchval("INSERT INTO tasks(project_id,title,status,kind) VALUES($1,$2,'todo','task') RETURNING id",project,f'дело {i}') for i in range(8)]
+            async with conn.transaction():
+                await set_planned(conn,task_id=ids[-1],planned=True,today=local_today('Europe/Moscow'))
+            class Request:
+                headers={'Authorization':'Bearer app'}; cookies={}; query={'limit':'500'}
+            ctx=SimpleNamespace(deps=SimpleNamespace(db_pool=pool,tz_name='Europe/Moscow',admin_id=9,icloud=None))
+            today=json.loads((await companion.handle_today(Request(),ctx)).body)
+            assert today['tasks'][0]['id']==ids[-1] and today['tasks'][0]['today_plan'] and today['tasks'][0]['planned']
+            assert sum(t['today_plan'] for t in today['tasks'])==1
+            backlog=json.loads((await companion.handle_tasks(Request(),ctx)).body)
+            assert len(backlog['tasks'])==8
+            assert [t['id'] for t in backlog['tasks'] if t['today_plan']]==[ids[-1]]
+    asyncio.run(run())

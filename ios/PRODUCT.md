@@ -6,9 +6,11 @@ The iPhone client is an attention aid, not a smaller project-management system.
 
 The Home Screen widget and **Сегодня** answer only three questions:
 
-1. **Сейчас** — what deserves attention now?
-2. **Следующие** — what is next, in a deliberately short list?
+1. **На сегодня** — which 3–5 tasks did I choose for today? Tasks due today are on the list automatically and can be removed from it.
+2. **Позже сегодня** — which meeting or reminder comes next?
 3. **Запомнить** — how do I get a thought out of my head immediately?
+
+«На сегодня» is one list shared by Telegram, the web interface, the app and the widget. It is chosen by tapping, mostly from the 10:00 weekday Telegram message «Что сегодня?». Nothing is dropped overnight: an unfinished task simply returns to the backlog the next day.
 
 The app has three stable top-level destinations: **Сегодня**, **Задачи**, and **Идеи**. Ideas never enter the attention queue until promoted. Projects are context, not top-level navigation.
 
@@ -18,13 +20,14 @@ The app has three stable top-level destinations: **Сегодня**, **Зада�
 - Capture must not depend on the model: without a timely model answer the text becomes a visible Inbox task.
 - Voice capture is a first-class capture path, not a separate feature: audio is persisted first, transcribed on-device with SpeechAnalyzer when available, and only the transcript is sent to the normal backend/Gemini intake path. Server audio transcription is the fallback. Recorded audio stays available until the handoff is acknowledged.
 - An unfinished capture must survive relaunch.
-- There is one explicit task focus. Choosing a new task focus must not require reorganizing the backlog. A due reminder or active meeting may temporarily occupy **Сейчас**, but the explicit task remains remembered underneath and can resume afterwards.
-- A reminder takes **Сейчас** only when it is due. Upcoming reminders remain time anchors in **Следующие** instead of interrupting work early.
+- There is no single-task focus mode. A due reminder or a meeting in progress (or starting within 15 minutes) is shown above **На сегодня** and never changes the plan itself.
+- A reminder takes attention only when it is due. Upcoming reminders remain time anchors in **Позже сегодня** instead of interrupting work early.
 - A due reminder has one default escape hatch: **+15 мин**. More complex rescheduling stays off the primary surface.
 - Telegram is the reminder delivery channel for now; iOS and the widget are attention/state surfaces. A delivered reminder disappears from native Today on refresh. Native snooze makes the previously delivered Telegram alert inactive instead of leaving two live controls for the same reminder.
-- A meeting already in progress may interrupt **Сейчас** while preserving the paused explicit task for return. An upcoming meeting within 15 minutes can take **Сейчас** only when no explicit task is selected. Calendar context stays compact rather than becoming a full calendar screen.
+- Calendar context stays compact rather than becoming a full calendar screen.
 - Acknowledging a calendar event hides it from attention until the event ends; it never deletes or edits the source calendar event. Both the app and widget use a compact explicit dismiss control; the primary surface does not depend on hidden gestures.
-- **Следующие** stays deliberately short: at most four rows on the main screen.
+- An empty plan offers at most three one-tap suggestions; the full choice is one **Добавить** tap away.
+- Proactive messages are weekday-only by default: **Что сегодня?** at 10:00.
 - Safe capture actions happen without a confirmation ceremony.
 - Ask one concrete follow-up only when required information is genuinely missing.
 - Calendar creation is confirmed because it is an external side effect.
@@ -36,7 +39,7 @@ The app has three stable top-level destinations: **Сегодня**, **Зада�
 - Use the standard iOS bottom tab bar for the three stable destinations: **Сегодня**, **Задачи**, **Идеи**. Do not add more permanent tabs without clear evidence.
 - **Сегодня** contains attention and capture only; it does not duplicate global navigation with a **Все задачи** button or whole-screen navigation swipe.
 - **Задачи** has exactly two visible scopes: **Рабочие** and **Личные**. The segmented control is explicit; horizontal paging is the fast accelerator between them.
-- Horizontal swipes inside **Задачи** belong to scope navigation, so task-row actions must not compete for the same gesture. **Выполнено** and **Сейчас** remain explicit row controls, both in **Задачи** and in **Следующие**.
+- Horizontal swipes inside **Задачи** belong to scope navigation, so task-row actions must not compete for the same gesture. **Выполнено** and **На сегодня** remain explicit row controls.
 - Calendar loading is retried quietly; only an actual calendar failure is shown, so an unknown calendar never looks like a free day.
 - Task deadlines always include day context: today/tomorrow or an explicit calendar date.
 - No chat clone in the native app.
@@ -52,8 +55,8 @@ Free-form input is sent to the backend intake service, which uses the same Gemin
 
 ## Channel roles
 
-- **Widget:** glance, Quick Done, one-tap **Сейчас** for visible next tasks, refresh, text capture and one-tap entry into voice capture.
-- **iOS:** three stable tabs — today/capture, work-personal tasks, and saved ideas — plus local focus/edit actions.
+- **Widget:** glance, Quick Done, the **На сегодня** list, one-tap adding of suggested tasks when the list is empty, refresh, text capture and one-tap entry into voice capture.
+- **iOS:** three stable tabs — today/capture, work-personal tasks, and saved ideas — plus plan and edit actions.
 - **Telegram:** conversational commands, bulk operations and richer interaction while at a PC.
 - **Backend:** canonical state, attention ordering, intake, mutations and integrations.
 

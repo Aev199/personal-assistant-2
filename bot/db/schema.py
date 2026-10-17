@@ -122,6 +122,10 @@ async def ensure_schema(conn: asyncpg.Connection) -> None:
 
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status)")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline)")
+    # «На сегодня» plan: additive columns, existing tasks are untouched.
+    await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS planned_for DATE")
+    await conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS plan_dismissed_for DATE")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_planned_for ON tasks(planned_for)")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status)")
 
     # Best-effort compatibility: migrate TIMESTAMPTZ columns to TIMESTAMP (UTC naive).

@@ -13,6 +13,7 @@ import asyncpg
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter
+from bot.services.day_plan import local_today, today_plan_sql
 from bot.tz import resolve_tz_name, resolve_tzinfo
 from bot.ui.render import ui_render
 from bot.utils import h
@@ -280,6 +281,7 @@ async def ui_render_today(
     toast_line = await legacy._pop_screen_toast(db_pool, chat_id)
     page_size = 10
     page = max(0, int(page or 0))
+    plan_day = local_today(tz_name)
 
     work_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_WORK") or "").strip()
     personal_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_PERSONAL") or "").strip()
@@ -299,11 +301,10 @@ async def ui_render_today(
                     FROM tasks t
                     WHERE t.status NOT IN ('done','postponed')
                       AND t.kind != 'super'
-                      AND t.deadline IS NOT NULL
-                      AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date =
-                          (now() AT TIME ZONE $1)::date
-                    """,
+                      AND {plan}
+                    """.replace("{plan}", today_plan_sql("$2", "$1")),
                     tz_name,
+                    plan_day,
                 )
                 or 0
             )
@@ -318,15 +319,14 @@ async def ui_render_today(
                 LEFT JOIN team tm ON tm.id=t.assignee_id
                 WHERE t.status NOT IN ('done','postponed')
                   AND t.kind != 'super'
-                  AND t.deadline IS NOT NULL
-                  AND (t.deadline AT TIME ZONE 'UTC' AT TIME ZONE $1)::date =
-                      (now() AT TIME ZONE $1)::date
-                ORDER BY t.deadline ASC, t.id ASC
+                  AND {plan}
+                ORDER BY t.deadline ASC NULLS LAST, t.id ASC
                 LIMIT $2 OFFSET $3
-                """,
+                """.replace("{plan}", today_plan_sql("$4", "$1")),
                 tz_name,
                 page_size,
                 page * page_size,
+                plan_day,
             )
             reminders = await conn.fetch(
                 """
@@ -387,7 +387,7 @@ async def ui_render_today(
 
     kb: list[list[InlineKeyboardButton]] = []
     if tasks:
-        lines.extend(["", "<b>Дела</b>"])
+        lines.extend(["", "<b>На сегодня</b>"])
         task_lines, task_buttons = _daily_task_lines_and_buttons(
             tasks,
             tz,
@@ -397,7 +397,7 @@ async def ui_render_today(
         kb.extend(task_buttons)
 
     if not events and not reminders and not tasks:
-        lines.extend(["", "На сегодня ничего обязательного."])
+        lines.extend(["", "На сегодня ничего не выбрано."])
 
     if calendar_block.unavailable:
         lines.extend(["", "<i>Часть календаря сейчас недоступна.</i>"])
@@ -410,6 +410,7 @@ async def ui_render_today(
     if page_row:
         kb.append(page_row)
 
+    kb.append([InlineKeyboardButton(text="＋ Добавить на сегодня", callback_data="plan:pick")])
     kb.append(
         [
             InlineKeyboardButton(text="Дела", callback_data="nav:home"),

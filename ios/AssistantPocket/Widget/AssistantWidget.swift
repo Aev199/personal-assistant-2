@@ -10,20 +10,15 @@ private struct WidgetTask: Codable, Identifiable {
     var status: String?
     let deadline: Date?
     let overdue: Bool
-    var focused: Bool? = nil
-    var focusedSince: Date? = nil
+    var todayPlan: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, title, project, status, deadline, overdue, focused
-        case focusedSince = "focused_since"
+        case id, title, project, status, deadline, overdue
+        case todayPlan = "today_plan"
     }
 
-    var inProgress: Bool {
-        status?.lowercased() == "in_progress"
-    }
-
-    var isFocused: Bool {
-        focused == true
+    var isInTodayPlan: Bool {
+        todayPlan == true
     }
 }
 
@@ -94,34 +89,13 @@ private enum WidgetCodec {
         return encodeToday(today)
     }
 
-    static func cacheWithoutFocus(_ taskID: Int) -> Data? {
+    static func cachePlannedTask(_ taskID: Int) -> Data? {
         guard let data = WidgetSharedSettings.cachedTodayData,
               var today = decodeToday(data) else {
             return nil
         }
         for index in today.tasks.indices where today.tasks[index].id == taskID {
-            today.tasks[index].focused = false
-            today.tasks[index].focusedSince = nil
-        }
-        return encodeToday(today)
-    }
-
-    static func cacheFocusedTask(_ taskID: Int) -> Data? {
-        guard let data = WidgetSharedSettings.cachedTodayData,
-              var today = decodeToday(data) else {
-            return nil
-        }
-        for index in today.tasks.indices {
-            let isTarget = today.tasks[index].id == taskID
-            today.tasks[index].focused = isTarget
-            if isTarget {
-                today.tasks[index].status = "in_progress"
-                if today.tasks[index].focusedSince == nil {
-                    today.tasks[index].focusedSince = Date()
-                }
-            } else {
-                today.tasks[index].focusedSince = nil
-            }
+            today.tasks[index].todayPlan = true
         }
         return encodeToday(today)
     }
@@ -206,21 +180,9 @@ private enum WidgetNetwork {
         }
     }
 
-    static func focusTask(taskID: Int) async throws {
+    static func planTask(taskID: Int) async throws {
         let (_, response) = try await send(
-            path: "/api/v1/tasks/\(taskID)/focus",
-            method: "POST",
-            body: Data("{}".utf8)
-        )
-
-        guard 200..<300 ~= response.statusCode else {
-            throw URLError(.badServerResponse)
-        }
-    }
-
-    static func clearFocus(taskID: Int) async throws {
-        let (_, response) = try await send(
-            path: "/api/v1/tasks/\(taskID)/unfocus",
+            path: "/api/v1/tasks/\(taskID)/plan",
             method: "POST",
             body: Data("{}".utf8)
         )
@@ -367,9 +329,9 @@ struct MarkTaskDoneIntent: AppIntent {
     }
 }
 
-struct FocusTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "Сделать текущей"
-    static var description = IntentDescription("Назначает задачу текущим фокусом Personal Assistant.")
+struct PlanTaskIntent: AppIntent {
+    static var title: LocalizedStringResource = "Добавить на сегодня"
+    static var description = IntentDescription("Добавляет задачу в список «На сегодня».")
     static var openAppWhenRun = false
 
     @Parameter(title: "Task ID")
@@ -386,14 +348,14 @@ struct FocusTaskIntent: AppIntent {
 
                 let originalCache = WidgetSharedSettings.cachedTodayData
 
-                if let optimisticCache = WidgetCodec.cacheFocusedTask(taskID) {
+                if let optimisticCache = WidgetCodec.cachePlannedTask(taskID) {
                     WidgetSharedSettings.writeCachedTodayData(optimisticCache)
                     WidgetSharedSettings.requestCachedTodayOnce()
                     WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
                 }
 
                 do {
-                    try await WidgetNetwork.focusTask(taskID: taskID)
+                    try await WidgetNetwork.planTask(taskID: taskID)
                     WidgetSharedSettings.clearCachedTodayPreference()
                     WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
                     return
@@ -411,52 +373,6 @@ struct FocusTaskIntent: AppIntent {
         return .result()
     }
 }
-
-struct ClearFocusTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "Не сейчас"
-    static var description = IntentDescription("Снимает задачу с текущего фокуса Personal Assistant.")
-    static var openAppWhenRun = false
-
-    @Parameter(title: "Task ID")
-    var taskID: Int
-
-    init() {}
-
-    init(taskID: Int) {
-        self.taskID = taskID
-    }
-
-    func perform() async throws -> some IntentResult {
-        try await WidgetMutationCoordinator.shared.run {
-
-                let originalCache = WidgetSharedSettings.cachedTodayData
-
-                if let optimisticCache = WidgetCodec.cacheWithoutFocus(taskID) {
-                    WidgetSharedSettings.writeCachedTodayData(optimisticCache)
-                    WidgetSharedSettings.requestCachedTodayOnce()
-                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-                }
-
-                do {
-                    try await WidgetNetwork.clearFocus(taskID: taskID)
-                    WidgetSharedSettings.clearCachedTodayPreference()
-                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-                    return
-                } catch {
-                    if let originalCache {
-                        WidgetSharedSettings.writeCachedTodayData(originalCache)
-                    } else {
-                        WidgetSharedSettings.clearCachedTodayData()
-                    }
-                    WidgetSharedSettings.requestCachedTodayOnce()
-                    WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-                    throw error
-                }
-        }
-        return .result()
-    }
-}
-
 
 struct DismissCalendarEventIntent: AppIntent {
     static var title: LocalizedStringResource = "Скрыть встречу"
@@ -624,9 +540,9 @@ private struct AssistantWidgetProvider: TimelineProvider {
         AssistantWidgetEntry(
             date: .now,
             tasks: [
-                WidgetTask(id: 1, title: "Проверить расчёт", project: "БГР", status: "in_progress", deadline: .now, overdue: false),
-                WidgetTask(id: 2, title: "Ответить Иванову", project: "", status: "todo", deadline: nil, overdue: false),
-                WidgetTask(id: 3, title: "Подготовить замечания", project: "", status: "todo", deadline: nil, overdue: false),
+                WidgetTask(id: 1, title: "Проверить расчёт", project: "БГР", status: "in_progress", deadline: .now, overdue: false, todayPlan: true),
+                WidgetTask(id: 2, title: "Ответить Иванову", project: "", status: "todo", deadline: nil, overdue: false, todayPlan: true),
+                WidgetTask(id: 3, title: "Подготовить замечания", project: "", status: "todo", deadline: nil, overdue: false, todayPlan: true),
             ],
             reminders: [],
             events: [],
@@ -782,12 +698,8 @@ private struct AssistantWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: AssistantWidgetEntry
 
-    private var visibleTaskCount: Int {
-        family == .systemLarge ? 5 : 3
-    }
-
-    private var manualFocusTask: WidgetTask? {
-        entry.tasks.first(where: { $0.isFocused })
+    private var rowCapacity: Int {
+        family == .systemLarge ? 7 : 3
     }
 
     private var activeEvent: WidgetEvent? {
@@ -802,117 +714,105 @@ private struct AssistantWidgetView: View {
     }
 
     private var upcomingEvent: WidgetEvent? {
-        guard manualFocusTask == nil, activeEvent == nil, dueReminder == nil else { return nil }
+        guard activeEvent == nil, dueReminder == nil else { return nil }
         let cutoff = entry.date.addingTimeInterval(15 * 60)
         return entry.events.first {
             $0.start > entry.date && $0.start <= cutoff && $0.end > entry.date
         }
     }
 
-    private var focusEvent: WidgetEvent? {
-        // Explicit task focus wins over calendar attention.
-        guard manualFocusTask == nil else { return nil }
-        if let activeEvent { return activeEvent }
-        if let upcomingEvent { return upcomingEvent }
-        return nil
+    /// A meeting now or soon, or a due reminder, sits above «На сегодня».
+    private var attentionEvent: WidgetEvent? {
+        activeEvent ?? upcomingEvent
     }
 
-    private var focusReminder: WidgetReminder? {
+    private var attentionReminder: WidgetReminder? {
         guard activeEvent == nil else { return nil }
         return dueReminder
     }
 
-    private var focusTaskItem: WidgetTask? {
-        guard focusEvent == nil, focusReminder == nil else { return nil }
-        return manualFocusTask
+    private var attentionRows: Int {
+        (attentionEvent != nil || attentionReminder != nil) ? 1 : 0
+    }
+
+    private var planTasks: [WidgetTask] {
+        entry.tasks.filter(\.isInTodayPlan)
+    }
+
+    private var visiblePlanTasks: [WidgetTask] {
+        Array(planTasks.prefix(max(1, rowCapacity - attentionRows)))
+    }
+
+    private var suggestions: [WidgetTask] {
+        guard planTasks.isEmpty else { return [] }
+        let room = max(0, rowCapacity - attentionRows - 1)
+        return Array(entry.tasks.filter { !$0.isInTodayPlan }.prefix(min(2, room)))
     }
 
     private var nextEvent: WidgetEvent? {
         entry.events.first {
-            $0.end > entry.date && $0.id != focusEvent?.id
+            $0.end > entry.date && $0.id != attentionEvent?.id
         }
     }
 
     private var nextReminder: WidgetReminder? {
         entry.reminders.first {
-            $0.id != focusReminder?.id
+            $0.id != attentionReminder?.id
         }
     }
 
-    private var nextTaskLimit: Int {
-        let focusRows = (focusEvent != nil || focusReminder != nil || focusTaskItem != nil) ? 1 : 0
-        let timedRows = (nextEvent == nil ? 0 : 1) + (nextReminder == nil ? 0 : 1)
-        return max(0, visibleTaskCount - focusRows - timedRows)
-    }
-
-    private var nextTasks: [WidgetTask] {
-        entry.tasks
-            .filter { $0.id != focusTaskItem?.id }
-            .prefix(nextTaskLimit)
-            .map { $0 }
-    }
-
-    private var hasNextContent: Bool {
-        nextEvent != nil || nextReminder != nil || !nextTasks.isEmpty
-    }
-
-    @ViewBuilder
-    private var nextContent: some View {
-        if hasNextContent {
-            Text("Следующие")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            nextTimedContent
-
-            ForEach(nextTasks) { task in
-                compactTask(task)
-            }
-        }
+    private var timedRoom: Int {
+        let used = attentionRows + (planTasks.isEmpty ? 1 + suggestions.count : visiblePlanTasks.count)
+        return max(0, rowCapacity - used)
     }
 
     @ViewBuilder
     private var nextTimedContent: some View {
-        if let event = nextEvent, let reminder = nextReminder, let reminderAt = reminder.at {
-            if reminderAt <= event.start {
-                compactReminder(reminder)
+        if timedRoom > 0 {
+            if let event = nextEvent, let reminder = nextReminder, let reminderAt = reminder.at, timedRoom > 1 {
+                if reminderAt <= event.start {
+                    compactReminder(reminder)
+                    compactEvent(event)
+                } else {
+                    compactEvent(event)
+                    compactReminder(reminder)
+                }
+            } else if let event = nextEvent {
                 compactEvent(event)
-            } else {
-                compactEvent(event)
-                compactReminder(reminder)
-            }
-        } else {
-            if let event = nextEvent {
-                compactEvent(event)
-            }
-            if let reminder = nextReminder {
+            } else if let reminder = nextReminder {
                 compactReminder(reminder)
             }
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: family == .systemLarge ? 10 : 7) {
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 9 : 6) {
             header
 
             if let error = entry.error {
                 errorState(error)
-            } else if let event = focusEvent {
-                focusEventView(event)
-                nextContent
-                Spacer(minLength: 0)
-            } else if let reminder = focusReminder {
-                focusReminderView(reminder)
-                nextContent
-                Spacer(minLength: 0)
-            } else if let focus = focusTaskItem {
-                focusTask(focus)
-                nextContent
-                Spacer(minLength: 0)
-            } else if hasNextContent {
-                noFocusState
             } else {
-                emptyState
+                if let event = attentionEvent {
+                    focusEventView(event)
+                } else if let reminder = attentionReminder {
+                    focusReminderView(reminder)
+                }
+
+                if planTasks.isEmpty {
+                    emptyPlanState
+                } else {
+                    ForEach(visiblePlanTasks) { task in
+                        planTask(task)
+                    }
+                    if planTasks.count > visiblePlanTasks.count {
+                        Text("ещё \(planTasks.count - visiblePlanTasks.count)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                nextTimedContent
+                Spacer(minLength: 0)
             }
         }
         .padding(12)
@@ -921,7 +821,7 @@ private struct AssistantWidgetView: View {
 
     private var header: some View {
         HStack(spacing: 9) {
-            Text("Сейчас")
+            Text("На сегодня")
                 .font(.headline)
 
             // A slow calendar is refreshed quietly; only a failure is marked.
@@ -964,48 +864,18 @@ private struct AssistantWidgetView: View {
         }
     }
 
-    private func focusTask(_ task: WidgetTask) -> some View {
-        HStack(alignment: .top, spacing: 9) {
-            Button(intent: MarkTaskDoneIntent(taskID: task.id)) {
-                Image(systemName: "circle")
-                    .font(.title3)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Выполнено")
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(task.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(family == .systemLarge ? 2 : 1)
-
-                taskMeta(task)
-            }
-
-            Spacer(minLength: 0)
-
-            if task.isFocused {
-                Button(intent: ClearFocusTaskIntent(taskID: task.id)) {
-                    Text("Не сейчас")
-                        .font(.caption2.weight(.medium))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Не сейчас")
-            }
-        }
-    }
-
-    private func compactTask(_ task: WidgetTask) -> some View {
+    private func planTask(_ task: WidgetTask) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button(intent: MarkTaskDoneIntent(taskID: task.id)) {
                 Image(systemName: "circle")
-                    .font(.caption)
+                    .font(.subheadline)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Выполнено")
+            .accessibilityLabel("Выполнено: \(task.title)")
 
             Text(task.title)
-                .font(.caption)
-                .lineLimit(1)
+                .font(.subheadline)
+                .lineLimit(family == .systemLarge ? 2 : 1)
 
             Spacer(minLength: 0)
 
@@ -1013,42 +883,33 @@ private struct AssistantWidgetView: View {
                 Text(taskDeadlineText(deadline))
                     .font(.caption2)
                     .foregroundStyle(task.overdue ? .red : .secondary)
-            }
-
-            if !task.isFocused {
-                Button(intent: FocusTaskIntent(taskID: task.id)) {
-                    Text("Сейчас")
-                        .font(.caption2.weight(.medium))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Сейчас")
+                    .lineLimit(1)
             }
         }
     }
 
-    @ViewBuilder
-    private func taskMeta(_ task: WidgetTask) -> some View {
-        HStack(spacing: 5) {
-            if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
-                Text(task.project)
-            }
+    private var emptyPlanState: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Ничего не выбрано")
+                .font(.subheadline.weight(.semibold))
 
-            if let deadline = task.deadline {
-                Text(taskDeadlineText(deadline))
-                    .foregroundStyle(task.overdue ? .red : .secondary)
-            }
+            ForEach(suggestions) { task in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(task.title)
+                        .font(.caption)
+                        .lineLimit(1)
 
-            if task.inProgress {
-                Text("в работе")
-            }
+                    Spacer(minLength: 0)
 
-            if task.isFocused, let focusedSince = task.focusedSince {
-                Text("с")
-                Text(focusedSince, format: .dateTime.hour().minute())
+                    Button(intent: PlanTaskIntent(taskID: task.id)) {
+                        Text("＋ На сегодня")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Добавить на сегодня: \(task.title)")
+                }
             }
         }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
     }
 
     private func focusEventView(_ event: WidgetEvent) -> some View {
@@ -1066,12 +927,6 @@ private struct AssistantWidgetView: View {
                     + Text("–")
                     + Text(event.end, format: .dateTime.hour().minute())
 
-                if let paused = manualFocusTask {
-                    Text("После: \(paused.title)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
             }
 
             Spacer(minLength: 0)
@@ -1187,29 +1042,6 @@ private struct AssistantWidgetView: View {
             Spacer(minLength: 0)
         }
     }
-
-    private var noFocusState: some View {
-        VStack(alignment: .leading, spacing: family == .systemLarge ? 8 : 5) {
-            Text("Ничего не выбрано")
-                .font(.subheadline.weight(.semibold))
-
-            nextContent
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Spacer(minLength: 0)
-            Text("Свободно")
-                .font(.subheadline.weight(.semibold))
-            Text("Запишите следующее дело, когда оно появится.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-        }
-    }
 }
 
 struct AssistantPocketWidget: Widget {
@@ -1222,8 +1054,8 @@ struct AssistantPocketWidget: Widget {
         ) { entry in
             AssistantWidgetView(entry: entry)
         }
-        .configurationDisplayName("Assistant — Сейчас")
-        .description("Главное дело, следующие задачи и быстрые действия.")
+        .configurationDisplayName("Assistant — На сегодня")
+        .description("Дела на сегодня, ближайшая встреча и быстрая запись.")
         .supportedFamilies([.systemMedium, .systemLarge])
         .contentMarginsDisabled()
     }
@@ -1244,6 +1076,21 @@ struct AssistantCaptureControl: ControlWidget {
     }
 }
 
+@available(iOS 18.0, *)
+struct AssistantVoiceCaptureControl: ControlWidget {
+    let kind = "com.aev199.assistantpocket.voice-control"
+
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: kind) {
+            ControlWidgetButton(action: OpenAssistantVoiceCaptureIntent()) {
+                Label("Голосовая запись", systemImage: "mic.circle.fill")
+            }
+        }
+        .displayName("Голосовая запись")
+        .description("Открывает Assistant и сразу начинает запись голоса.")
+    }
+}
+
 @main
 struct AssistantPocketWidgetBundle: WidgetBundle {
     @WidgetBundleBuilder
@@ -1251,6 +1098,7 @@ struct AssistantPocketWidgetBundle: WidgetBundle {
         AssistantPocketWidget()
         if #available(iOS 18.0, *) {
             AssistantCaptureControl()
+            AssistantVoiceCaptureControl()
         }
     }
 }

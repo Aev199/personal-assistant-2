@@ -162,11 +162,13 @@ struct AllTasksView: View {
                             editingTask = task
                         }
                         .contextMenu {
-                            if !task.isFocused {
-                                Button {
-                                    Task { await focus(task) }
-                                } label: {
-                                    Label("Сейчас", systemImage: "scope")
+                            Button {
+                                Task { await setPlanned(task, !task.isInTodayPlan) }
+                            } label: {
+                                if task.isInTodayPlan {
+                                    Label("Убрать из «На сегодня»", systemImage: "minus.circle")
+                                } else {
+                                    Label("На сегодня", systemImage: "sun.max")
                                 }
                             }
 
@@ -236,9 +238,7 @@ struct AllTasksView: View {
                             .foregroundStyle(task.overdue ? .red : .secondary)
                     }
 
-                    if task.isFocused {
-                        Text("сейчас")
-                    } else if task.inProgress {
+                    if task.inProgress {
                         Text("в работе")
                     }
 
@@ -253,13 +253,20 @@ struct AllTasksView: View {
             Spacer(minLength: 8)
 
             // Explicit control: horizontal swipes belong to the work/personal pages.
-            if !task.isFocused {
-                Button("Сейчас") {
-                    Task { await focus(task) }
+            if task.isInTodayPlan {
+                Button("Сегодня ✓") {
+                    Task { await setPlanned(task, false) }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .accessibilityLabel("Убрать из «На сегодня»: \(task.title)")
+            } else {
+                Button("На сегодня") {
+                    Task { await setPlanned(task, true) }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .accessibilityLabel("Сделать сейчас: \(task.title)")
+                .accessibilityLabel("Добавить на сегодня: \(task.title)")
             }
         }
         .padding(.vertical, 4)
@@ -297,11 +304,15 @@ struct AllTasksView: View {
     }
 
     @MainActor
-    private func focus(_ task: TodayTask) async {
+    private func setPlanned(_ task: TodayTask, _ planned: Bool) async {
         errorMessage = nil
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.focusTask(taskID: task.id)
+            if planned {
+                _ = try await client.planTask(taskID: task.id)
+            } else {
+                _ = try await client.unplanTask(taskID: task.id)
+            }
             await load()
             WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
             onChanged()

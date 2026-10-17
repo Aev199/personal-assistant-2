@@ -21,6 +21,7 @@ from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
 from bot.services.calendar_today import TodayCalendarSnapshot, fetch_today_calendar
+from bot.services.day_plan import DayPlanError, in_today_plan, local_today, set_planned, today_plan_sql
 from bot.services.reminders import (
     mark_telegram_reminder_snoozed,
     next_repeat_time_utc_naive,
@@ -392,6 +393,12 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
+    async def _plan(request: web.Request) -> web.StreamResponse:
+        return await handle_task_plan(request, ctx, planned=True)
+
+    async def _unplan(request: web.Request) -> web.StreamResponse:
+        return await handle_task_plan(request, ctx, planned=False)
+
     async def _dismiss_event(request: web.Request) -> web.StreamResponse:
         return await handle_event_dismiss(request, ctx)
 
@@ -424,6 +431,8 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/tasks/{task_id}/unfocus", _unfocus)
     app.router.add_post("/api/v1/tasks/{task_id}/steps", _steps)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
+    app.router.add_post("/api/v1/tasks/{task_id}/plan", _plan)
+    app.router.add_post("/api/v1/tasks/{task_id}/unplan", _unplan)
     app.router.add_post("/api/v1/attention/dismiss-event", _dismiss_event)
     app.router.add_post("/api/v1/reminders/{reminder_id}/snooze", _snooze_reminder)
     app.router.add_post("/api/v1/reminders/{reminder_id}/ack", _ack_reminder)
@@ -451,6 +460,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
     start_utc = _utc_naive(start_local)
     end_utc = _utc_naive(end_local)
     now_utc = datetime.now(timezone.utc)
+    plan_day = now_local.date()
 
     work_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_WORK") or "").strip()
     personal_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_PERSONAL") or "").strip()
@@ -494,6 +504,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
         task_rows = await conn.fetch(
             """
             SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at, t.updated_at,
+                   t.planned_for, t.plan_dismissed_for,
                    p.code AS project_code, COALESCE(tm.name, '') AS assignee
             FROM tasks t
             JOIN projects p ON p.id=t.project_id
@@ -502,12 +513,15 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
               AND t.kind != 'super'
               AND p.status IN ('active', 'system')
             ORDER BY
+              CASE WHEN {plan} THEN 0 ELSE 1 END,
               CASE WHEN $1::bigint IS NOT NULL AND t.id=$1 THEN 0 ELSE 1 END,
               t.created_at ASC,
               t.id ASC
             LIMIT 200
-            """,
+            """.replace("{plan}", today_plan_sql("$2", "$3")),
             focus_task_id,
+            plan_day,
+            tz_name,
         )
 
         if focus_task_id is not None and all(
@@ -549,8 +563,19 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             end_utc,
         )
 
-    selected_task_rows = _select_attention_tasks(
-        task_rows,
+    # «На сегодня» comes first and complete; a few other tasks follow as
+    # suggestions for adding to today.
+    plan_rows = [dict(row) for row in task_rows if in_today_plan(row, today=plan_day, tz=tz)]
+    plan_rows.sort(
+        key=lambda row: (
+            _utc_aware(row["deadline"]) is None,
+            _utc_aware(row["deadline"]) or now_utc,
+            int(row["id"]),
+        )
+    )
+    plan_ids = {int(row["id"]) for row in plan_rows}
+    selected_task_rows = plan_rows + _select_attention_tasks(
+        [row for row in task_rows if int(row["id"]) not in plan_ids],
         now_utc=now_utc,
         end_utc_aware=end_local.astimezone(timezone.utc),
         focus_task_id=focus_task_id,
@@ -579,6 +604,8 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 # Edit version: clients send it back so an edit never silently
                 # overwrites a change made by another client.
                 "updated_at": _iso_version(row.get("updated_at")),
+                "today_plan": in_today_plan(row, today=plan_day, tz=tz),
+                "planned": row.get("planned_for") == plan_day,
             }
         )
 
@@ -1043,7 +1070,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
         except (ValueError,TypeError):
             return web.json_response({'ok':False,'error':'invalid_filters'},status=400)
         async with pool.acquire() as conn:
-            result=await list_tasks(conn,scope=scope,inbox=inbox_raw=='true',limit=limit,cursor=cursor,chat_id=int(ctx.deps.admin_id or 0))
+            result=await list_tasks(conn,scope=scope,inbox=inbox_raw=='true',limit=limit,cursor=cursor,chat_id=int(ctx.deps.admin_id or 0),tz_name=resolve_tz_name(ctx.deps.tz_name))
         result['timezone']=resolve_tz_name(ctx.deps.tz_name)
         return web.json_response(result)
 
@@ -1052,6 +1079,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
     tz_name = resolve_tz_name(ctx.deps.tz_name)
     tz = ZoneInfo(tz_name)
     now_local = datetime.now(tz)
+    plan_day = now_local.date()
     end_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     now_utc = datetime.now(timezone.utc)
 
@@ -1073,6 +1101,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
         rows = await conn.fetch(
             """
             SELECT t.id, t.title, t.deadline, t.status, t.kind, t.created_at, t.updated_at,
+                   t.planned_for, t.plan_dismissed_for,
                    p.code AS project_code, COALESCE(tm.name, '') AS assignee
             FROM tasks t
             JOIN projects p ON p.id=t.project_id
@@ -1119,6 +1148,8 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
                 # Edit version: clients send it back so an edit never silently
                 # overwrites a change made by another client.
                 "updated_at": _iso_version(row.get("updated_at")),
+                "today_plan": in_today_plan(row, today=plan_day, tz=tz),
+                "planned": row.get("planned_for") == plan_day,
             }
         )
 
@@ -1959,3 +1990,26 @@ async def handle_inbox_idea(request: web.Request, ctx) -> web.StreamResponse:
     except TaskError as exc:
         return web.json_response({'ok':False,'error':exc.code},status=exc.status)
     return web.json_response({'ok':True,'idea_id':idea_id},status=201)
+
+
+async def handle_task_plan(request: web.Request, ctx, *, planned: bool) -> web.StreamResponse:
+    """Add a task to «На сегодня» or remove it; the widget may do both."""
+    if not _authorized(request, allow_widget=True):
+        return _auth_error(allow_widget=True)
+
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+    try:
+        task_id = int(request.match_info["task_id"])
+    except (KeyError, TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
+
+    today = local_today(ctx.deps.tz_name)
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await set_planned(conn, task_id=task_id, planned=planned, today=today)
+    except DayPlanError as exc:
+        return web.json_response({"ok": False, "error": exc.code}, status=exc.status)
+    return web.json_response(result)

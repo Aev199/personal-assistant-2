@@ -48,6 +48,13 @@ class _Conn:
 
 
 class TodayScreenContractTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        # The calendar cache is keyed by id(icloud); a freed fake from another
+        # test can reuse that id and leak its cached events into this one.
+        from bot.services import calendar_today
+
+        calendar_today._CACHE.clear()
+
     async def test_today_screen_is_action_ready_without_pick_screen(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=101), bot=SimpleNamespace())
         conn = _Conn()

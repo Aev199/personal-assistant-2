@@ -283,24 +283,24 @@ struct APIClient {
         return try decode(CaptureResponse.self, data: responseData, response: response)
     }
 
-    func focusTask(taskID: Int) async throws -> DoneResponse {
+    func planTask(taskID: Int) async throws -> TaskMutationResponse {
         let req = try request(
-            path: "/api/v1/tasks/\(taskID)/focus",
+            path: "/api/v1/tasks/\(taskID)/plan",
             method: "POST",
             body: Data("{}".utf8)
         )
         let (data, response) = try await URLSession.shared.data(for: req)
-        return try decode(DoneResponse.self, data: data, response: response)
+        return try decode(TaskMutationResponse.self, data: data, response: response)
     }
 
-    func clearFocus(taskID: Int) async throws -> DoneResponse {
+    func unplanTask(taskID: Int) async throws -> TaskMutationResponse {
         let req = try request(
-            path: "/api/v1/tasks/\(taskID)/unfocus",
+            path: "/api/v1/tasks/\(taskID)/unplan",
             method: "POST",
             body: Data("{}".utf8)
         )
         let (data, response) = try await URLSession.shared.data(for: req)
-        return try decode(DoneResponse.self, data: data, response: response)
+        return try decode(TaskMutationResponse.self, data: data, response: response)
     }
 
     func taskStartHelp(taskID: Int) async throws -> TaskStartHelpResponse {

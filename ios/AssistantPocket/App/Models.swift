@@ -106,11 +106,18 @@ struct TodayTask: Decodable, Identifiable {
     /// Server edit version, sent back unchanged so an edit cannot silently
     /// overwrite a change made from the web or Telegram.
     let updatedAt: String?
+    /// On the shared «На сегодня» list: planned for today, or due today.
+    let todayPlan: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, title, project, kind, assignee, status, deadline, overdue, focused
         case focusedSince = "focused_since"
         case updatedAt = "updated_at"
+        case todayPlan = "today_plan"
+    }
+
+    var isInTodayPlan: Bool {
+        todayPlan == true
     }
 
     var inProgress: Bool {

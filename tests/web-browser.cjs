@@ -8,11 +8,11 @@ const root=path.resolve(__dirname,'../bot/web');
 let connected=false, failCapture=false, captureKeys=[], committed=new Map();
 const today=new Date().toISOString().slice(0,10);
 let tasks=[
- {id:1,title:'Проверить результаты расчёта осадок',project:'Лимонарий',kind:'task',status:'todo',deadline:today+'T14:00:00+03:00',updated_at:'2026-10-17T08:00:00+00:00',focused:false},
- {id:2,title:'Ответить на замечания по КЖ',project:'Жилой комплекс',kind:'task',status:'todo',deadline:today+'T17:00:00+03:00',updated_at:'2026-10-17T08:00:00+00:00',focused:false},
- {id:3,title:'Уточнить исходные нагрузки',project:'INBOX',kind:'task',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',focused:false},
- {id:4,title:'Записаться на сервис автомобиля',project:'',kind:'personal',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',focused:false},
- {id:5,title:'Проверить экспорт в PLAXIS',project:'SoilStiffness',kind:'task',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',focused:false}
+ {id:1,title:'Проверить результаты расчёта осадок',project:'Лимонарий',kind:'task',status:'todo',deadline:today+'T14:00:00+03:00',updated_at:'2026-10-17T08:00:00+00:00',today_plan:false},
+ {id:2,title:'Ответить на замечания по КЖ',project:'Жилой комплекс',kind:'task',status:'todo',deadline:today+'T17:00:00+03:00',updated_at:'2026-10-17T08:00:00+00:00',today_plan:false},
+ {id:3,title:'Уточнить исходные нагрузки',project:'INBOX',kind:'task',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',today_plan:false},
+ {id:4,title:'Записаться на сервис автомобиля',project:'',kind:'personal',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',today_plan:false},
+ {id:5,title:'Проверить экспорт в PLAXIS',project:'SoilStiffness',kind:'task',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',today_plan:false}
 ];
 let ideas=[{id:1,text:'Контекстный поиск по рабочему архиву'}];
 let conflict=false,failTasksOnce=false,failInboxOnce=false;
@@ -51,8 +51,8 @@ const server=http.createServer(async(req,res)=>{
   if(m){const t=tasks.find(t=>t.id===Number(m[1]));
    if(req.method==='PATCH'){if(conflict){conflict=false;return json({ok:false,error:'task_conflict'},409);}Object.assign(t,data,{updated_at:new Date().toISOString()});}
    if(m[2]==='done')t.status='done';
-   if(m[2]==='focus'){tasks.forEach(x=>x.focused=false);t.focused=true;}
-   if(m[2]==='unfocus')t.focused=false;
+   if(m[2]==='plan')t.today_plan=true;
+   if(m[2]==='unplan')t.today_plan=false;
    if(m[2]==='idea'){ideas.push({id:2,text:t.title});t.status='done';}
    return json({ok:true,updated_at:t.updated_at});
   }
@@ -83,7 +83,11 @@ const server=http.createServer(async(req,res)=>{
   failInboxOnce=true;await page.getByRole('button',{name:'Сегодня',exact:true}).first().click();await page.waitForTimeout(150);
   assert.equal(await page.getByText(tasks[0].title,{exact:true}).count(),1,'Inbox failure must not hide Today');
   await page.getByRole('button',{name:'Задачи',exact:true}).first().click();await page.getByText(tasks[0].title,{exact:true}).waitFor();
-  await page.getByRole('button',{name:'Сейчас',exact:true}).first().click();assert(tasks[0].focused);
+  await page.getByRole('button',{name:'Добавить на сегодня: '+tasks[0].title,exact:true}).click();assert(tasks[0].today_plan);
+  await page.getByRole('button',{name:'Сегодня',exact:true}).first().click();
+  await page.getByRole('heading',{name:'На сегодня',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Убрать из «На сегодня»: '+tasks[0].title,exact:true}).waitFor();
+  await page.getByRole('button',{name:'Задачи',exact:true}).first().click();await page.getByText(tasks[0].title,{exact:true}).waitFor();
   await page.getByText(tasks[0].title,{exact:true}).click();
   await page.getByLabel('Название').fill('Изменённая задача');conflict=true;
   await page.getByRole('button',{name:'Сохранить',exact:true}).click();await page.getByText('Задача изменилась на другом устройстве',{exact:false}).waitFor();
@@ -100,6 +104,6 @@ const server=http.createServer(async(req,res)=>{
   await page.getByText('Записаться на сервис автомобиля',{exact:true}).waitFor();
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   if(process.env.SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR,'assistant-web-mobile.png'),fullPage:true});
-  assert.deepEqual(errors,[]);console.log('Browser acceptance passed: login, calendar failure, pagination, focus, conflict, capture retry, ideas, mobile.');
+  assert.deepEqual(errors,[]);console.log('Browser acceptance passed: login, calendar failure, pagination, today plan, conflict, capture retry, ideas, mobile.');
  }finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1});

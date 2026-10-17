@@ -1,6 +1,7 @@
 """Complete browser lists and atomic task edits, using existing task identities."""
 from datetime import datetime, timezone
 from bot.db import db_add_event
+from bot.services.day_plan import local_today, today_plan_sql
 
 
 class TaskError(Exception):
@@ -15,13 +16,15 @@ def iso(value):
     return value.isoformat()
 
 
-async def list_tasks(conn, *, scope: str, inbox: bool, limit: int, cursor: int | None, chat_id: int = 0) -> dict:
+async def list_tasks(conn, *, scope: str, inbox: bool, limit: int, cursor: int | None, chat_id: int = 0,
+                     tz_name: str = 'Europe/Moscow') -> dict:
     if scope not in ('all','work','personal') or not 1 <= limit <= 200 or (cursor is not None and cursor < 0):
         raise TaskError('invalid_filters', 400)
     rows = await conn.fetch('''
         SELECT t.id,t.title,t.deadline,t.status,t.kind,t.updated_at,p.code AS project,
                COALESCE(tm.name,'') AS assignee,
-               COALESCE(cs.payload_json->>'task_id'=t.id::text,FALSE) AS focused
+               COALESCE(cs.payload_json->>'task_id'=t.id::text,FALSE) AS focused,
+               {plan} AS today_plan, COALESCE(t.planned_for=$6::date,FALSE) AS planned
         FROM tasks t JOIN projects p ON p.id=t.project_id
         LEFT JOIN team tm ON tm.id=t.assignee_id
         LEFT JOIN conversation_state cs ON cs.chat_id=$5 AND cs.flow='attention_focus'
@@ -30,12 +33,14 @@ async def list_tasks(conn, *, scope: str, inbox: bool, limit: int, cursor: int |
           AND ($2='all' OR ($2='personal' AND t.kind='personal') OR ($2='work' AND t.kind!='personal'))
           AND (NOT $3 OR (p.code='INBOX' AND t.kind='task'))
         ORDER BY t.id ASC LIMIT $4
-        ''', cursor or 0, scope, inbox, limit+1, chat_id)
+        '''.replace('{plan}', today_plan_sql('$6', '$7')), cursor or 0, scope, inbox, limit+1, chat_id,
+        local_today(tz_name), tz_name)
     tasks=[]
     for r in rows[:limit]:
         tasks.append({'id':int(r['id']),'title':r['title'],'kind':r['kind'],
                       'project':'' if r['kind']=='personal' else r['project'],
                       'status':r['status'],'assignee':r['assignee'],'focused':r['focused'],
+                      'today_plan':bool(r['today_plan']),'planned':bool(r['planned']),
                       'deadline':iso(r['deadline']),'updated_at':iso(r['updated_at'])})
     return {'ok':True,'tasks':tasks,'next_cursor':int(rows[limit-1]['id']) if len(rows)>limit else None}
 

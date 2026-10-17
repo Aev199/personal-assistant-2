@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee_id, status);
+-- «На сегодня»: explicit plan day, and the day a due-today task was removed from it.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS planned_for DATE;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS plan_dismissed_for DATE;
+CREATE INDEX IF NOT EXISTS idx_tasks_planned_for ON tasks(planned_for);
 
 CREATE TABLE IF NOT EXISTS ideas (
     id BIGSERIAL PRIMARY KEY,

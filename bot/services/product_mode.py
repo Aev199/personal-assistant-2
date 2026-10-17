@@ -346,6 +346,17 @@ async def _load_habit_snapshot(
         )
         or 0
     )
+    active_count = int(
+        await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM tasks
+            WHERE status NOT IN ('done', 'postponed')
+              AND kind != 'super'
+            """
+        )
+        or 0
+    )
     reminder_count = int(
         await conn.fetchval(
             """
@@ -402,6 +413,7 @@ async def _load_habit_snapshot(
         "last_evening": state["last_evening_nudge_date"] if state else None,
         "overdue": overdue_count,
         "today": today_count,
+        "active": active_count,
         "reminders": reminder_count,
         "inbox": inbox_count,
         "focus": dict(focus) if focus else None,
@@ -461,8 +473,8 @@ async def maybe_send_habit_messages(
     resolved_tz_name = resolve_tz_name(tz_name)
     tz = ZoneInfo(resolved_tz_name)
     now_local = datetime.now(tz)
-    morning_hour = _env_hour("ASSISTANT_MORNING_BRIEF_HOUR", 8)
-    evening_hour = _env_hour("ASSISTANT_EVENING_NUDGE_HOUR", 19)
+    morning_hour = _env_hour("ASSISTANT_MORNING_BRIEF_HOUR", 10)
+    evening_hour = _env_hour("ASSISTANT_EVENING_NUDGE_HOUR", 17)
     if evening_hour <= morning_hour:
         evening_hour = min(23, morning_hour + 8)
 

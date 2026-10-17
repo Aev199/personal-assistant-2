@@ -209,3 +209,19 @@ CREATE TABLE IF NOT EXISTS llm_recent_actions (
 CREATE INDEX IF NOT EXISTS idx_llm_recent_actions_expires ON llm_recent_actions(expires_at);
 
 COMMIT;
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+    session_hash TEXT PRIMARY KEY,
+    token_fingerprint TEXT NOT NULL,
+    csrf_token TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS capture_requests (
+    chat_id BIGINT NOT NULL,
+    request_id TEXT NOT NULL,
+    text_hash TEXT NOT NULL,
+    result_json JSONB NOT NULL,
+    PRIMARY KEY(chat_id, request_id)
+);

@@ -49,6 +49,9 @@ def _configured_widget_token() -> str:
 
 
 def _authorized(request: web.Request, *, allow_widget: bool = False) -> bool:
+    from bot.http.web_auth import browser_identity
+    if browser_identity(request):
+        return True
     accepted = [_configured_token()]
     if allow_widget:
         accepted.append(_configured_widget_token())
@@ -388,6 +391,11 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
 
     async def _ack_reminder(request: web.Request) -> web.StreamResponse:
         return await handle_reminder_ack(request, ctx)
+
+    async def _inbox_idea(request):
+        return await handle_inbox_idea(request,ctx)
+
+    app.router.add_post('/api/v1/tasks/{task_id}/idea', _inbox_idea)
 
     # Canonical client API.
     app.router.add_get("/api/v1/today", _today)
@@ -1011,6 +1019,21 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
     except (TypeError, ValueError):
         return web.json_response({"ok": False, "error": "invalid_limit"}, status=400)
 
+    if any(key in request.query for key in ('scope','cursor','inbox')):
+        from bot.services.task_browser import list_tasks, TaskError
+        scope=request.query.get('scope','all')
+        try:
+            cursor=int(request.query['cursor']) if 'cursor' in request.query else None
+            inbox_raw=request.query.get('inbox','false')
+            if scope not in ('all','work','personal') or inbox_raw not in ('true','false') or (cursor is not None and cursor < 0):
+                raise ValueError()
+        except (ValueError,TypeError):
+            return web.json_response({'ok':False,'error':'invalid_filters'},status=400)
+        async with pool.acquire() as conn:
+            result=await list_tasks(conn,scope=scope,inbox=inbox_raw=='true',limit=limit,cursor=cursor,chat_id=int(ctx.deps.admin_id or 0))
+        result['timezone']=resolve_tz_name(ctx.deps.tz_name)
+        return web.json_response(result)
+
     tz_name = resolve_tz_name(ctx.deps.tz_name)
     tz = ZoneInfo(tz_name)
     now_local = datetime.now(tz)
@@ -1264,6 +1287,26 @@ async def handle_task_update(request: web.Request, ctx) -> web.StreamResponse:
             )
         except Exception:
             return web.json_response({"ok": False, "error": "invalid_deadline"}, status=400)
+
+    from bot.http.web_auth import browser_identity
+    if browser_identity(request) or 'expected_updated_at' in payload:
+        from bot.services.task_browser import update_task, TaskError
+        if browser_identity(request) and not isinstance(payload.get('expected_updated_at'), str):
+            return web.json_response({'ok':False,'error':'version_required'},status=400)
+        changes={}
+        if title is not None: changes['title']=title
+        if 'deadline' in payload: changes['deadline']=deadline_db
+        if 'project_code' in payload:
+            code=str(payload['project_code'] or '').strip()
+            if not code: return web.json_response({'ok':False,'error':'empty_project'},status=400)
+            changes['project_code']=code
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    result=await update_task(conn,task_id=task_id,changes=changes,expected_updated_at=payload.get('expected_updated_at'))
+        except TaskError as exc:
+            return web.json_response({'ok':False,'error':exc.code},status=exc.status)
+        return web.json_response(result)
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -1558,48 +1601,33 @@ async def handle_capture(request: web.Request, ctx) -> web.StreamResponse:
     except Exception:
         return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
 
-    text = str((payload or {}).get("text") or "").strip()
+    from uuid import UUID
+    from bot.services.capture import save_capture, CaptureConflict
+    from bot.http.web_auth import browser_identity
+    if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
+        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
+    text = payload["text"].strip()
     if not text:
         return web.json_response({"ok": False, "error": "empty_text"}, status=400)
     if len(text) > MAX_CAPTURE_LEN:
-        return web.json_response(
-            {"ok": False, "error": "text_too_long", "max_length": MAX_CAPTURE_LEN},
-            status=413,
-        )
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            project_id = await ensure_inbox_project_id(conn)
-            task_id = int(
-                await conn.fetchval(
-                    """
-                    INSERT INTO tasks (project_id, title, status, kind)
-                    VALUES ($1, $2, 'todo', 'task')
-                    RETURNING id
-                    """,
-                    int(project_id),
-                    text,
-                )
-            )
-            await db_add_event(
-                conn,
-                "task_created",
-                int(project_id),
-                task_id,
-                f"iOS capture: #{task_id} {text}",
-            )
-
-    return web.json_response(
-        {
-            "ok": True,
-            "task": {
-                "id": task_id,
-                "title": text,
-                "project": "INBOX",
-            },
-        },
-        status=201,
-    )
+        return web.json_response({"ok": False, "error": "text_too_long", "max_length": MAX_CAPTURE_LEN}, status=413)
+    key = None
+    if "client_request_id" in payload:
+        supplied = payload["client_request_id"]
+        try:
+            if not isinstance(supplied, str) or len(supplied) != 36:
+                raise ValueError()
+            key = str(UUID(supplied))
+        except (ValueError, TypeError, AttributeError):
+            return web.json_response({"ok": False, "error": "invalid_request_id"}, status=400)
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await save_capture(conn, chat_id=int(getattr(ctx.deps, 'admin_id', 0) or 0),
+                    text=text, client_request_id=key, source='web' if browser_identity(request) else 'ios')
+    except CaptureConflict:
+        return web.json_response({"ok": False, "error": "capture_conflict"}, status=409)
+    return web.json_response(result, status=201)
 
 
 async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
@@ -1894,3 +1922,21 @@ async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:
                 )
 
     return web.json_response({"ok": True, "task_id": task_id, "status": "done"})
+
+
+async def handle_inbox_idea(request: web.Request, ctx) -> web.StreamResponse:
+    if not _authorized(request): return _auth_error()
+    from bot.services.task_browser import move_inbox_to_idea, TaskError
+    pool=ctx.deps.db_pool
+    if not pool: return web.json_response({'ok':False,'error':'db_unavailable'},status=503)
+    try:
+        task_id=int(request.match_info['task_id'])
+    except (ValueError,KeyError):
+        return web.json_response({'ok':False,'error':'invalid_task_id'},status=400)
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                idea_id=await move_inbox_to_idea(conn,chat_id=int(ctx.deps.admin_id or 0),task_id=task_id)
+    except TaskError as exc:
+        return web.json_response({'ok':False,'error':exc.code},status=exc.status)
+    return web.json_response({'ok':True,'idea_id':idea_id},status=201)

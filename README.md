@@ -2,6 +2,14 @@
 
 Single-user personal assistant built with `aiogram`, `asyncpg`, Gemini/DeepSeek, iCloud CalDAV, a Telegram SPA, and a native iOS client.
 
+## Browser interface
+
+The shared browser client is served at `/app/` by the existing Python service.
+See [setup and rollback instructions](docs/web-interface.md). Configure
+`ASSISTANT_PUBLIC_ORIGIN` with the exact HTTPS origin; native app and widget tokens
+keep their existing API access. Installable PWA and iOS notification delivery are
+separate follow-up stages.
+
 ## Product model
 
 The bot is optimized for low-friction capture rather than form filling:

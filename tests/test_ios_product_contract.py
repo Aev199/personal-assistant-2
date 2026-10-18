@@ -877,3 +877,16 @@ def test_capture_without_model_reports_inbox_instead_of_vague_saved():
     assert 'case inboxFallback = "inbox_fallback"' in models
     assert "response.inboxFallback == true" in home
     assert 'presentConfirmation("Записано во Входящие")' in home
+
+
+def test_widget_buttons_have_finger_sized_hit_areas():
+    widget = _read("Widget/AssistantWidget.swift")
+
+    assert "func widgetTapTarget(width: CGFloat = 40) -> some View" in widget
+    assert "frame(minWidth: width, minHeight: 34)" in widget
+    row = widget[widget.index("private func planTask("):widget.index("private var emptyPlanState")]
+    assert ".font(.title2)" in row and ".widgetTapTarget(width: 38)" in row
+    header = widget[widget.index("private var header: some View"):widget.index("private func planTask(")]
+    assert header.count(".widgetTapTarget(width: 42)") == 2
+    empty = widget[widget.index("private var emptyPlanState"):]
+    assert ".frame(minHeight: 32)" in empty

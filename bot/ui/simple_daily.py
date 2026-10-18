@@ -21,6 +21,13 @@ import bot.ui.screens as legacy
 
 
 UTC = timezone.utc
+_default_icloud: ICloudCalDAVAdapter | None = None
+
+
+def set_default_icloud(icloud: ICloudCalDAVAdapter | None) -> None:
+    """Home renders today's calendar without every caller passing deps."""
+    global _default_icloud
+    _default_icloud = icloud
 
 
 def _task_rows_without_inbox_label(rows) -> list[dict]:
@@ -95,12 +102,13 @@ async def ui_render_home(
 ) -> int:
     if message is None:
         return 0
-    return await ui_render_all_tasks(
+    # Home is today's short list, not the whole backlog; «Все дела» is one tap away.
+    return await ui_render_today(
         message,
         db_pool,
         tz_name=tz_name,
         page=0,
-        quick_done=False,
+        icloud=_default_icloud,
         preferred_message_id=preferred_message_id,
         force_new=force_new,
     )
@@ -347,7 +355,7 @@ async def ui_render_today(
             chat_id=chat_id,
             text=f"Не удалось открыть сегодня: {h(str(exc))}",
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="Дела", callback_data="nav:home")]]
+                inline_keyboard=[[InlineKeyboardButton(text="Все дела", callback_data="nav:all:all:0")]]
             ),
             screen="today",
             fallback_message=message,
@@ -413,7 +421,7 @@ async def ui_render_today(
     kb.append([InlineKeyboardButton(text="＋ Добавить на сегодня", callback_data="plan:pick")])
     kb.append(
         [
-            InlineKeyboardButton(text="Дела", callback_data="nav:home"),
+            InlineKeyboardButton(text="Все дела", callback_data="nav:all:all:0"),
             InlineKeyboardButton(text="⋯", callback_data="nav:secondary"),
         ]
     )
@@ -456,7 +464,10 @@ async def ui_render_home_more(
                 InlineKeyboardButton(text="Идеи", callback_data="nav:ideas:0"),
                 InlineKeyboardButton(text="Помощь", callback_data="nav:help"),
             ],
-            [InlineKeyboardButton(text="Дела", callback_data="nav:home")],
+            [
+                InlineKeyboardButton(text="Сегодня", callback_data="nav:home"),
+                InlineKeyboardButton(text="Все дела", callback_data="nav:all:all:0"),
+            ],
         ]
     )
     return await ui_render(
@@ -646,7 +657,7 @@ async def ui_render_help(
         chat_id=int(message.chat.id),
         text="\n".join(lines),
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="Дела", callback_data="nav:home")]]
+            inline_keyboard=[[InlineKeyboardButton(text="Сегодня", callback_data="nav:home")]]
         ),
         screen="help",
         fallback_message=message,
@@ -681,7 +692,7 @@ async def ui_render_add_menu(
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="Добавить списком", callback_data="onboard:start")],
-                [InlineKeyboardButton(text="Дела", callback_data="nav:home")],
+                [InlineKeyboardButton(text="Сегодня", callback_data="nav:home")],
             ]
         ),
         screen="add",

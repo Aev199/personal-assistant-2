@@ -96,6 +96,9 @@ const server=http.createServer(async(req,res)=>{
   const capture=page.getByLabel('Добавить задачу или мысль');await capture.fill('Новая запись после обрыва');await capture.press('Enter');
   await page.getByRole('button',{name:'Повторить сохранение',exact:true}).waitFor();assert.equal(await capture.inputValue(),'Новая запись после обрыва');
   await page.getByRole('button',{name:'Повторить сохранение',exact:true}).click();
+  await page.getByText('Сохранено во Входящие',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('heading',{name:'Задачи',exact:true}).count(),1,'capture must not move the user to another page');
+  await page.getByRole('button',{name:'Входящие',exact:true}).first().click();
   await page.getByText('Новая запись после обрыва',{exact:true}).waitFor();assert.equal(captureKeys[0],captureKeys[1]);assert.equal(tasks.filter(t=>t.title==='Новая запись после обрыва').length,1);
   await page.getByRole('button',{name:'В идеи',exact:true}).first().click();
   await page.getByRole('button',{name:'Идеи',exact:true}).first().click();await page.getByText('Контекстный поиск по рабочему архиву',{exact:true}).waitFor();

@@ -88,7 +88,7 @@ async function saveCapture(retry=false){
  if(!retry){const text=$('capture').value.trim();if(!text)return;if(old&&old.text!==text){$('capture-status').innerHTML='Сначала подтвердите предыдущую запись. Новый текст сохранён в поле. <button type="button" data-retry="1">Повторить сохранение</button>';return;}pending=old||{text,client_request_id:crypto.randomUUID()};storageSet('assistant.pending',JSON.stringify(pending));}
  if(!pending)return;
  state.captureBusy=true;$('capture-status').textContent='Сохраняется…';
- try{await api('/capture',{method:'POST',body:pending});if($('capture').value.trim()===pending.text){$('capture').value='';draft();}storageSet('assistant.pending',null);$('capture-status').textContent='Сохранено во Входящие';state.page='inbox';await loadPage();}
+ try{await api('/capture',{method:'POST',body:pending});if($('capture').value.trim()===pending.text){$('capture').value='';draft();}storageSet('assistant.pending',null);$('capture-status').textContent='Сохранено во Входящие';await loadPage({quiet:true});}
  catch(e){$('capture-status').innerHTML=html(message(e))+' <button type="button" data-retry="1">Повторить сохранение</button>';}
  finally{state.captureBusy=false;}
 }

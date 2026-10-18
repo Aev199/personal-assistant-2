@@ -107,6 +107,8 @@ def build_core(
     icloud = ICloudCalDAVAdapter(
         ICloudCalDAVAuth(apple_id=icloud_apple_id, app_password=icloud_app_password)
     )
+    from bot.ui.simple_daily import set_default_icloud
+    set_default_icloud(icloud)
 
     gemini = GeminiAdapter(
         api_key=os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""),

@@ -102,3 +102,14 @@ def web_app():
     app = web.Application()
     companion.attach_companion_routes(app, SimpleNamespace(deps=SimpleNamespace()))
     return app
+
+
+def test_telegram_home_is_today_not_the_whole_backlog():
+    from unittest.mock import AsyncMock, patch
+    from bot.ui import simple_daily
+
+    message = SimpleNamespace(chat=SimpleNamespace(id=1), bot=SimpleNamespace())
+    with patch.object(simple_daily, "ui_render_today", AsyncMock(return_value=5)) as today:
+        asyncio.run(simple_daily.ui_render_home(message, object(), tz_name="Europe/Moscow"))
+    today.assert_awaited_once()
+    assert today.await_args.kwargs["icloud"] is simple_daily._default_icloud

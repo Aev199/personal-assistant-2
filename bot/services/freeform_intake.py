@@ -1219,6 +1219,38 @@ async def _execute_pending_intent(
     return False
 
 
+async def _save_unparsed_to_inbox(
+    message: Message,
+    *,
+    db_pool: asyncpg.Pool,
+    deps: AppDeps,
+    text: str,
+    toast: str = "📥 Записано во Входящие (без разбора).",
+) -> bool:
+    """Never lose a capture: without a model the text becomes an Inbox task.
+
+    The Telegram message id is the retry key, so a re-delivered update cannot
+    create a second task.
+    """
+    from bot.services.capture import save_capture
+
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await save_capture(
+                    conn,
+                    chat_id=int(message.chat.id),
+                    text=text,
+                    client_request_id=f"tg:{int(message.chat.id)}:{int(message.message_id)}",
+                    source="telegram",
+                )
+    except Exception:
+        logger.exception("inbox fallback failed")
+        return False
+    await _rerender_with_toast(message, db_pool, deps, toast)
+    return True
+
+
 async def handle_freeform_text(
     message: Message,
     *,
@@ -1311,11 +1343,12 @@ async def handle_freeform_text(
             intent = _local_explicit_reminder_intent(text, tz_name)
             if intent is None:
                 if not llm_available:
-                    await _rerender_with_toast(
-                        message, db_pool, deps,
-                        "Не смог разобрать дату напоминания. Укажите явно: напомни завтра в 10:00 позвонить.",
+                    return await _save_unparsed_to_inbox(
+                        message, db_pool=db_pool, deps=deps,
+                        text=_merge_freeform_text(base_text, text),
+                        toast="📥 Записано во Входящие. Дату напоминания не разобрал — "
+                              "можно указать явно: напомни завтра в 10:00 позвонить.",
                     )
-                    return True
                 user_prompt = _build_classification_user_prompt(
                     raw_text=text,
                     prepend_text=prepend_text,
@@ -1334,12 +1367,10 @@ async def handle_freeform_text(
                 intent = _normalize_intake_payload(payload)
         else:
             if not llm_available:
-                await _rerender_with_toast(
-                    message, db_pool, deps,
-                    "🤖 ИИ временно недоступен. Используйте явные маркеры:\n"
-                    "• идея: ...\n• личное: ...\n• напомни ... в ...\n• задача: ...",
+                return await _save_unparsed_to_inbox(
+                    message, db_pool=db_pool, deps=deps,
+                    text=_merge_freeform_text(base_text, text),
                 )
-                return True
             user_prompt = _build_classification_user_prompt(
                 raw_text=text,
                 prepend_text=prepend_text,
@@ -1358,7 +1389,10 @@ async def handle_freeform_text(
             intent = _normalize_intake_payload(payload)
     except Exception:
         logger.exception("freeform classify failed", extra={"source": source})
-        return False
+        return await _save_unparsed_to_inbox(
+            message, db_pool=db_pool, deps=deps,
+            text=_merge_freeform_text(_clean(followup_data.get("freeform_base_text") or prepend_text), text),
+        )
 
     if intent.needs_followup and intent.followup_prompt:
         return await _start_followup(
@@ -1753,13 +1787,13 @@ async def handle_freeform_voice(
     state: FSMContext | None = None,
     prepend_text: str | None = None,
 ) -> bool:
-    llm = getattr(deps, "llm", None)
-    if llm is None or not getattr(llm, "enabled", False):
-        return False
-
     file_id, filename, mime_type, file_size = _voice_file_meta(message)
     if not file_id:
         return False
+
+    llm = getattr(deps, "llm", None)
+    if llm is None or not getattr(llm, "enabled", False):
+        return await _keep_untranscribed_voice(message, db_pool=db_pool, deps=deps)
 
     max_bytes = int(os.getenv("LLM_VOICE_MAX_BYTES", str(8 * 1024 * 1024)))
     if file_size and file_size > max_bytes:
@@ -1784,17 +1818,11 @@ async def handle_freeform_voice(
         )
     except Exception:
         logger.exception("voice transcription failed")
-        return False
+        return await _keep_untranscribed_voice(message, db_pool=db_pool, deps=deps)
 
     transcript = _clean(transcript)
     if not transcript:
-        await _rerender_with_toast(
-            message,
-            db_pool,
-            deps,
-            "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0440\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u0442\u044c \u0433\u043e\u043b\u043e\u0441\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435.",
-        )
-        return True
+        return await _keep_untranscribed_voice(message, db_pool=db_pool, deps=deps)
 
     handled = await handle_freeform_text(
         message,
@@ -1810,6 +1838,19 @@ async def handle_freeform_voice(
         await try_delete_user_message(message)
     return handled
 
+
+
+async def _keep_untranscribed_voice(message: Message, *, db_pool: asyncpg.Pool, deps: AppDeps) -> bool:
+    """The voice message stays in the chat; Inbox gets a reminder to listen to it."""
+    sent = getattr(message, "date", None) or datetime.now(ZoneInfo("UTC"))
+    when = sent.astimezone(ZoneInfo(resolve_tz_name(getattr(deps, "tz_name", None) or "Europe/Moscow"))).strftime("%d.%m %H:%M")
+    return await _save_unparsed_to_inbox(
+        message,
+        db_pool=db_pool,
+        deps=deps,
+        text=f"Прослушать голосовое в Telegram от {when}",
+        toast="🎤 Голосовое не распознано. Оно осталось в чате, а во Входящих есть напоминание его прослушать.",
+    )
 
 
 def _voice_file_meta(message: Message) -> tuple[str | None, str, str | None, int]:

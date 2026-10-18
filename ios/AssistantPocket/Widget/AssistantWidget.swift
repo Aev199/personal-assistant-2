@@ -694,12 +694,20 @@ private struct AssistantWidgetProvider: TimelineProvider {
     }
 }
 
+/// Widget buttons need a finger-sized hit area, not just the glyph.
+private extension View {
+    func widgetTapTarget(width: CGFloat = 40) -> some View {
+        frame(minWidth: width, minHeight: 34)
+            .contentShape(Rectangle())
+    }
+}
+
 private struct AssistantWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: AssistantWidgetEntry
 
     private var rowCapacity: Int {
-        family == .systemLarge ? 7 : 3
+        family == .systemLarge ? 6 : 3
     }
 
     private var activeEvent: WidgetEvent? {
@@ -731,8 +739,9 @@ private struct AssistantWidgetView: View {
         return dueReminder
     }
 
+    /// A meeting or reminder card is about two task rows tall.
     private var attentionRows: Int {
-        (attentionEvent != nil || attentionReminder != nil) ? 1 : 0
+        (attentionEvent != nil || attentionReminder != nil) ? 2 : 0
     }
 
     private var planTasks: [WidgetTask] {
@@ -786,7 +795,7 @@ private struct AssistantWidgetView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: family == .systemLarge ? 9 : 6) {
+        VStack(alignment: .leading, spacing: family == .systemLarge ? 6 : 2) {
             header
 
             if let error = entry.error {
@@ -815,7 +824,8 @@ private struct AssistantWidgetView: View {
                 Spacer(minLength: 0)
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
@@ -844,7 +854,8 @@ private struct AssistantWidgetView: View {
             if entry.error != nil || entry.stale {
                 Button(intent: RefreshAssistantWidgetIntent()) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.title3.weight(.semibold))
+                        .widgetTapTarget()
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Обновить")
@@ -852,23 +863,26 @@ private struct AssistantWidgetView: View {
 
             Link(destination: URL(string: "assistantpocket://capture?mode=voice")!) {
                 Image(systemName: "mic.circle.fill")
-                    .font(.title3)
+                    .font(.title)
+                    .widgetTapTarget(width: 42)
             }
             .accessibilityLabel("Записать голосом")
 
             Link(destination: URL(string: "assistantpocket://capture")!) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.title3)
+                    .font(.title)
+                    .widgetTapTarget(width: 42)
             }
             .accessibilityLabel("Запомнить")
         }
     }
 
     private func planTask(_ task: WidgetTask) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
             Button(intent: MarkTaskDoneIntent(taskID: task.id)) {
                 Image(systemName: "circle")
-                    .font(.subheadline)
+                    .font(.title2)
+                    .widgetTapTarget(width: 38)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Выполнено: \(task.title)")
@@ -894,16 +908,20 @@ private struct AssistantWidgetView: View {
                 .font(.subheadline.weight(.semibold))
 
             ForEach(suggestions) { task in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
                     Text(task.title)
-                        .font(.caption)
+                        .font(.subheadline)
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
 
                     Button(intent: PlanTaskIntent(taskID: task.id)) {
                         Text("＋ На сегодня")
-                            .font(.caption2.weight(.medium))
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 32)
+                            .background(Capsule().fill(.tint.opacity(0.16)))
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Добавить на сегодня: \(task.title)")
@@ -921,20 +939,20 @@ private struct AssistantWidgetView: View {
 
                 Text(event.title)
                     .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
+                    .lineLimit(family == .systemLarge ? 2 : 1)
 
                 Text(event.start, format: .dateTime.hour().minute())
                     + Text("–")
                     + Text(event.end, format: .dateTime.hour().minute())
-
             }
 
             Spacer(minLength: 0)
 
             Button(intent: DismissCalendarEventIntent(eventID: event.id, eventEnd: event.end)) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.subheadline)
+                    .font(.title2)
                     .foregroundStyle(.secondary)
+                    .widgetTapTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Убрать встречу из внимания")
@@ -968,7 +986,7 @@ private struct AssistantWidgetView: View {
 
                 Text(reminder.text)
                     .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
+                    .lineLimit(family == .systemLarge ? 2 : 1)
 
                 if let at = reminder.at {
                     Text(at, format: .dateTime.hour().minute())
@@ -981,14 +999,16 @@ private struct AssistantWidgetView: View {
 
             Button(intent: AcknowledgeReminderIntent(reminderID: reminder.id)) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.subheadline)
+                    .font(.title2)
+                    .widgetTapTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Закрыть напоминание")
 
             Button(intent: SnoozeReminderIntent(reminderID: reminder.id)) {
                 Text("+15")
-                    .font(.caption2.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
+                    .widgetTapTarget(width: 44)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Отложить на 15 минут")
@@ -1015,7 +1035,8 @@ private struct AssistantWidgetView: View {
 
             Button(intent: SnoozeReminderIntent(reminderID: reminder.id)) {
                 Text("+15")
-                    .font(.caption2.weight(.semibold))
+                    .font(.caption.weight(.semibold))
+                    .widgetTapTarget(width: 40)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Отложить на 15 минут")

@@ -36,3 +36,32 @@ def test_polling_mode_serves_api_web_and_tick():
 def test_webhook_mode_adds_the_telegram_endpoint(monkeypatch):
     monkeypatch.setenv("WEBHOOK_URL", "https://example.invalid")
     assert "/webhook" in _paths(create_app())
+
+
+def test_health_reports_only_the_database():
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from bot.http.endpoints import handle_health
+
+    class Conn:
+        async def fetchval(self, _query):
+            return 1
+
+    class Pool:
+        def acquire(self):
+            class Acquire:
+                async def __aenter__(self):
+                    return Conn()
+
+                async def __aexit__(self, *_exc):
+                    return False
+
+            return Acquire()
+
+    ctx = SimpleNamespace(deps=SimpleNamespace(db_pool=Pool()), started_at_ts=0, mode="polling-web")
+    response = asyncio.run(handle_health(None, ctx))
+    body = json.loads(response.body)
+    assert response.status == 200
+    assert body["ok"] and body["db"] and body["degraded"] == []
+    assert "webdav" not in body

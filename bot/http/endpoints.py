@@ -193,7 +193,6 @@ async def handle_health(request: web.Request, ctx: HttpContext) -> web.StreamRes
         "degraded": [],
         "uptime_sec": int(time.time() - (ctx.started_at_ts or time.time())),
         "db": False,
-        "webdav": None,
         "mode": ctx.mode,
     }
 
@@ -212,20 +211,6 @@ async def handle_health(request: web.Request, ctx: HttpContext) -> web.StreamRes
         status["ok"] = False
         status["ready"] = False
         status["db_error"] = "no_pool"
-
-    # WebDAV check (degraded only)
-    try:
-        ping = getattr(ctx.deps.cloud, "ping", None)
-        if callable(ping):
-            status["webdav"] = await asyncio.wait_for(ping(), timeout=3)
-        else:
-            status["webdav"] = None
-        if status["webdav"] is False:
-            status["degraded"].append("webdav")
-    except Exception as e:
-        status["webdav"] = False
-        status["degraded"].append("webdav")
-        status["webdav_error"] = str(e)
 
     http_status = 200 if status["ready"] else 503
     return web.json_response(status, status=http_status)

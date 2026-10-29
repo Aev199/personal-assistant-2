@@ -161,16 +161,12 @@ private actor WidgetMutationCoordinator {
 
 private enum WidgetNetwork {
     static func loadToday() async throws -> (Data, HTTPURLResponse) {
-        try await send(
-            path: "/api/v1/today",
-            legacyPath: "/api/v1/companion/today"
-        )
+        try await send(path: "/api/v1/today")
     }
 
     static func markDone(taskID: Int) async throws {
         let (_, response) = try await send(
             path: "/api/v1/tasks/\(taskID)/done",
-            legacyPath: "/api/v1/companion/tasks/\(taskID)/done",
             method: "POST",
             body: Data("{}".utf8)
         )
@@ -239,7 +235,6 @@ private enum WidgetNetwork {
 
     private static func send(
         path: String,
-        legacyPath: String? = nil,
         method: String = "GET",
         body: Data? = nil
     ) async throws -> (Data, HTTPURLResponse) {
@@ -269,15 +264,6 @@ private enum WidgetNetwork {
         let (primaryData, primaryResponse) = try await URLSession.shared.data(for: primary)
         guard let primaryHTTP = primaryResponse as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
-        }
-
-        if primaryHTTP.statusCode == 404, let legacyPath {
-            let legacy = try makeRequest(legacyPath)
-            let (legacyData, legacyResponse) = try await URLSession.shared.data(for: legacy)
-            guard let legacyHTTP = legacyResponse as? HTTPURLResponse else {
-                throw URLError(.badServerResponse)
-            }
-            return (legacyData, legacyHTTP)
         }
 
         return (primaryData, primaryHTTP)

@@ -6,52 +6,52 @@ struct ContentView: View {
     let refreshToken: Int
     let onChanged: () -> Void
 
-    @EnvironmentObject private var settings: AppSettings
-    @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject var settings: AppSettings
+    @Environment(\.scenePhase) var scenePhase
 
-    @AppStorage("assistant.captureDraft") private var captureText = ""
-    @State private var tasks: [TodayTask] = []
-    @State private var reminders: [TodayReminder] = []
-    @State private var events: [TodayEvent] = []
-    @State private var calendarUnavailable = false
-    @State private var calendarPending = false
-    @State private var didRetryPendingCalendar = false
-    @State private var hasLoadedToday = false
-    @State private var todayStale = false
-    @State private var todayLoadGeneration = 0
-    @State private var isLoading = false
-    @State private var isSending = false
-    @State private var errorMessage: String?
-    @State private var actionError: String?
-    @State private var confirmation: String?
-    @State private var confirmationRevision = 0
-    @State private var showSettings = false
-    @AppStorage("assistant.clarificationContext") private var clarificationContext = ""
-    @AppStorage("assistant.clarificationPrompt") private var clarificationPrompt = ""
-    @State private var pendingIntake: [NativeIntakePending] = []
-    @State private var isFlushingOutbox = false
-    @State private var isFlushingVoiceOutbox = false
-    @State private var isVoiceSending = false
-    @StateObject private var voiceRecorder = VoiceRecorder()
-    @State private var editingTask: TodayTask?
-    @State private var showPlanPicker = false
-    @State private var now = Date()
-    @FocusState private var captureFocused: Bool
+    @AppStorage("assistant.captureDraft") var captureText = ""
+    @State var tasks: [TodayTask] = []
+    @State var reminders: [TodayReminder] = []
+    @State var events: [TodayEvent] = []
+    @State var calendarUnavailable = false
+    @State var calendarPending = false
+    @State var didRetryPendingCalendar = false
+    @State var hasLoadedToday = false
+    @State var todayStale = false
+    @State var todayLoadGeneration = 0
+    @State var isLoading = false
+    @State var isSending = false
+    @State var errorMessage: String?
+    @State var actionError: String?
+    @State var confirmation: String?
+    @State var confirmationRevision = 0
+    @State var showSettings = false
+    @AppStorage("assistant.clarificationContext") var clarificationContext = ""
+    @AppStorage("assistant.clarificationPrompt") var clarificationPrompt = ""
+    @State var pendingIntake: [NativeIntakePending] = []
+    @State var isFlushingOutbox = false
+    @State var isFlushingVoiceOutbox = false
+    @State var isVoiceSending = false
+    @StateObject var voiceRecorder = VoiceRecorder()
+    @State var editingTask: TodayTask?
+    @State var showPlanPicker = false
+    @State var now = Date()
+    @FocusState var captureFocused: Bool
 
-    private let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
-    private var activeEvent: TodayEvent? {
+    var activeEvent: TodayEvent? {
         events.first { $0.start <= now && $0.end > now }
     }
 
-    private var dueReminder: TodayReminder? {
+    var dueReminder: TodayReminder? {
         reminders.first(where: { reminder in
             guard let at = reminder.at else { return false }
             return at <= now
         })
     }
 
-    private var upcomingEvent: TodayEvent? {
+    var upcomingEvent: TodayEvent? {
         guard activeEvent == nil, dueReminder == nil else { return nil }
         let cutoff = now.addingTimeInterval(15 * 60)
         return events.first { $0.start > now && $0.start <= cutoff && $0.end > now }
@@ -59,36 +59,36 @@ struct ContentView: View {
 
     /// A meeting in progress or starting soon, or a due reminder, is shown
     /// above «На сегодня» without changing the plan itself.
-    private var attentionEvent: TodayEvent? {
+    var attentionEvent: TodayEvent? {
         activeEvent ?? upcomingEvent
     }
 
-    private var attentionReminder: TodayReminder? {
+    var attentionReminder: TodayReminder? {
         guard activeEvent == nil else { return nil }
         return dueReminder
     }
 
-    private var planTasks: [TodayTask] {
+    var planTasks: [TodayTask] {
         tasks.filter { $0.isInTodayPlan }
     }
 
-    private var suggestedTasks: [TodayTask] {
+    var suggestedTasks: [TodayTask] {
         Array(tasks.filter { !$0.isInTodayPlan }.prefix(3))
     }
 
-    private var laterEvents: [TodayEvent] {
+    var laterEvents: [TodayEvent] {
         events.filter { $0.end > now && $0.id != attentionEvent?.id }
     }
 
-    private var laterReminders: [TodayReminder] {
+    var laterReminders: [TodayReminder] {
         reminders.filter { $0.id != attentionReminder?.id }
     }
 
-    private var nextEvent: TodayEvent? {
+    var nextEvent: TodayEvent? {
         laterEvents.first
     }
 
-    private var nextReminder: TodayReminder? {
+    var nextReminder: TodayReminder? {
         laterReminders.first
     }
 
@@ -203,583 +203,9 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private var dataFreshnessWarning: some View {
-        if todayStale {
-            HStack(spacing: 8) {
-                Label("Не удалось обновить · показаны последние данные", systemImage: "wifi.slash")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer(minLength: 8)
-
-                Button {
-                    Task { await loadToday() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Повторить обновление")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var calendarWarning: some View {
-        // A slow calendar is retried quietly; only a real failure is shown,
-        // so an unknown calendar never looks like a free day.
-        if calendarUnavailable && !calendarPending {
-            HStack(spacing: 8) {
-                Label("Календарь не обновился", systemImage: "calendar.badge.exclamationmark")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer(minLength: 8)
-
-                Button {
-                    Task { await loadToday() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Повторить обновление календаря")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var attentionSection: some View {
-        if let event = attentionEvent {
-            eventFocusCard(event)
-        } else if let reminder = attentionReminder {
-            reminderFocusCard(reminder)
-        }
-    }
-
-    @ViewBuilder
-    private var planSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("На сегодня")
-                    .font(.headline)
-
-                Spacer()
-
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-
-                if hasLoadedToday {
-                    Button("Добавить") {
-                        showPlanPicker = true
-                    }
-                    .font(.subheadline.weight(.medium))
-                    .accessibilityLabel("Добавить дела на сегодня")
-                }
-            }
-
-            if !hasLoadedToday && errorMessage != nil && settings.isConfigured && !isLoading {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Не удалось обновить", systemImage: "wifi.exclamationmark")
-                        .font(.title3.weight(.semibold))
-
-                    Text("Проверьте соединение или VPN.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Button("Повторить") {
-                        Task { await loadToday() }
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
-            } else if !settings.isConfigured {
-                Button("Подключить Assistant") {
-                    showSettings = true
-                }
-                .buttonStyle(.borderedProminent)
-            } else if !planTasks.isEmpty {
-                ForEach(planTasks) { task in
-                    planRow(task)
-                }
-            } else if hasLoadedToday {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Пока ничего не выбрано")
-                        .font(.title3.weight(.semibold))
-
-                    if !suggestedTasks.isEmpty {
-                        Text("Добавьте 2–3 дела:")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                        ForEach(suggestedTasks) { task in
-                            suggestionRow(task)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func planRow(_ task: TodayTask) -> some View {
-        HStack(alignment: .top, spacing: 11) {
-            Button {
-                Task { await complete(task) }
-            } label: {
-                Image(systemName: "circle")
-                    .font(.title3)
-                    .padding(.top, 1)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Выполнено: \(task.title)")
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                taskMeta(task)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                editingTask = task
-            }
-
-            Spacer(minLength: 0)
-
-            Button {
-                Task { await setPlanned(task, false) }
-            } label: {
-                Image(systemName: "minus.circle")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Убрать из «На сегодня»: \(task.title)")
-        }
-        .padding(.vertical, 5)
-    }
-
-    private func suggestionRow(_ task: TodayTask) -> some View {
-        HStack(alignment: .top, spacing: 11) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(task.title)
-                    .font(.body)
-                    .lineLimit(2)
-
-                taskMeta(task)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                editingTask = task
-            }
-
-            Spacer(minLength: 0)
-
-            Button("На сегодня") {
-                Task { await setPlanned(task, true) }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .accessibilityLabel("Добавить на сегодня: \(task.title)")
-        }
-        .padding(.vertical, 5)
-    }
-
-    private func eventFocusCard(_ event: TodayEvent) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 7) {
-                Label("Календарь", systemImage: "calendar")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Text(event.title)
-                    .font(.title3.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(event.start, format: .dateTime.hour().minute())
-                    + Text("–")
-                    + Text(event.end, format: .dateTime.hour().minute())
-            }
-            .font(.subheadline)
-
-            Spacer(minLength: 8)
-
-            Button {
-                Task { await dismiss(event) }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, height: 38)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Убрать встречу из внимания")
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func reminderFocusCard(_ reminder: TodayReminder) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 7) {
-                Label("Напоминание", systemImage: "bell.fill")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Text(reminder.text)
-                    .font(.title3.weight(.semibold))
-                if let at = reminder.at {
-                    Text(at, format: .dateTime.hour().minute())
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            VStack(spacing: 8) {
-                Button("ОК") {
-                    Task { await acknowledge(reminder) }
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .accessibilityLabel("Закрыть напоминание")
-
-                Button("+15") {
-                    Task { await snooze(reminder) }
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .accessibilityLabel("Отложить на 15 минут")
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    @ViewBuilder
-    private var laterSection: some View {
-        if nextEvent != nil || nextReminder != nil {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Позже сегодня")
-                    .font(.headline)
-
-                nextTimedRows
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var nextTimedRows: some View {
-        if let event = nextEvent, let reminder = nextReminder, let reminderAt = reminder.at {
-            if reminderAt <= event.start {
-                compactReminderRow(reminder)
-                compactEventRow(event)
-            } else {
-                compactEventRow(event)
-                compactReminderRow(reminder)
-            }
-        } else {
-            if let event = nextEvent {
-                compactEventRow(event)
-            }
-            if let reminder = nextReminder {
-                compactReminderRow(reminder)
-            }
-        }
-    }
-
-    private func compactEventRow(_ event: TodayEvent) -> some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: "calendar")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(event.title)
-                    .font(.body)
-                    .lineLimit(2)
-                Text(event.start, format: .dateTime.hour().minute())
-                    + Text("–")
-                    + Text(event.end, format: .dateTime.hour().minute())
-
-                if let relative = timeUntilText(event.start) {
-                    Text(relative)
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            Spacer(minLength: 0)
-
-            Button {
-                Task { await dismiss(event) }
-            } label: {
-                Image(systemName: "xmark.circle")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Убрать встречу из внимания")
-        }
-        .padding(.vertical, 5)
-    }
-
-    private func timeUntilText(_ date: Date) -> String? {
-        let seconds = date.timeIntervalSince(now)
-        guard seconds > 0 else { return nil }
-
-        let minutes = max(1, Int((seconds / 60).rounded(.up)))
-        if minutes < 60 {
-            return "через \(minutes) мин"
-        }
-
-        let hours = minutes / 60
-        let rest = minutes % 60
-        guard hours <= 2 else { return nil }
-        return rest == 0 ? "через \(hours) ч" : "через \(hours) ч \(rest) мин"
-    }
-
-    private func compactReminderRow(_ reminder: TodayReminder) -> some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: "bell")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(reminder.text)
-                    .font(.body)
-                    .lineLimit(2)
-                if let at = reminder.at {
-                    Text(at, format: .dateTime.hour().minute())
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            Button("+15") {
-                Task { await snooze(reminder) }
-            }
-            .buttonStyle(.plain)
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("Отложить на 15 минут")
-        }
-        .padding(.vertical, 5)
-    }
-
-    @ViewBuilder
-    private func taskMeta(_ task: TodayTask) -> some View {
-        HStack(spacing: 6) {
-            if task.isPersonal {
-                Text("Личное")
-            } else if !task.project.isEmpty && task.project.uppercased() != "INBOX" {
-                Text(task.project)
-            }
-
-            if let deadline = task.deadline {
-                if task.overdue {
-                    Text(taskDeadlineText(deadline))
-                        .foregroundStyle(.red)
-                } else {
-                    Text(taskDeadlineText(deadline))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !task.assignee.isEmpty {
-                Text(task.assignee)
-            }
-
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-
-    private var captureSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Запомнить")
-                .font(.headline)
-
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField(
-                    voiceRecorder.isRecording
-                        ? "Говорите…"
-                        : (clarificationPrompt.isEmpty ? "Написать или надиктовать…" : "Уточнить…"),
-                    text: $captureText,
-                    axis: .vertical
-                )
-                    .lineLimit(1...4)
-                    .textFieldStyle(.plain)
-                    .focused($captureFocused)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
-                    .submitLabel(.send)
-                    .onSubmit {
-                        Task { await capture() }
-                    }
-                    .disabled(voiceRecorder.isRecording || isVoiceSending)
-
-                Button {
-                    Task {
-                        if voiceRecorder.isRecording {
-                            await finishVoiceCapture()
-                        } else {
-                            await startVoiceCapture()
-                        }
-                    }
-                } label: {
-                    if isVoiceSending {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 22, height: 22)
-                    } else {
-                        Image(systemName: voiceRecorder.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.headline)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.circle)
-                .disabled(isSending || isVoiceSending)
-                .accessibilityLabel(voiceRecorder.isRecording ? "Остановить и отправить" : "Записать голосом")
-
-                Button {
-                    Task { await capture() }
-                } label: {
-                    if isSending {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 22, height: 22)
-                    } else {
-                        Image(systemName: "arrow.up")
-                            .font(.headline)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .disabled(
-                    captureText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || isSending
-                    || isVoiceSending
-                    || voiceRecorder.isRecording
-                )
-                .accessibilityLabel("Сохранить")
-            }
-
-            if !clarificationPrompt.isEmpty {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "questionmark.circle")
-                        .foregroundStyle(.secondary)
-
-                    Text(clarificationPrompt)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Spacer(minLength: 6)
-
-                    Button {
-                        clearClarification()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Отменить уточнение")
-                }
-            }
-
-            ForEach(pendingIntake) { pending in
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(pending.title)
-                        .font(.subheadline.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let start = pending.payload?.startLocal {
-                        HStack(spacing: 6) {
-                            Text(start, format: .dateTime.day().month().hour().minute())
-                            if let duration = pending.payload?.durationMin {
-                                Text("·")
-                                Text("\(duration) мин")
-                            }
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-
-                    HStack(spacing: 10) {
-                        Button("Добавить") {
-                            Task { await confirmPending(pending) }
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button("Не добавлять") {
-                            Task { await cancelPending(pending) }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
-            }
-        }
-    }
-
-    private func consumeSystemCaptureRequest() {
-        guard let mode = CaptureLaunchSignal.consumeMode() else { return }
-        activateCapture(mode: mode)
-    }
-
-    private func activateCapture(mode: CaptureLaunchMode) {
-        // Capture launched from a widget/deep link means "new thought", not
-        // "answer the clarification I happened to leave open earlier".
-        clearClarification()
-
-        if mode == .voice {
-            activateVoiceCapture()
-        } else {
-            activateCapture()
-        }
-    }
-
-    private func activateVoiceCapture() {
-        confirmation = nil
-        errorMessage = nil
-        guard settings.isConfigured else {
-            showSettings = true
-            return
-        }
-        captureFocused = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            Task { await startVoiceCapture() }
-        }
-    }
-
-    private func activateCapture() {
-        confirmation = nil
-        errorMessage = nil
-        guard settings.isConfigured else {
-            showSettings = true
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            captureFocused = true
-        }
-    }
 
     @MainActor
-    private func loadToday() async {
+    func loadToday() async {
         guard settings.isConfigured else { return }
 
         todayLoadGeneration += 1
@@ -824,7 +250,7 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func loadPendingIntake() async {
+    func loadPendingIntake() async {
         guard settings.isConfigured else { return }
         do {
             let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
@@ -834,541 +260,9 @@ struct ContentView: View {
         }
     }
 
-    @MainActor
-    private func persistInterruptedVoiceCapture() {
-        guard let recordingURL = voiceRecorder.stop() else { return }
-        let context = clarificationContext.isEmpty ? nil : clarificationContext
-
-        do {
-            _ = try VoiceCaptureOutbox.enqueue(
-                recordingURL: recordingURL,
-                context: context
-            )
-        } catch {
-            // Keep the temporary recording rather than deleting a capture
-            // that failed to move into the durable outbox.
-        }
-    }
 
     @MainActor
-    private func startVoiceCapture() async {
-        guard settings.isConfigured else {
-            showSettings = true
-            return
-        }
-        guard !voiceRecorder.isRecording, !isVoiceSending else { return }
-
-        confirmation = nil
-        errorMessage = nil
-        captureFocused = false
-
-        do {
-            try await voiceRecorder.start()
-            Task {
-                await LocalSpeechTranscriber.preparePreferredAssets()
-            }
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func finishVoiceCapture() async {
-        guard let recordingURL = voiceRecorder.stop() else { return }
-        let context = clarificationContext.isEmpty ? nil : clarificationContext
-
-        do {
-            let queued = try VoiceCaptureOutbox.enqueue(
-                recordingURL: recordingURL,
-                context: context
-            )
-            await sendVoiceCapture(queued)
-        } catch {
-            // If moving into the durable outbox failed, leave the temporary
-            // recording in place rather than deleting the only audio copy.
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func sendVoiceCapture(_ queued: QueuedVoiceCapture) async {
-        guard settings.isConfigured else { return }
-
-        isVoiceSending = true
-        errorMessage = nil
-        confirmation = nil
-        defer { isVoiceSending = false }
-
-        if let existingText = CaptureOutbox.item(id: queued.id) {
-            await sendTranscribedVoiceCapture(existingText)
-            return
-        }
-
-        do {
-            if let textCapture = try await makeLocalVoiceTextCapture(queued) {
-                await sendTranscribedVoiceCapture(textCapture)
-                return
-            }
-
-            try Task.checkCancellation()
-            let audioData = try VoiceCaptureOutbox.data(for: queued)
-            let client = APIClient(
-                baseURL: settings.normalizedBaseURL,
-                token: settings.token
-            )
-            let response = try await client.voiceIntake(
-                audioData: audioData,
-                context: queued.context,
-                clientID: queued.id
-            )
-
-            if response.status == "stored" {
-                if let transcript = response.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !transcript.isEmpty {
-                    _ = CaptureOutbox.enqueue(
-                        text: transcript,
-                        context: queued.context,
-                        id: queued.id
-                    )
-                    VoiceCaptureOutbox.remove(queued.id)
-                }
-                presentConfirmation("Голос записан, разберу позже")
-                return
-            }
-
-            VoiceCaptureOutbox.remove(queued.id)
-            await applyIntakeResponse(
-                response,
-                originalText: response.transcript ?? "Голосовая запись"
-            )
-        } catch is CancellationError {
-            // Keep the durable audio. Cancellation must never silently turn
-            // into an upload to the server.
-            return
-        } catch {
-            if isRetryable(error) {
-                presentConfirmation("Голос сохранён на телефоне")
-                return
-            }
-
-            // The audio stays durable if both the local and server paths fail.
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func makeLocalVoiceTextCapture(
-        _ queued: QueuedVoiceCapture
-    ) async throws -> QueuedCapture? {
-        let transcript = try await LocalSpeechTranscriber.transcribe(
-            fileURL: VoiceCaptureOutbox.url(for: queued)
-        )
-        guard let transcript,
-              !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-
-        return CaptureOutbox.enqueue(
-            text: transcript,
-            context: queued.context,
-            id: queued.id
-        )
-    }
-
-    @MainActor
-    private func sendTranscribedVoiceCapture(
-        _ queued: QueuedCapture,
-        mayResolveClarification: Bool = true
-    ) async {
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            let response = try await client.intake(
-                queued.text,
-                context: queued.context,
-                clientID: queued.id
-            )
-
-            if response.status == "stored" {
-                VoiceCaptureOutbox.remove(queued.id)
-                presentConfirmation("Голос распознан, разберу позже")
-                return
-            }
-
-            CaptureOutbox.remove(queued.id)
-            VoiceCaptureOutbox.remove(queued.id)
-            await applyIntakeResponse(
-                response,
-                originalText: queued.text,
-                mayResolveClarification: mayResolveClarification
-            )
-        } catch {
-            // The transcript is already durable in CaptureOutbox. Keep it for
-            // any failure so a successful local recognition can never be lost.
-            if isRetryable(error) {
-                presentConfirmation("Голос распознан и сохранён на телефоне")
-            } else {
-                presentActionError(error)
-            }
-        }
-    }
-
-    @MainActor
-    private func flushVoiceOutbox() async {
-        guard settings.isConfigured, !isFlushingVoiceOutbox, !voiceRecorder.isRecording else {
-            return
-        }
-
-        VoiceCaptureOutbox.recoverTemporaryRecordings()
-        let queued = VoiceCaptureOutbox.all()
-        guard !queued.isEmpty else { return }
-
-        isFlushingVoiceOutbox = true
-        defer { isFlushingVoiceOutbox = false }
-
-        let client = APIClient(
-            baseURL: settings.normalizedBaseURL,
-            token: settings.token
-        )
-
-        for item in queued {
-            if let existingText = CaptureOutbox.item(id: item.id) {
-                await sendTranscribedVoiceCapture(
-                    existingText,
-                    mayResolveClarification: item.context != nil
-                        && item.context == clarificationContext
-                )
-                continue
-            }
-
-            do {
-                if let textCapture = try await makeLocalVoiceTextCapture(item) {
-                    await sendTranscribedVoiceCapture(
-                        textCapture,
-                        mayResolveClarification: item.context != nil
-                            && item.context == clarificationContext
-                    )
-                    continue
-                }
-
-                try Task.checkCancellation()
-                let response = try await client.voiceIntake(
-                    audioData: VoiceCaptureOutbox.data(for: item),
-                    context: item.context,
-                    clientID: item.id
-                )
-                if response.status == "stored" {
-                    if let transcript = response.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       !transcript.isEmpty {
-                        _ = CaptureOutbox.enqueue(
-                            text: transcript,
-                            context: item.context,
-                            id: item.id
-                        )
-                        VoiceCaptureOutbox.remove(item.id)
-                    }
-                    continue
-                }
-
-                VoiceCaptureOutbox.remove(item.id)
-                await applyIntakeResponse(
-                    response,
-                    originalText: response.transcript ?? "Голосовая запись",
-                    mayResolveClarification: item.context != nil
-                        && item.context == clarificationContext
-                )
-            } catch is CancellationError {
-                break
-            } catch {
-                if isRetryable(error) {
-                    break
-                }
-                // Preserve this item for inspection/retry, but let later
-                // captures continue instead of poisoning the whole queue.
-                continue
-            }
-        }
-    }
-
-    @MainActor
-    private func capture() async {
-        let text = captureText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        guard settings.isConfigured else {
-            showSettings = true
-            return
-        }
-
-        isSending = true
-        errorMessage = nil
-        confirmation = nil
-        let context = clarificationContext.isEmpty ? nil : clarificationContext
-        let queued = CaptureOutbox.enqueue(text: text, context: context)
-        defer { isSending = false }
-
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            let response = try await client.intake(text, context: context, clientID: queued.id)
-            captureText = ""
-
-            if response.status == "stored" {
-                captureFocused = false
-                presentConfirmation("Сохранено, разберу позже")
-                return
-            }
-
-            CaptureOutbox.remove(queued.id)
-            await applyIntakeResponse(response, originalText: text)
-        } catch {
-            captureText = ""
-            captureFocused = false
-
-            if isRetryable(error) {
-                presentConfirmation("Сохранено на телефоне")
-            } else {
-                actionError = "Не удалось отправить. Запись сохранена на телефоне."
-            }
-        }
-    }
-
-    @MainActor
-    private func applyIntakeResponse(
-        _ response: NativeIntakeResponse,
-        originalText: String,
-        mayResolveClarification: Bool = true
-    ) async {
-        if let need = response.needsInput.first {
-            clarificationPrompt = need.prompt
-            clarificationContext = response.context ?? (clarificationContext.isEmpty ? originalText : clarificationContext)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                captureFocused = true
-            }
-        } else if mayResolveClarification {
-            clearClarification()
-        }
-
-        for pending in response.pending where !pendingIntake.contains(where: { $0.id == pending.id }) {
-            pendingIntake.append(pending)
-        }
-
-        let savedCount = response.saved.count
-        if response.inboxFallback == true {
-            presentConfirmation("Записано во Входящие")
-        } else if savedCount == 1, let item = response.saved.first {
-            switch item.kind.lowercased() {
-            case "idea":
-                presentConfirmation("Идея сохранена")
-            case "reminder":
-                presentConfirmation("Напоминание создано")
-            case "event", "calendar_event":
-                presentConfirmation("Встреча добавлена")
-            default:
-                presentConfirmation("Задача записана")
-            }
-        } else if savedCount > 1 {
-            presentConfirmation("Записано: \(savedCount)")
-        } else if response.status == "stored" {
-            presentConfirmation(response.message ?? "Записано")
-        }
-
-        if savedCount > 0 {
-            onChanged()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            await loadToday()
-        }
-    }
-
-    @MainActor
-    private func clearClarification() {
-        clarificationPrompt = ""
-        clarificationContext = ""
-        captureFocused = false
-    }
-
-    @MainActor
-    private func flushOutbox() async {
-        guard settings.isConfigured, !isFlushingOutbox else { return }
-        let queued = CaptureOutbox.all()
-        guard !queued.isEmpty else { return }
-
-        isFlushingOutbox = true
-        defer { isFlushingOutbox = false }
-
-        let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-        var refreshed = false
-
-        for item in queued {
-            do {
-                let response = try await client.intake(item.text, context: item.context, clientID: item.id)
-                if response.status == "stored" {
-                    VoiceCaptureOutbox.remove(item.id)
-                    presentConfirmation("Сохранено, разберу позже")
-                    break
-                }
-
-                CaptureOutbox.remove(item.id)
-                VoiceCaptureOutbox.remove(item.id)
-                await applyIntakeResponse(
-                    response,
-                    originalText: item.text,
-                    mayResolveClarification: item.context != nil
-                        && item.context == clarificationContext
-                )
-                refreshed = refreshed || !response.saved.isEmpty
-            } catch {
-                if isRetryable(error) {
-                    break
-                }
-                // Keep the bad item, but do not let it permanently block every
-                // newer capture behind it.
-                continue
-            }
-        }
-
-        if refreshed {
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        }
-    }
-
-    private func isRetryable(_ error: Error) -> Bool {
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .timedOut, .notConnectedToInternet, .networkConnectionLost,
-                 .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
-                return true
-            default:
-                return false
-            }
-        }
-        if let apiError = error as? APIClientError,
-           case let .http(code, _) = apiError {
-            return code == 502 || code == 503 || code == 504
-        }
-        return false
-    }
-
-    @MainActor
-    private func confirmPending(_ pending: NativeIntakePending) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            let response = try await client.confirmIntake(pendingActionID: pending.pendingActionId)
-            guard response.ok else {
-                throw APIClientError.invalidResponse
-            }
-            withAnimation {
-                pendingIntake.removeAll { $0.id == pending.id }
-            }
-            presentConfirmation("Добавлено")
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-            await loadToday()
-        } catch let APIClientError.http(code, _) where code == 409 {
-            await loadPendingIntake()
-            presentConfirmation("Эта запись уже обработана")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func cancelPending(_ pending: NativeIntakePending) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.cancelIntake(pendingActionID: pending.pendingActionId)
-            withAnimation {
-                pendingIntake.removeAll { $0.id == pending.id }
-            }
-        } catch let APIClientError.http(code, _) where code == 409 {
-            await loadPendingIntake()
-            presentConfirmation("Эта запись уже обработана")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func acknowledge(_ reminder: TodayReminder) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.acknowledgeReminder(reminderID: reminder.id)
-            withAnimation {
-                reminders.removeAll { $0.id == reminder.id }
-            }
-            presentConfirmation("Напоминание закрыто")
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func snooze(_ reminder: TodayReminder) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.snoozeReminder(reminderID: reminder.id, minutes: 15)
-            withAnimation {
-                reminders.removeAll { $0.id == reminder.id }
-            }
-            presentConfirmation("Отложено на 15 минут")
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func dismiss(_ event: TodayEvent) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.dismissEvent(eventID: event.id, until: event.end)
-            withAnimation {
-                events.removeAll { $0.id == event.id }
-            }
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func setPlanned(_ task: TodayTask, _ planned: Bool) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            if planned {
-                _ = try await client.planTask(taskID: task.id)
-            } else {
-                _ = try await client.unplanTask(taskID: task.id)
-            }
-            onChanged()
-            await loadToday()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func complete(_ task: TodayTask) async {
-        errorMessage = nil
-        do {
-            let client = APIClient(baseURL: settings.normalizedBaseURL, token: settings.token)
-            _ = try await client.markDone(taskID: task.id)
-            withAnimation {
-                tasks.removeAll { $0.id == task.id }
-            }
-            onChanged()
-            WidgetCenter.shared.reloadTimelines(ofKind: "AssistantPocketWidget")
-        } catch {
-            presentActionError(error)
-        }
-    }
-
-    @MainActor
-    private func presentConfirmation(_ message: String) {
+    func presentConfirmation(_ message: String) {
         confirmationRevision += 1
         let revision = confirmationRevision
         withAnimation(.easeOut(duration: 0.15)) {
@@ -1383,7 +277,7 @@ struct ContentView: View {
         }
     }
 
-    private var actionErrorPresented: Binding<Bool> {
+    var actionErrorPresented: Binding<Bool> {
         Binding(
             get: { actionError != nil },
             set: { isPresented in
@@ -1395,7 +289,7 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func presentActionError(_ error: Error) {
+    func presentActionError(_ error: Error) {
         if error is CancellationError {
             return
         }
@@ -1415,7 +309,7 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func present(_ error: Error) {
+    func present(_ error: Error) {
         if error is CancellationError {
             return
         }
@@ -1431,73 +325,5 @@ struct ContentView: View {
             }
         }
         errorMessage = error.localizedDescription
-    }
-}
-
-private struct SettingsView: View {
-    @EnvironmentObject private var settings: AppSettings
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var baseURLDraft = ""
-    @State private var tokenDraft = ""
-    @State private var didLoadDraft = false
-
-    private var normalizedDraftURL: String {
-        baseURLDraft.trimmingCharacters(in: CharacterSet(charactersIn: " /\n\t"))
-    }
-
-    private var isDraftConfigured: Bool {
-        AppSettings.isValidBaseURL(normalizedDraftURL)
-            && !tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Подключение") {
-                    TextField("Адрес Assistant", text: $baseURLDraft)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        .autocorrectionDisabled()
-
-                    SecureField("Код доступа", text: $tokenDraft)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-
-                Section {
-                    Text("Эти данные нужны только один раз для подключения к вашему Assistant.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("Assistant")
-            .toolbar {
-                if settings.isConfigured {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Отмена") {
-                            dismiss()
-                        }
-                    }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") {
-                        settings.baseURL = normalizedDraftURL
-                        settings.token = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                        settings.syncWidgetSettings()
-                        dismiss()
-                    }
-                    .disabled(!isDraftConfigured)
-                }
-            }
-            .onAppear {
-                guard !didLoadDraft else { return }
-                baseURLDraft = settings.baseURL
-                tokenDraft = settings.token
-                didLoadDraft = true
-            }
-            .interactiveDismissDisabled(!settings.isConfigured)
-        }
     }
 }

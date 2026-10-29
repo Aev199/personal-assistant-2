@@ -81,17 +81,6 @@ struct TaskMutationResponse: Decodable {
     }
 }
 
-struct TaskStartHelpResponse: Decodable {
-    let ok: Bool
-    let taskId: Int
-    let steps: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case ok, steps
-        case taskId = "task_id"
-    }
-}
-
 struct TodayTask: Decodable, Identifiable {
     let id: Int
     let title: String
@@ -101,8 +90,6 @@ struct TodayTask: Decodable, Identifiable {
     let status: String?
     let deadline: Date?
     let overdue: Bool
-    let focused: Bool?
-    let focusedSince: Date?
     /// Server edit version, sent back unchanged so an edit cannot silently
     /// overwrite a change made from the web or Telegram.
     let updatedAt: String?
@@ -110,8 +97,7 @@ struct TodayTask: Decodable, Identifiable {
     let todayPlan: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, project, kind, assignee, status, deadline, overdue, focused
-        case focusedSince = "focused_since"
+        case id, title, project, kind, assignee, status, deadline, overdue
         case updatedAt = "updated_at"
         case todayPlan = "today_plan"
     }
@@ -122,10 +108,6 @@ struct TodayTask: Decodable, Identifiable {
 
     var inProgress: Bool {
         status?.lowercased() == "in_progress"
-    }
-
-    var isFocused: Bool {
-        focused == true
     }
 
     var isPersonal: Bool {
@@ -226,17 +208,6 @@ struct NativePendingMutationResponse: Decodable {
         case ok, status, message, error
         case pendingActionId = "pending_action_id"
     }
-}
-
-struct CaptureResponse: Decodable {
-    let ok: Bool
-    let task: CapturedTask
-}
-
-struct CapturedTask: Decodable {
-    let id: Int
-    let title: String
-    let project: String
 }
 
 struct AttentionMutationResponse: Decodable {

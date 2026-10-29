@@ -53,23 +53,8 @@ struct APIClient {
         return request
     }
 
-    private func send(
-        path: String,
-        legacyPath: String? = nil,
-        method: String = "GET",
-        body: Data? = nil
-    ) async throws -> (Data, URLResponse) {
-        let primary = try request(path: path, method: method, body: body)
-        let (data, response) = try await URLSession.shared.data(for: primary)
-
-        if let http = response as? HTTPURLResponse,
-           http.statusCode == 404,
-           let legacyPath {
-            let legacy = try request(path: legacyPath, method: method, body: body)
-            return try await URLSession.shared.data(for: legacy)
-        }
-
-        return (data, response)
+    private func send(path: String, method: String = "GET", body: Data? = nil) async throws -> (Data, URLResponse) {
+        try await URLSession.shared.data(for: request(path: path, method: method, body: body))
     }
 
     private func decode<T: Decodable>(_ type: T.Type, data: Data, response: URLResponse) throws -> T {
@@ -82,10 +67,7 @@ struct APIClient {
     }
 
     func loadToday() async throws -> TodayResponse {
-        let (data, response) = try await send(
-            path: "/api/v1/today",
-            legacyPath: "/api/v1/companion/today"
-        )
+        let (data, response) = try await send(path: "/api/v1/today")
         return try decode(TodayResponse.self, data: data, response: response)
     }
 
@@ -218,32 +200,8 @@ struct APIClient {
             return req
         }
 
-        let primary = try voiceRequest(path: "/api/v1/intake/audio")
-        let (primaryData, primaryResponse) = try await URLSession.shared.data(for: primary)
-
-        if let http = primaryResponse as? HTTPURLResponse, http.statusCode == 404 {
-            let legacy = try voiceRequest(path: "/api/v1/companion/intake/audio")
-            let (legacyData, legacyResponse) = try await URLSession.shared.data(for: legacy)
-
-            if let legacyHTTP = legacyResponse as? HTTPURLResponse, legacyHTTP.statusCode == 404 {
-                throw APIClientError.http(
-                    404,
-                    "Сервер Assistant не обновлён: голосовой ввод ещё не поддерживается."
-                )
-            }
-
-            return try decode(
-                NativeIntakeResponse.self,
-                data: legacyData,
-                response: legacyResponse
-            )
-        }
-
-        return try decode(
-            NativeIntakeResponse.self,
-            data: primaryData,
-            response: primaryResponse
-        )
+        let (data, response) = try await URLSession.shared.data(for: voiceRequest(path: "/api/v1/intake/audio"))
+        return try decode(NativeIntakeResponse.self, data: data, response: response)
     }
 
     func loadPendingIntake() async throws -> NativePendingListResponse {
@@ -272,17 +230,6 @@ struct APIClient {
         return try decode(NativePendingMutationResponse.self, data: data, response: response)
     }
 
-    func capture(_ text: String) async throws -> CaptureResponse {
-        let data = try JSONSerialization.data(withJSONObject: ["text": text])
-        let (responseData, response) = try await send(
-            path: "/api/v1/capture",
-            legacyPath: "/api/v1/companion/capture",
-            method: "POST",
-            body: data
-        )
-        return try decode(CaptureResponse.self, data: responseData, response: response)
-    }
-
     func planTask(taskID: Int) async throws -> TaskMutationResponse {
         let req = try request(
             path: "/api/v1/tasks/\(taskID)/plan",
@@ -301,16 +248,6 @@ struct APIClient {
         )
         let (data, response) = try await URLSession.shared.data(for: req)
         return try decode(TaskMutationResponse.self, data: data, response: response)
-    }
-
-    func taskStartHelp(taskID: Int) async throws -> TaskStartHelpResponse {
-        let req = try request(
-            path: "/api/v1/tasks/\(taskID)/steps",
-            method: "POST",
-            body: Data("{}".utf8)
-        )
-        let (data, response) = try await URLSession.shared.data(for: req)
-        return try decode(TaskStartHelpResponse.self, data: data, response: response)
     }
 
     func acknowledgeReminder(reminderID: Int) async throws -> AttentionMutationResponse {
@@ -354,12 +291,7 @@ struct APIClient {
 
     func markDone(taskID: Int) async throws -> DoneResponse {
         let body = Data("{}".utf8)
-        let (data, response) = try await send(
-            path: "/api/v1/tasks/\(taskID)/done",
-            legacyPath: "/api/v1/companion/tasks/\(taskID)/done",
-            method: "POST",
-            body: body
-        )
+        let (data, response) = try await send(path: "/api/v1/tasks/\(taskID)/done", method: "POST", body: body)
         return try decode(DoneResponse.self, data: data, response: response)
     }
 }

@@ -6,6 +6,10 @@ IOS = ROOT / "ios" / "AssistantPocket"
 
 
 def _read(relative: str) -> str:
+    """The Today screen is split into ContentView.swift and ContentView+*.swift."""
+    if relative == "App/ContentView.swift":
+        parts = [IOS / relative] + sorted((IOS / "App").glob("ContentView+*.swift")) + [IOS / "App" / "SettingsView.swift"]
+        return "\n".join(path.read_text(encoding="utf-8") for path in parts)
     return (IOS / relative).read_text(encoding="utf-8")
 
 
@@ -88,7 +92,7 @@ def test_meeting_and_due_reminder_sit_above_the_plan_without_changing_it():
     widget = _read("Widget/AssistantWidget.swift")
 
     for source in (home, widget):
-        assert "private var attentionEvent" in source
+        assert "var attentionEvent" in source
         assert "activeEvent ?? upcomingEvent" in source
         assert "guard activeEvent == nil else { return nil }" in source
         assert "manualFocusTask" not in source
@@ -160,8 +164,8 @@ def test_capture_deep_links_are_routed_at_root_after_switching_to_today():
 def test_external_quick_capture_cannot_be_hijacked_by_old_clarification_context():
     home = _read("App/ContentView.swift")
 
-    start = home.index("private func activateCapture(mode:")
-    end = home.index("private func activateVoiceCapture", start)
+    start = home.index("func activateCapture(mode:")
+    end = home.index("func activateVoiceCapture", start)
     block = home[start:end]
 
     assert "clearClarification()" in block
@@ -247,8 +251,8 @@ def test_primary_tabs_share_one_revision_so_capture_and_mutations_do_not_leave_s
 def test_today_keeps_last_good_state_but_marks_it_stale_after_refresh_failure():
     home = _read("App/ContentView.swift")
 
-    assert "@State private var todayStale = false" in home
-    assert "private var dataFreshnessWarning" in home
+    assert "@State var todayStale = false" in home
+    assert "var dataFreshnessWarning" in home
     assert '"Не удалось обновить · показаны последние данные"' in home
     assert "if hasLoadedToday" in home
     assert "todayStale = true" in home
@@ -258,7 +262,7 @@ def test_today_keeps_last_good_state_but_marks_it_stale_after_refresh_failure():
 def test_today_does_not_misreport_empty_day_when_first_load_failed():
     home = _read("App/ContentView.swift")
 
-    assert "@State private var hasLoadedToday = false" in home
+    assert "@State var hasLoadedToday = false" in home
     assert '"Не удалось обновить"' in home
     assert '"Проверьте соединение или VPN.' in home
     assert 'Button("Повторить")' in home
@@ -269,7 +273,7 @@ def test_today_does_not_misreport_empty_day_when_first_load_failed():
 def test_capture_feedback_is_ephemeral_instead_of_becoming_screen_clutter():
     home = _read("App/ContentView.swift")
 
-    assert "private func presentConfirmation" in home
+    assert "func presentConfirmation" in home
     assert "confirmationRevision" in home
     assert ".now() + 2.4" in home
 
@@ -334,7 +338,7 @@ def test_due_reminders_take_attention_only_when_due_without_growing_today():
     home = _read("App/ContentView.swift")
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "private var dueReminder" in home
+    assert "var dueReminder" in home
     assert "return at <= now" in home
     assert "private var dueReminder" in widget
     assert "return at <= entry.date" in widget
@@ -346,7 +350,7 @@ def test_timed_items_in_next_are_ordered_by_clock_time_in_app_and_widget():
     home = _read("App/ContentView.swift")
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "private var nextTimedRows" in home
+    assert "var nextTimedRows" in home
     assert "reminderAt <= event.start" in home
     assert "private var nextTimedContent" in widget
     assert "reminderAt <= event.start" in widget
@@ -358,7 +362,7 @@ def test_slow_calendar_gets_one_fast_followup_instead_of_looking_empty():
     widget = _read("Widget/AssistantWidget.swift")
 
     assert 'case calendarPending = "calendar_pending"' in models
-    assert "@State private var calendarPending = false" in home
+    assert "@State var calendarPending = false" in home
     # The slow calendar is retried quietly instead of adding a status line.
     assert "Календарь загружается" not in home
     assert ".now() + 1.5" in home
@@ -372,7 +376,7 @@ def test_calendar_failure_is_visible_instead_of_looking_like_a_free_day():
     home = _read("App/ContentView.swift")
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "@State private var calendarUnavailable = false" in home
+    assert "@State var calendarUnavailable = false" in home
     assert 'Label("Календарь не обновился"' in home
     assert "response.calendarUnavailable ?? false" in home
     assert 'case calendarUnavailable = "calendar_unavailable"' in widget
@@ -463,8 +467,8 @@ def test_calendar_attention_can_be_dismissed_without_deleting_calendar():
 def test_stale_pending_confirmation_refreshes_instead_of_leaving_dead_card():
     home = _read("App/ContentView.swift")
 
-    confirm_start = home.index("private func confirmPending")
-    reminder_start = home.index("private func acknowledge", confirm_start)
+    confirm_start = home.index("func confirmPending")
+    reminder_start = home.index("func acknowledge", confirm_start)
     block = home[confirm_start:reminder_start]
 
     assert block.count("APIClientError.http(code, _) where code == 409") == 2
@@ -476,8 +480,8 @@ def test_voice_and_pending_action_failures_use_immediate_alert_surface():
     home = _read("App/ContentView.swift")
 
     assert home.count("presentActionError(error)") >= 10
-    start = home.index("private func startVoiceCapture")
-    end = home.index("private func flushVoiceOutbox", start)
+    start = home.index("func startVoiceCapture")
+    end = home.index("func flushVoiceOutbox", start)
     voice_block = home[start:end]
     assert "present(error)" not in voice_block
 
@@ -562,7 +566,7 @@ def test_empty_plan_offers_a_few_one_tap_suggestions():
     home = _read("App/ContentView.swift")
     widget = _read("Widget/AssistantWidget.swift")
 
-    assert "private var suggestedTasks" in home
+    assert "var suggestedTasks" in home
     assert ".prefix(3)" in home
     assert '"Пока ничего не выбрано"' in home
     assert 'Button("На сегодня")' in home
@@ -610,9 +614,9 @@ def test_personal_client_targets_modern_speech_stack_and_prewarms_it_during_reco
 def test_transcribed_voice_keeps_audio_backup_until_server_acknowledges_text():
     home = _read("App/ContentView.swift")
 
-    make_start = home.index("private func makeLocalVoiceTextCapture")
-    send_start = home.index("private func sendTranscribedVoiceCapture")
-    flush_start = home.index("private func flushVoiceOutbox")
+    make_start = home.index("func makeLocalVoiceTextCapture")
+    send_start = home.index("func sendTranscribedVoiceCapture")
+    flush_start = home.index("func flushVoiceOutbox")
     make_block = home[make_start:send_start]
     send_block = home[send_start:flush_start]
 
@@ -727,15 +731,15 @@ def test_clarification_can_be_cancelled_explicitly():
     home = _read("App/ContentView.swift")
 
     assert 'accessibilityLabel("Отменить уточнение")' in home
-    assert "private func clearClarification()" in home
+    assert "func clearClarification()" in home
 
 
 def test_one_nonretryable_outbox_item_does_not_block_newer_captures_forever():
     home = _read("App/ContentView.swift")
 
-    voice_start = home.index("private func flushVoiceOutbox")
-    text_start = home.index("private func flushOutbox")
-    pending_start = home.index("private func isRetryable", text_start)
+    voice_start = home.index("func flushVoiceOutbox")
+    text_start = home.index("func flushOutbox")
+    pending_start = home.index("func isRetryable", text_start)
 
     voice_block = home[voice_start:text_start]
     text_block = home[text_start:pending_start]
@@ -750,8 +754,8 @@ def test_failed_text_capture_remains_durable_for_later_retry():
     home = _read("App/ContentView.swift")
 
     assert '"Не удалось отправить. Запись сохранена на телефоне."' in home
-    capture_start = home.index("private func capture() async")
-    apply_start = home.index("private func applyIntakeResponse", capture_start)
+    capture_start = home.index("func capture() async")
+    apply_start = home.index("func applyIntakeResponse", capture_start)
     capture_block = home[capture_start:apply_start]
     catch_block = capture_block[capture_block.rindex("catch {"):]
     assert "CaptureOutbox.remove(queued.id)" not in catch_block
@@ -773,8 +777,7 @@ def test_voice_capture_is_fast_shared_and_loss_resistant():
     assert "activateCapture(mode: mode)" in home
 
     assert "/api/v1/intake/audio" in api
-    assert "/api/v1/companion/intake/audio" in api
-    assert "Сервер Assistant не обновлён" in api
+    assert "/api/v1/companion/" not in api
     assert "multipart/form-data" in api
     assert "assistantpocket://capture?mode=voice" in widget
     assert '"mic.circle.fill"' in widget

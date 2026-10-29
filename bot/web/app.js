@@ -82,16 +82,34 @@ async function connect(){state.connected=true;$('login').hidden=true;$('shell').
 $('connect-form').addEventListener('submit',async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{const r=await api('/session',{method:'POST',body:{token:$('access-key').value}});state.csrf=r.csrf_token;$('access-key').value='';await connect();}catch(err){$('login-error').textContent=message(err);}finally{b.disabled=false;}});
 $('logout').addEventListener('click',async()=>{try{await api('/session',{method:'DELETE'});showLogin();}catch(e){$('page-error').hidden=false;$('page-error').textContent=message(e);}});
 $('capture').addEventListener('input',draft);
+const kinds={task:'Задача',personal_task:'Личное',reminder:'Напоминание',idea:'Идея',event:'Встреча'};
+function captureSummary(r){
+ if(r.inbox_fallback)return 'Записано во Входящие';
+ const saved=(r.saved||[]).map(i=>`${kinds[i.kind]||'Записано'}: ${i.title}`);
+ return saved.length?saved.join(' · '):(r.message||'Записано');
+}
+// One capture core for every client: Gemini parses, Inbox keeps the text when it cannot.
 async function saveCapture(retry=false){
  if(state.captureBusy)return;
  const old=readPending();let pending=old;
- if(!retry){const text=$('capture').value.trim();if(!text)return;if(old&&old.text!==text){$('capture-status').innerHTML='Сначала подтвердите предыдущую запись. Новый текст сохранён в поле. <button type="button" data-retry="1">Повторить сохранение</button>';return;}pending=old||{text,client_request_id:crypto.randomUUID()};storageSet('assistant.pending',JSON.stringify(pending));}
+ if(!retry){const text=$('capture').value.trim();if(!text)return;if(old&&old.text!==text){$('capture-status').innerHTML='Сначала подтвердите предыдущую запись. Новый текст сохранён в поле. <button type="button" data-retry="1">Повторить сохранение</button>';return;}pending=old||{text,client_id:crypto.randomUUID(),...(state.captureContext?{context:state.captureContext}:{})};storageSet('assistant.pending',JSON.stringify(pending));}
  if(!pending)return;
  state.captureBusy=true;$('capture-status').textContent='Сохраняется…';
- try{await api('/capture',{method:'POST',body:pending});if($('capture').value.trim()===pending.text){$('capture').value='';draft();}storageSet('assistant.pending',null);$('capture-status').textContent='Сохранено во Входящие';await loadPage({quiet:true});}
+ try{
+  const r=await api('/intake',{method:'POST',body:{text:pending.text,client_id:pending.client_id||pending.client_request_id,...(pending.context?{context:pending.context}:{})}});
+  if(r.status==='stored')throw {code:'db_unavailable'};
+  if($('capture').value.trim()===pending.text){$('capture').value='';draft();}
+  storageSet('assistant.pending',null);state.captureContext=null;
+  const done=(r.saved||[]).length?html(captureSummary(r)):'';
+  if((r.needs_input||[]).length){state.captureContext=r.context||pending.text;$('capture-status').innerHTML=(done?done+'. ':'')+`❓ ${html(r.needs_input[0].prompt)} Ответьте в поле ввода. <button type="button" data-skip-question="1">Не уточнять</button>`;$('capture').focus();}
+  else if((r.pending||[]).length){const p=r.pending[0];$('capture-status').innerHTML=(done?done+'. ':'')+`📅 Добавить в календарь: ${html(p.title)}? <button type="button" data-confirm="${p.pending_action_id}">Добавить</button> <button type="button" data-reject="${p.pending_action_id}">Не добавлять</button>`;}
+  else $('capture-status').textContent=captureSummary(r);
+  await loadPage({quiet:true});
+ }
  catch(e){$('capture-status').innerHTML=html(message(e))+' <button type="button" data-retry="1">Повторить сохранение</button>';}
  finally{state.captureBusy=false;}
 }
+async function answerPending(id,confirm){try{await api(`/intake/${id}/${confirm?'confirm':'cancel'}`,{method:'POST',body:{}});$('capture-status').textContent=confirm?'Добавлено в календарь':'Не добавлено';await loadPage({quiet:true});}catch(e){$('capture-status').textContent=e.status===409?'Эта запись уже обработана':message(e);}}
 $('capture-form').addEventListener('submit',e=>{e.preventDefault();saveCapture();});
 async function mutate(path,success){if(state.busy)return;state.busy=true;try{await api(path,{method:'POST',body:{}});$('task-dialog').close();notify(success);await loadPage({quiet:true});}catch(e){notify(message(e));}finally{state.busy=false;}}
 function localDateInput(value){if(!value)return '';const date=dateKey(value);return date+'T'+time(value);}
@@ -110,6 +128,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
  if(d.page){state.page=d.page;$('task-dialog').close();loadPage();}
  if(d.scope&&d.scope!==state.scope){state.scope=d.scope;loadPage();}
  if(d.more)loadPage({more:true});if(d.refresh)loadPage();if(d.retry)saveCapture(true);
+ if(d.confirm)answerPending(d.confirm,true);if(d.reject)answerPending(d.reject,false);if(d.skipQuestion){state.captureContext=null;$('capture-status').textContent='Хорошо, без уточнения.';}
  if(d.open)openTask(Number(d.open));if(d.close)$('task-dialog').close();if(d.reopen&&detailTask)openTask(detailTask.id);
  if(d.done)mutate(`/tasks/${d.done}/done`,'Задача завершена');
  if(d.plan)mutate(`/tasks/${d.plan}/${d.planned==='true'?'unplan':'plan'}`,d.planned==='true'?'Убрано из «На сегодня»':'Добавлено на сегодня');

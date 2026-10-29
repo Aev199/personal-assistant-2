@@ -15,7 +15,7 @@ let tasks=[
  {id:5,title:'Проверить экспорт в PLAXIS',project:'SoilStiffness',kind:'task',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',today_plan:false}
 ];
 let ideas=[{id:1,text:'Контекстный поиск по рабочему архиву'}];
-let conflict=false,failTasksOnce=false,failInboxOnce=false;
+let conflict=false,failTasksOnce=false,failInboxOnce=false,confirmed=false;
 const server=http.createServer(async(req,res)=>{
  const u=new URL(req.url,'http://localhost');let body='';for await(const c of req)body+=c;
  const data=body?JSON.parse(body):{};
@@ -39,14 +39,18 @@ const server=http.createServer(async(req,res)=>{
    return json({ok:true,timezone:'Europe/Moscow',tasks:list.slice(0,2),next_cursor:list.length>2?list[1].id:null});
   }
   if(u.pathname==='/api/v1/ideas')return json({ok:true,ideas,total:ideas.length});
-  if(u.pathname==='/api/v1/capture'){
-   captureKeys.push(data.client_request_id);
-   if(!committed.has(data.client_request_id)){
-    const t={id:tasks.length+1,title:data.text,project:'INBOX',kind:'task',status:'todo',deadline:null,updated_at:new Date().toISOString()};tasks.push(t);committed.set(data.client_request_id,t);
+  if(u.pathname==='/api/v1/intake'){
+   captureKeys.push(data.client_id);
+   if(data.text.startsWith('встреча')&&!committed.has(data.client_id)){committed.set(data.client_id,null);return json({ok:true,status:'needs_confirmation',saved:[],needs_input:[],pending:[{pending_action_id:8,title:'Встреча с подрядчиком',kind:'event'}]});}
+   if(data.text.startsWith('напомни')&&!data.context)return json({ok:true,status:'needs_input',saved:[],pending:[],context:data.text,needs_input:[{prompt:'Когда напомнить?'}]});
+   if(data.context)return json({ok:true,status:'saved',saved:[{status:'saved',kind:'reminder',title:'Позвонить'}],needs_input:[],pending:[]});
+   if(!committed.has(data.client_id)){
+    const t={id:tasks.length+1,title:data.text,project:'INBOX',kind:'task',status:'todo',deadline:null,updated_at:new Date().toISOString()};tasks.push(t);committed.set(data.client_id,t);
    }
    if(failCapture){failCapture=false;return json({ok:false,error:'db_unavailable'},503);}
-   return json({ok:true,task:committed.get(data.client_request_id)},201);
+   return json({ok:true,status:'saved',inbox_fallback:true,saved:[{status:'saved',kind:'task',title:data.text}],needs_input:[],pending:[]});
   }
+  if(u.pathname==='/api/v1/intake/8/confirm'){confirmed=true;return json({ok:true,status:'saved'});}
   const m=u.pathname.match(/\/tasks\/(\d+)(?:\/(\w+))?$/);
   if(m){const t=tasks.find(t=>t.id===Number(m[1]));
    if(req.method==='PATCH'){if(conflict){conflict=false;return json({ok:false,error:'task_conflict'},409);}Object.assign(t,data,{updated_at:new Date().toISOString()});}
@@ -96,17 +100,24 @@ const server=http.createServer(async(req,res)=>{
   const capture=page.getByLabel('Добавить задачу или мысль');await capture.fill('Новая запись после обрыва');await capture.press('Enter');
   await page.getByRole('button',{name:'Повторить сохранение',exact:true}).waitFor();assert.equal(await capture.inputValue(),'Новая запись после обрыва');
   await page.getByRole('button',{name:'Повторить сохранение',exact:true}).click();
-  await page.getByText('Сохранено во Входящие',{exact:true}).waitFor();
+  await page.getByText('Записано во Входящие',{exact:true}).waitFor();
   assert.equal(await page.getByRole('heading',{name:'Задачи',exact:true}).count(),1,'capture must not move the user to another page');
   await page.getByRole('button',{name:'Входящие',exact:true}).first().click();
   await page.getByText('Новая запись после обрыва',{exact:true}).waitFor();assert.equal(captureKeys[0],captureKeys[1]);assert.equal(tasks.filter(t=>t.title==='Новая запись после обрыва').length,1);
   await page.getByRole('button',{name:'В идеи',exact:true}).first().click();
+  await capture.fill('напомни позвонить');await capture.press('Enter');
+  await page.getByText('Когда напомнить?',{exact:false}).waitFor();
+  await capture.fill('завтра в 10');await capture.press('Enter');
+  await page.getByText('Напоминание: Позвонить',{exact:true}).waitFor();
+  await capture.fill('встреча с подрядчиком в пятницу');await capture.press('Enter');
+  await page.getByRole('button',{name:'Добавить',exact:true}).click();
+  await page.getByText('Добавлено в календарь',{exact:true}).waitFor();assert(confirmed);
   await page.getByRole('button',{name:'Идеи',exact:true}).first().click();await page.getByText('Контекстный поиск по рабочему архиву',{exact:true}).waitFor();
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Задачи',exact:true}).last().click();await page.getByRole('button',{name:'Личное',exact:true}).click();
   await page.getByText('Записаться на сервис автомобиля',{exact:true}).waitFor();
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   if(process.env.SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR,'assistant-web-mobile.png'),fullPage:true});
-  assert.deepEqual(errors,[]);console.log('Browser acceptance passed: login, calendar failure, pagination, today plan, conflict, capture retry, ideas, mobile.');
+  assert.deepEqual(errors,[]);console.log('Browser acceptance passed: login, calendar failure, pagination, today plan, conflict, capture retry, clarification, calendar confirmation, ideas, mobile.');
  }finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1});

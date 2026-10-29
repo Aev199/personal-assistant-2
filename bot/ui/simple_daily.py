@@ -282,11 +282,14 @@ async def ui_render_today(
     icloud: ICloudCalDAVAdapter | None = None,
     preferred_message_id: int | None = None,
     force_new: bool = False,
+    notice: str | None = None,
+    extra_rows: list[list[InlineKeyboardButton]] | None = None,
 ) -> int:
+    """`notice` and `extra_rows` show a capture result (e.g. «Отменить») on top."""
     tz_name = resolve_tz_name(tz_name or "Europe/Moscow")
     tz = resolve_tzinfo(tz_name)
     chat_id = int(message.chat.id)
-    toast_line = await legacy._pop_screen_toast(db_pool, chat_id)
+    toast_line = notice or await legacy._pop_screen_toast(db_pool, chat_id)
     page_size = 10
     page = max(0, int(page or 0))
     plan_day = local_today(tz_name)
@@ -393,7 +396,7 @@ async def ui_render_today(
             when = dt_local.strftime("%H:%M") if dt_local else "—"
             lines.append(f"<b>{h(when)}</b>  {h(str(reminder.get('text') or ''))}")
 
-    kb: list[list[InlineKeyboardButton]] = []
+    kb: list[list[InlineKeyboardButton]] = list(extra_rows or [])
     if tasks:
         lines.extend(["", "<b>На сегодня</b>"])
         task_lines, task_buttons = _daily_task_lines_and_buttons(
@@ -456,10 +459,6 @@ async def ui_render_home_more(
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Проекты", callback_data="nav:projects"),
-                InlineKeyboardButton(text="Напоминания", callback_data="nav:reminders:0"),
-            ],
             [
                 InlineKeyboardButton(text="Идеи", callback_data="nav:ideas:0"),
                 InlineKeyboardButton(text="Помощь", callback_data="nav:help"),

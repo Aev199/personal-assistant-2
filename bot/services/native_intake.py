@@ -20,6 +20,7 @@ from bot.db.runtime_state import (
     find_recent_action,
     forget_recent_action,
     get_pending_action,
+    record_action_journal,
     get_conversation_state,
     mark_pending_action_status,
     remember_recent_action,
@@ -466,6 +467,17 @@ async def _save_to_inbox_without_parsing(
                     client_request_id=f"native:{capture_id}",
                     source=source,
                 )
+                saved_task = result.get("task") or {}
+                if saved_task.get("id"):
+                    await record_action_journal(
+                        conn,
+                        chat_id=int(chat_id),
+                        source=source,
+                        action_type="task",
+                        summary=str(saved_task.get("title") or text),
+                        undo_payload={"action": "task", "task_id": int(saved_task["id"])},
+                        action_key=f"native:{capture_id}",
+                    )
     except Exception as inbox_exc:
         # Last resort: keep the raw receipt so the client retries later.
         await _save_receipt(

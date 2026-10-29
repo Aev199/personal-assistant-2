@@ -31,22 +31,8 @@ from bot.ui.simple_mode import install_simple_ui
 # simplified daily UI while legacy renderers remain available internally.
 install_simple_ui()
 
-from bot.handlers import (  # noqa: E402
-    register_bulk,
-    register_errors,
-    register_events,
-    register_inbox,
-    register_ideas,
-    register_nav,
-    register_onboarding,
-    register_pending_actions,
-    register_projects,
-    register_reminders,
-    register_system,
-    register_tasks,
-    register_team,
-    register_wizards,
-)
+from bot.handlers import register_errors  # noqa: E402
+from bot.tg import register as register_telegram  # noqa: E402
 
 
 def build_core(
@@ -81,24 +67,7 @@ def build_core(
     fsm_persistence = FsmPersistenceMiddleware()
     dp.message.middleware.register(fsm_persistence)
     dp.callback_query.middleware.register(fsm_persistence)
-    from bot.handlers.captures import register as register_captures
-    register_captures(dp)
-    from bot.handlers.day_plan import register as register_day_plan
-    register_day_plan(dp)
-    register_nav(dp)
-    register_projects(dp)
-    register_tasks(dp)
-    register_inbox(dp)
-    register_ideas(dp)
-    register_bulk(dp)
-    register_wizards(dp)
-    register_events(dp)
-    register_team(dp)
-    register_reminders(dp)
-    # Must precede the catch-all freeform handlers in register_system.
-    register_onboarding(dp)
-    register_system(dp)
-    register_pending_actions(dp)
+    register_telegram(dp)
     register_errors(dp)
 
     cloud = WebDavAdapter()

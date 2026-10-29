@@ -47,20 +47,15 @@ async def send_reminder(
     token = (action_token or "").replace("-", "")[:16]
     snooze_15 = f"rem:snooze:15:{reminder_id}:{token}" if token else f"rem:snooze:15:{reminder_id}"
     snooze_1h = f"rem:snooze:60:{reminder_id}:{token}" if token else f"rem:snooze:60:{reminder_id}"
-    snooze_18 = f"rem:snooze:at18:{reminder_id}:{token}" if token else f"rem:snooze:at18:{reminder_id}"
     snooze_tom = f"rem:snooze:tom:{reminder_id}:{token}" if token else f"rem:snooze:tom:{reminder_id}"
     close = f"rem:close:{reminder_id}:{token}" if token else f"rem:close:{reminder_id}"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="✓ Готово", callback_data=close)],
             [
-                InlineKeyboardButton(text="ОК", callback_data=close),
-                InlineKeyboardButton(text="📝 В задачу", callback_data=f"rem:task:{reminder_id}"),
-            ],
-            [
-                InlineKeyboardButton(text="⏸ 15м", callback_data=snooze_15),
-                InlineKeyboardButton(text="⏸ 1ч", callback_data=snooze_1h),
-                InlineKeyboardButton(text="🕕 18:00", callback_data=snooze_18),
-                InlineKeyboardButton(text="⏳ Завтра 9:00", callback_data=snooze_tom),
+                InlineKeyboardButton(text="+15 мин", callback_data=snooze_15),
+                InlineKeyboardButton(text="+1 ч", callback_data=snooze_1h),
+                InlineKeyboardButton(text="Завтра 9:00", callback_data=snooze_tom),
             ],
         ]
     )

@@ -283,3 +283,26 @@ def test_today_and_backlog_endpoints_mark_today_plan():
             assert len(backlog['tasks'])==8
             assert [t['id'] for t in backlog['tasks'] if t['today_plan']]==[ids[-1]]
     asyncio.run(run())
+
+
+def test_undo_removes_only_a_recent_capture():
+    async def run():
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from bot.services.native_intake import process_native_capture
+        from bot.services.undo import undo_latest
+        async with database(runtime=True) as (conn,pool):
+            async def capture(text, cid):
+                with patch('bot.services.native_intake._load_context', AsyncMock(return_value=('lead',None,'INBOX',[],[]))):
+                    return await process_native_capture(text=text, deps=SimpleNamespace(llm=None,tz_name='Europe/Moscow'),
+                                                        db_pool=pool, chat_id=9, source='telegram', capture_id=cid)
+            await capture('старая запись','a1')
+            await conn.execute("UPDATE action_journal SET created_at=NOW()-interval '1 hour'")
+            await capture('свежая запись','a2')
+            async with conn.transaction():
+                assert (await undo_latest(conn, chat_id=9)) == '↩️ Отменено: свежая запись'
+            async with conn.transaction():
+                assert (await undo_latest(conn, chat_id=9)) == 'Нечего отменять.'
+            titles=[r['title'] for r in await conn.fetch('SELECT title FROM tasks')]
+            assert titles == ['старая запись']
+    asyncio.run(run())

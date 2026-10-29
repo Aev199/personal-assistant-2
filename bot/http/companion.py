@@ -1505,6 +1505,7 @@ async def handle_voice_intake(request: web.Request, ctx) -> web.StreamResponse:
 
 
 async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:
+    from bot.http.web_auth import browser_identity
     if not _authorized(request):
         return _auth_error()
 
@@ -1538,7 +1539,7 @@ async def handle_intake(request: web.Request, ctx) -> web.StreamResponse:
         db_pool=pool,
         chat_id=int(ctx.deps.admin_id or 0),
         prepend_text=context,
-        source="ios",
+        source="web" if browser_identity(request) else "ios",
         capture_id=client_id,
     )
     return web.json_response(result, status=200 if result.get("ok") else 400)

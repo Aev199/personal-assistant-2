@@ -8,100 +8,52 @@ from aiohttp import web
 from bot.http import companion
 
 
-def test_assistant_routes_include_canonical_and_legacy_aliases():
+def test_api_has_one_canonical_route_set_without_focus_or_legacy_aliases():
     app = web.Application()
     companion.attach_companion_routes(app, SimpleNamespace())
-
     routes = {(route.method, route.resource.canonical) for route in app.router.routes()}
 
-    assert ("GET", "/api/v1/today") in routes
-    assert ("GET", "/api/v1/tasks") in routes
-    assert ("GET", "/api/v1/projects") in routes
-    assert ("GET", "/api/v1/ideas") in routes
-    assert ("POST", "/api/v1/ideas/{idea_id}/promote") in routes
-    assert ("POST", "/api/v1/ideas/{idea_id}/archive") in routes
-    assert ("PATCH", "/api/v1/tasks/{task_id}") in routes
-    assert ("POST", "/api/v1/capture") in routes
-    assert ("POST", "/api/v1/intake") in routes
-    assert ("POST", "/api/v1/intake/audio") in routes
-    assert ("GET", "/api/v1/intake/pending") in routes
-    assert ("POST", "/api/v1/intake/{pending_action_id}/confirm") in routes
-    assert ("POST", "/api/v1/intake/{pending_action_id}/cancel") in routes
-    assert ("POST", "/api/v1/tasks/{task_id}/focus") in routes
-    assert ("POST", "/api/v1/tasks/{task_id}/unfocus") in routes
-    assert ("POST", "/api/v1/tasks/{task_id}/steps") in routes
-    assert ("POST", "/api/v1/tasks/{task_id}/done") in routes
-    assert ("POST", "/api/v1/attention/dismiss-event") in routes
-    assert ("POST", "/api/v1/reminders/{reminder_id}/snooze") in routes
-    assert ("POST", "/api/v1/reminders/{reminder_id}/ack") in routes
-
-    assert ("GET", "/api/v1/companion/today") in routes
-    assert ("POST", "/api/v1/companion/capture") in routes
-    assert ("POST", "/api/v1/companion/intake/audio") in routes
-    assert ("POST", "/api/v1/companion/tasks/{task_id}/done") in routes
+    for route in [
+        ("GET", "/api/v1/today"), ("GET", "/api/v1/tasks"), ("GET", "/api/v1/projects"), ("GET", "/api/v1/ideas"),
+        ("POST", "/api/v1/ideas/{idea_id}/promote"), ("POST", "/api/v1/ideas/{idea_id}/archive"),
+        ("PATCH", "/api/v1/tasks/{task_id}"), ("POST", "/api/v1/intake"), ("POST", "/api/v1/intake/audio"),
+        ("GET", "/api/v1/intake/pending"), ("POST", "/api/v1/intake/{pending_action_id}/confirm"),
+        ("POST", "/api/v1/intake/{pending_action_id}/cancel"), ("POST", "/api/v1/tasks/{task_id}/done"),
+        ("POST", "/api/v1/tasks/{task_id}/plan"), ("POST", "/api/v1/tasks/{task_id}/unplan"),
+        ("POST", "/api/v1/attention/dismiss-event"), ("POST", "/api/v1/reminders/{reminder_id}/snooze"),
+        ("POST", "/api/v1/reminders/{reminder_id}/ack"),
+    ]:
+        assert route in routes
+    paths = {path for _method, path in routes}
+    assert not any(path.startswith("/api/v1/companion/") for path in paths)
+    for gone in ("/api/v1/capture", "/api/v1/tasks/{task_id}/focus", "/api/v1/tasks/{task_id}/unfocus", "/api/v1/tasks/{task_id}/steps"):
+        assert gone not in paths
 
 
-def test_companion_auth_requires_dedicated_bearer_token(monkeypatch):
-    monkeypatch.delenv("ASSISTANT_API_TOKEN", raising=False)
-    monkeypatch.setenv("COMPANION_API_TOKEN", "pocket-secret")
-    monkeypatch.setenv("COMPANION_WIDGET_TOKEN", "widget-secret")
-
-    app_token = SimpleNamespace(headers={"Authorization": "Bearer pocket-secret"})
-    widget_token = SimpleNamespace(headers={"Authorization": "Bearer widget-secret"})
-    bad = SimpleNamespace(headers={"Authorization": "Bearer wrong"})
-    legacy = SimpleNamespace(headers={"X-Internal-Key": "pocket-secret"})
-
-    assert companion._authorized(app_token) is True
-    assert companion._authorized(widget_token) is False
-    assert companion._authorized(widget_token, allow_widget=True) is True
-    assert companion._authorized(app_token, allow_widget=True) is True
-    assert companion._authorized(bad, allow_widget=True) is False
-    assert companion._authorized(legacy, allow_widget=True) is False
-
-
-def test_assistant_api_token_is_supported(monkeypatch):
+def test_api_needs_the_app_token(monkeypatch):
     monkeypatch.setenv("ASSISTANT_API_TOKEN", "assistant-secret")
-    monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
-    monkeypatch.delenv("COMPANION_WIDGET_TOKEN", raising=False)
+    good = SimpleNamespace(headers={"Authorization": "Bearer assistant-secret"}, cookies={})
+    bad = SimpleNamespace(headers={"Authorization": "Bearer wrong"}, cookies={})
+    assert companion._authorized(good) is True
+    assert companion._authorized(bad) is False
 
-    request = SimpleNamespace(headers={"Authorization": "Bearer assistant-secret"})
-    assert companion._authorized(request) is True
-    assert companion._authorized(request, allow_widget=True) is True
-
-
-def test_companion_is_disabled_without_token(monkeypatch):
-    monkeypatch.delenv("ASSISTANT_API_TOKEN", raising=False)
-    monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
-    monkeypatch.delenv("COMPANION_WIDGET_TOKEN", raising=False)
-    request = SimpleNamespace(headers={"Authorization": "Bearer anything"})
-    assert companion._authorized(request) is False
-    assert companion._authorized(request, allow_widget=True) is False
+    monkeypatch.delenv("ASSISTANT_API_TOKEN")
+    monkeypatch.setenv("COMPANION_API_TOKEN", "older-name")
+    assert companion._authorized(SimpleNamespace(headers={"Authorization": "Bearer older-name"}, cookies={})) is True
+    monkeypatch.delenv("COMPANION_API_TOKEN")
+    assert companion._authorized(good) is False
 
 
-def test_widget_token_does_not_grant_capture_scope(monkeypatch):
-    monkeypatch.delenv("ASSISTANT_API_TOKEN", raising=False)
-    monkeypatch.delenv("COMPANION_API_TOKEN", raising=False)
-    monkeypatch.setenv("COMPANION_WIDGET_TOKEN", "widget-secret")
-    request = SimpleNamespace(headers={"Authorization": "Bearer widget-secret"})
-
-    assert companion._authorized(request) is False
-    assert companion._authorized(request, allow_widget=True) is True
 
 
-def test_focus_endpoint_allows_widget_scope():
-    source = companion.handle_task_focus.__code__
-    names = set(source.co_names)
 
-    assert "_authorized" in names
-    assert "_auth_error" in names
 
-    focus_source = open(companion.__file__, encoding="utf-8").read()
-    start = focus_source.index("async def handle_task_focus")
-    end = focus_source.index("async def handle_task_done", start)
-    focus_block = focus_source[start:end]
 
-    assert "_authorized(request, allow_widget=True)" in focus_block
-    assert "_auth_error(allow_widget=True)" in focus_block
+
+
+
+
+
 
 
 def test_utc_aware_normalizes_naive_and_aware_values():
@@ -116,57 +68,10 @@ def test_utc_aware_normalizes_naive_and_aware_values():
     assert companion._utc_aware(None) is None
 
 
-def test_task_start_endpoint_clamps_help_to_one_action():
-    source = open(companion.__file__, encoding="utf-8").read()
-
-    assert '"maxItems": 1' in source
-    assert "_clean_task_steps(payload)[:1]" in source
-    assert "Give exactly one concrete physical next action" in source
 
 
-def test_clean_task_steps_keeps_small_unique_actions():
-    payload = {
-        "steps": [
-            "  Открыть исходную модель  ",
-            "Открыть исходную модель",
-            "Проверить исходные нагрузки",
-            "Сравнить результаты расчёта",
-            "Лишний четвёртый шаг",
-        ]
-    }
-
-    assert companion._clean_task_steps(payload) == [
-        "Открыть исходную модель",
-        "Проверить исходные нагрузки",
-        "Сравнить результаты расчёта",
-    ]
-    assert companion._clean_task_steps({"step": "Открыть файл"}) == ["Открыть файл"]
-    assert companion._clean_task_steps(None) == []
 
 
-def test_focus_mutations_are_serialized_across_app_and_widget_requests():
-    source = open(companion.__file__, encoding="utf-8").read()
-
-    assert "pg_advisory_xact_lock(hashtextextended($1, 0))" in source
-
-    focus_start = source.index("async def handle_task_focus")
-    steps_start = source.index("async def handle_task_steps", focus_start)
-    focus_block = source[focus_start:steps_start]
-
-    unfocus_start = source.index("async def handle_task_unfocus")
-    done_start = source.index("async def handle_task_done", unfocus_start)
-    unfocus_block = source[unfocus_start:done_start]
-    done_end = source.index('return web.json_response({"ok": True, "task_id": task_id, "status": "done"})', done_start)
-    done_block = source[done_start:done_end]
-
-    reminder_ack_start = source.index("async def handle_reminder_ack")
-    reminder_snooze_start = source.index("async def handle_reminder_snooze", reminder_ack_start)
-    reminder_ack_block = source[reminder_ack_start:reminder_snooze_start]
-
-    assert "_lock_attention_focus(conn" in focus_block
-    assert "_lock_attention_focus(conn" in unfocus_block
-    assert "_lock_attention_focus(conn" in done_block
-    assert "_lock_attention_focus(conn" not in reminder_ack_block
 
 
 def test_calendar_attention_dismissals_are_serialized_across_clients():
@@ -185,58 +90,12 @@ def test_calendar_attention_dismissals_are_serialized_across_clients():
     assert block.index("get_conversation_state(") < block.index("set_conversation_state(")
 
 
-def test_focus_previous_status_is_scoped_to_the_same_task():
-    state = {
-        "payload": {
-            "task_id": 42,
-            "previous_status": "todo",
-        }
-    }
-
-    assert companion._focus_previous_status(state, 42) == "todo"
-    assert companion._focus_previous_status(state, 41) is None
-    assert companion._focus_previous_status({"payload": {"task_id": 42, "previous_status": "in_progress"}}, 42) is None
 
 
-def test_focus_does_not_release_current_task_before_new_target_is_validated():
-    source = open(companion.__file__, encoding="utf-8").read()
-    start = source.index("async def handle_task_focus")
-    end = source.index("async def handle_task_steps", start)
-    block = source[start:end]
-
-    validate_pos = block.index('if not row:')
-    release_pos = block.index("previous_focus_id is not None and previous_focus_id != task_id")
-    assert validate_pos < release_pos
 
 
-def test_focus_handlers_restore_status_they_promoted():
-    source = open(companion.__file__, encoding="utf-8").read()
-    focus_start = source.index("async def handle_task_focus")
-    steps_start = source.index("async def handle_task_steps", focus_start)
-    focus_block = source[focus_start:steps_start]
-
-    unfocus_start = source.index("async def handle_task_unfocus")
-    done_start = source.index("async def handle_task_done", unfocus_start)
-    unfocus_block = source[unfocus_start:done_start]
-
-    assert '"previous_status": previous_status' in focus_block
-    assert "previous_focus_id != task_id" in focus_block
-    assert "SET status=$2" in focus_block
-    assert "_focus_previous_status(focus_state, task_id)" in unfocus_block
-    assert "SET status=$2" in unfocus_block
 
 
-def test_focus_started_at_requires_matching_task():
-    state = {
-        "payload": {
-            "task_id": 42,
-            "started_at": "2026-09-23T10:15:00+00:00",
-        }
-    }
-
-    assert companion._focus_started_at(state, 42) == "2026-09-23T10:15:00+00:00"
-    assert companion._focus_started_at(state, 41) is None
-    assert companion._focus_started_at(None, 42) is None
 
 
 def test_attention_selector_keeps_unscheduled_work_visible():
@@ -277,36 +136,8 @@ def test_attention_selector_prefers_in_progress_then_due_today():
     assert [row["id"] for row in selected] == [11, 10, 12]
 
 
-def test_today_keeps_active_focus_inside_query_limit_and_self_heals_external_completion():
-    source = open(companion.__file__, encoding="utf-8").read()
-    start = source.index("task_rows = await conn.fetch")
-    end = source.index("reminder_rows = await conn.fetch", start)
-    block = source[start:end]
-
-    assert "CASE WHEN $1::bigint IS NOT NULL AND t.id=$1 THEN 0 ELSE 1 END" in block
-    assert "focus_task_id," in block
-    assert "all(" in block
-    assert "DELETE FROM conversation_state" in block
-    assert "payload_json->>'task_id'=$2" in block
-    assert "focus_task_id = None" in block
 
 
-def test_attention_selector_keeps_explicit_focus_first():
-    now = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
-    end = datetime(2026, 9, 22, 0, 0, tzinfo=timezone.utc)
-    rows = [
-        {"id": 20, "status": "in_progress", "deadline": None, "created_at": datetime(2026, 9, 1)},
-        {"id": 21, "status": "todo", "deadline": None, "created_at": datetime(2026, 9, 2)},
-    ]
-
-    selected = companion._select_attention_tasks(
-        rows,
-        now_utc=now,
-        end_utc_aware=end,
-        focus_task_id=21,
-    )
-
-    assert [row["id"] for row in selected][:2] == [21, 20]
 
 
 def test_native_snooze_preserves_repeating_series_and_rejects_stale_future_tap():

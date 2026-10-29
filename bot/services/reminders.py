@@ -12,7 +12,6 @@ from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.services.logger import get_logger
-from bot.utils import h
 
 
 log = get_logger("bot.services.reminders")

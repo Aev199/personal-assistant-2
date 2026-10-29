@@ -23,23 +23,21 @@ async def list_tasks(conn, *, scope: str, inbox: bool, limit: int, cursor: int |
     rows = await conn.fetch('''
         SELECT t.id,t.title,t.deadline,t.status,t.kind,t.updated_at,p.code AS project,
                COALESCE(tm.name,'') AS assignee,
-               COALESCE(cs.payload_json->>'task_id'=t.id::text,FALSE) AS focused,
-               {plan} AS today_plan, COALESCE(t.planned_for=$6::date,FALSE) AS planned
+               {plan} AS today_plan, COALESCE(t.planned_for=$5::date,FALSE) AS planned
         FROM tasks t JOIN projects p ON p.id=t.project_id
         LEFT JOIN team tm ON tm.id=t.assignee_id
-        LEFT JOIN conversation_state cs ON cs.chat_id=$5 AND cs.flow='attention_focus'
         WHERE t.status NOT IN ('done','postponed') AND t.kind != 'super'
           AND p.status IN ('active','system') AND t.id > $1
           AND ($2='all' OR ($2='personal' AND t.kind='personal') OR ($2='work' AND t.kind!='personal'))
           AND (NOT $3 OR (p.code='INBOX' AND t.kind='task'))
         ORDER BY t.id ASC LIMIT $4
-        '''.replace('{plan}', today_plan_sql('$6', '$7')), cursor or 0, scope, inbox, limit+1, chat_id,
+        '''.replace('{plan}', today_plan_sql('$5', '$6')), cursor or 0, scope, inbox, limit+1,
         local_today(tz_name), tz_name)
     tasks=[]
     for r in rows[:limit]:
         tasks.append({'id':int(r['id']),'title':r['title'],'kind':r['kind'],
                       'project':'' if r['kind']=='personal' else r['project'],
-                      'status':r['status'],'assignee':r['assignee'],'focused':r['focused'],
+                      'status':r['status'],'assignee':r['assignee'],
                       'today_plan':bool(r['today_plan']),'planned':bool(r['planned']),
                       'deadline':iso(r['deadline']),'updated_at':iso(r['updated_at'])})
     return {'ok':True,'tasks':tasks,'next_cursor':int(rows[limit-1]['id']) if len(rows)>limit else None}

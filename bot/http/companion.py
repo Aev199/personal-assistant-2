@@ -16,18 +16,19 @@ from zoneinfo import ZoneInfo
 import asyncpg
 from aiohttp import web
 
-from bot.db import db_add_event, ensure_inbox_project_id
+from bot.db import db_add_event
 from bot.tz import resolve_tz_name, to_db_utc
 from bot.services.native_intake import process_native_capture, confirm_native_action, cancel_native_action
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
 from bot.services.calendar_today import TodayCalendarSnapshot, fetch_today_calendar
+from bot.services.task_actions import TaskActionError, complete_task
 from bot.services.day_plan import DayPlanError, in_today_plan, local_today, set_planned, today_plan_sql
 from bot.services.reminders import (
     mark_telegram_reminder_snoozed,
     next_repeat_time_utc_naive,
     snooze_reminder,
 )
-from bot.db.runtime_state import get_conversation_state, set_conversation_state, clear_conversation_state
+from bot.db.runtime_state import get_conversation_state, set_conversation_state
 
 
 MAX_CAPTURE_LEN = 2000
@@ -46,17 +47,13 @@ def _configured_token() -> str:
     ).strip()
 
 
-def _configured_widget_token() -> str:
-    return (os.getenv("COMPANION_WIDGET_TOKEN") or "").strip()
 
 
-def _authorized(request: web.Request, *, allow_widget: bool = False) -> bool:
+def _authorized(request: web.Request) -> bool:
     from bot.http.web_auth import browser_identity
     if browser_identity(request):
         return True
     accepted = [_configured_token()]
-    if allow_widget:
-        accepted.append(_configured_widget_token())
     accepted = [token for token in accepted if token]
     if not accepted:
         return False
@@ -68,8 +65,8 @@ def _authorized(request: web.Request, *, allow_widget: bool = False) -> bool:
     return bool(supplied) and any(secrets.compare_digest(supplied, token) for token in accepted)
 
 
-def _auth_error(*, allow_widget: bool = False) -> web.Response:
-    configured = bool(_configured_token()) or (allow_widget and bool(_configured_widget_token()))
+def _auth_error() -> web.Response:
+    configured = bool(_configured_token())
     if not configured:
         return web.json_response(
             {"ok": False, "error": "companion_not_configured"},
@@ -203,82 +200,25 @@ async def _lock_attention_state(
     )
 
 
-async def _lock_attention_focus(conn: asyncpg.Connection, chat_id: int) -> None:
-    """Serialize focus mutations from app, widget and overlapping requests."""
-    await _lock_attention_state(conn, chat_id, "attention_focus")
 
 
-def _focus_started_at(state: dict | None, task_id: int | None) -> str | None:
-    if not state or task_id is None:
-        return None
-    payload = state.get("payload") or {}
-    try:
-        focused_id = int(payload.get("task_id"))
-    except (TypeError, ValueError):
-        return None
-    if focused_id != int(task_id):
-        return None
-    value = payload.get("started_at")
-    return str(value).strip() if value else None
 
 
-def _focus_previous_status(state: dict | None, task_id: int | None) -> str | None:
-    if not state or task_id is None:
-        return None
-    payload = state.get("payload") or {}
-    try:
-        focused_id = int(payload.get("task_id"))
-    except (TypeError, ValueError):
-        return None
-    if focused_id != int(task_id):
-        return None
-    value = str(payload.get("previous_status") or "").strip().lower()
-    if not value or value in {"in_progress", "done", "postponed"}:
-        return None
-    return value
 
 
-def _clean_task_steps(payload: object) -> list[str]:
-    if not isinstance(payload, dict):
-        return []
-    raw = payload.get("steps")
-    if isinstance(raw, str):
-        raw = [raw]
-    if not isinstance(raw, list):
-        single = payload.get("step")
-        raw = [single] if isinstance(single, str) else []
-
-    steps: list[str] = []
-    for item in raw:
-        text = str(item or "").strip()
-        if not text:
-            continue
-        text = " ".join(text.split())
-        if len(text) > 160:
-            text = text[:157].rstrip() + "…"
-        if text not in steps:
-            steps.append(text)
-        if len(steps) >= 3:
-            break
-    return steps
 
 
 def _attention_sort_key(
     row: dict,
     now_utc: datetime,
     end_utc_aware: datetime,
-    *,
-    focus_task_id: int | None = None,
 ) -> tuple:
     deadline = _utc_aware(row.get("deadline"))
     created_at = _utc_aware(row.get("created_at"))
     status = str(row.get("status") or "").lower()
     task_id = int(row.get("id") or 0)
 
-    if focus_task_id is not None and task_id == int(focus_task_id):
-        bucket = -1
-        time_key = deadline.timestamp() if deadline else 0.0
-    elif status == "in_progress":
+    if status == "in_progress":
         bucket = 0
         time_key = deadline.timestamp() if deadline else float("inf")
     elif deadline and now_utc <= deadline < end_utc_aware:
@@ -305,17 +245,11 @@ def _select_attention_tasks(
     end_utc_aware: datetime,
     limit: int = ATTENTION_TASK_LIMIT,
     urgent_limit: int = ATTENTION_URGENT_LIMIT,
-    focus_task_id: int | None = None,
 ) -> list[dict]:
     """Keep the daily surface useful without letting overdue work consume it."""
     ordered = sorted(
         (dict(row) for row in rows or []),
-        key=lambda row: _attention_sort_key(
-            row,
-            now_utc,
-            end_utc_aware,
-            focus_task_id=focus_task_id,
-        ),
+        key=lambda row: _attention_sort_key(row, now_utc, end_utc_aware),
     )
     selected: list[dict] = []
     deferred_urgent: list[dict] = []
@@ -363,9 +297,6 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _task_update(request: web.Request) -> web.StreamResponse:
         return await handle_task_update(request, ctx)
 
-    async def _capture(request: web.Request) -> web.StreamResponse:
-        return await handle_capture(request, ctx)
-
     async def _intake(request: web.Request) -> web.StreamResponse:
         return await handle_intake(request, ctx)
 
@@ -380,15 +311,6 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
 
     async def _intake_cancel(request: web.Request) -> web.StreamResponse:
         return await handle_intake_cancel(request, ctx)
-
-    async def _focus(request: web.Request) -> web.StreamResponse:
-        return await handle_task_focus(request, ctx)
-
-    async def _unfocus(request: web.Request) -> web.StreamResponse:
-        return await handle_task_unfocus(request, ctx)
-
-    async def _steps(request: web.Request) -> web.StreamResponse:
-        return await handle_task_steps(request, ctx)
 
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
@@ -421,15 +343,11 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/ideas/{idea_id}/promote", _idea_promote)
     app.router.add_post("/api/v1/ideas/{idea_id}/archive", _idea_archive)
     app.router.add_patch("/api/v1/tasks/{task_id}", _task_update)
-    app.router.add_post("/api/v1/capture", _capture)
     app.router.add_post("/api/v1/intake", _intake)
     app.router.add_post("/api/v1/intake/audio", _voice_intake)
     app.router.add_get("/api/v1/intake/pending", _intake_pending)
     app.router.add_post("/api/v1/intake/{pending_action_id}/confirm", _intake_confirm)
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
-    app.router.add_post("/api/v1/tasks/{task_id}/focus", _focus)
-    app.router.add_post("/api/v1/tasks/{task_id}/unfocus", _unfocus)
-    app.router.add_post("/api/v1/tasks/{task_id}/steps", _steps)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
     app.router.add_post("/api/v1/tasks/{task_id}/plan", _plan)
     app.router.add_post("/api/v1/tasks/{task_id}/unplan", _unplan)
@@ -437,16 +355,11 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/reminders/{reminder_id}/snooze", _snooze_reminder)
     app.router.add_post("/api/v1/reminders/{reminder_id}/ack", _ack_reminder)
 
-    # Compatibility for already installed companion builds.
-    app.router.add_get("/api/v1/companion/today", _today)
-    app.router.add_post("/api/v1/companion/capture", _capture)
-    app.router.add_post("/api/v1/companion/intake/audio", _voice_intake)
-    app.router.add_post("/api/v1/companion/tasks/{task_id}/done", _done)
 
 
 async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
+    if not _authorized(request):
+        return _auth_error()
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:
@@ -457,7 +370,6 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
     now_local = datetime.now(tz)
     start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     end_local = start_local + timedelta(days=1)
-    start_utc = _utc_naive(start_local)
     end_utc = _utc_naive(end_local)
     now_utc = datetime.now(timezone.utc)
     plan_day = now_local.date()
@@ -473,20 +385,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
         )
     )
 
-    focus_task_id: int | None = None
-    focus_started_at: str | None = None
     async with pool.acquire() as conn:
-        focus_state = await get_conversation_state(
-            conn,
-            int(ctx.deps.admin_id or 0),
-            "attention_focus",
-        )
-        if focus_state:
-            try:
-                focus_task_id = int((focus_state.get("payload") or {}).get("task_id"))
-            except (TypeError, ValueError):
-                focus_task_id = None
-        focus_started_at = _focus_started_at(focus_state, focus_task_id)
 
         dismissed_event_state = await get_conversation_state(
             conn,
@@ -514,34 +413,13 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
               AND p.status IN ('active', 'system')
             ORDER BY
               CASE WHEN {plan} THEN 0 ELSE 1 END,
-              CASE WHEN $1::bigint IS NOT NULL AND t.id=$1 THEN 0 ELSE 1 END,
               t.created_at ASC,
               t.id ASC
             LIMIT 200
-            """.replace("{plan}", today_plan_sql("$2", "$3")),
-            focus_task_id,
+            """.replace("{plan}", today_plan_sql("$1", "$2")),
             plan_day,
             tz_name,
         )
-
-        if focus_task_id is not None and all(
-            int(row["id"]) != focus_task_id for row in task_rows
-        ):
-            # Telegram, bulk actions, project archival, or another backend
-            # surface may have completed/postponed the focused task. Clear only
-            # the exact stale focus we read so a concurrent new focus survives.
-            await conn.execute(
-                """
-                DELETE FROM conversation_state
-                WHERE chat_id=$1
-                  AND flow='attention_focus'
-                  AND payload_json->>'task_id'=$2
-                """,
-                int(ctx.deps.admin_id or 0),
-                str(focus_task_id),
-            )
-            focus_task_id = None
-            focus_started_at = None
 
         reminder_rows = await conn.fetch(
             """
@@ -578,7 +456,6 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
         [row for row in task_rows if int(row["id"]) not in plan_ids],
         now_utc=now_utc,
         end_utc_aware=end_local.astimezone(timezone.utc),
-        focus_task_id=focus_task_id,
     )
 
     tasks = []
@@ -595,12 +472,6 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 "status": str(row["status"] or "todo"),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
-                "focused": focus_task_id is not None and int(row["id"]) == focus_task_id,
-                "focused_since": (
-                    focus_started_at
-                    if focus_task_id is not None and int(row["id"]) == focus_task_id
-                    else None
-                ),
                 # Edit version: clients send it back so an edit never silently
                 # overwrites a change made by another client.
                 "updated_at": _iso_version(row.get("updated_at")),
@@ -691,8 +562,8 @@ async def handle_reminder_ack(request: web.Request, ctx) -> web.StreamResponse:
     A repeating reminder advances to its next occurrence. A stale client tap
     never consumes a future occurrence that Telegram may already have advanced.
     """
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
+    if not _authorized(request):
+        return _auth_error()
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:
@@ -804,8 +675,8 @@ async def handle_reminder_ack(request: web.Request, ctx) -> web.StreamResponse:
 
 
 async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
+    if not _authorized(request):
+        return _auth_error()
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:
@@ -977,8 +848,8 @@ async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamRespons
 
 async def handle_event_dismiss(request: web.Request, ctx) -> web.StreamResponse:
     """Hide a calendar event from attention surfaces without deleting it."""
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
+    if not _authorized(request):
+        return _auth_error()
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:
@@ -1060,7 +931,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
     limit = max(1, min(200, requested_limit))
 
     if any(key in request.query for key in ('scope','cursor','inbox')):
-        from bot.services.task_browser import list_tasks, TaskError
+        from bot.services.task_browser import list_tasks
         scope=request.query.get('scope','all')
         try:
             cursor=int(request.query['cursor']) if 'cursor' in request.query else None
@@ -1083,20 +954,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
     end_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     now_utc = datetime.now(timezone.utc)
 
-    focus_task_id: int | None = None
-    focus_started_at: str | None = None
     async with pool.acquire() as conn:
-        focus_state = await get_conversation_state(
-            conn,
-            int(ctx.deps.admin_id or 0),
-            "attention_focus",
-        )
-        if focus_state:
-            try:
-                focus_task_id = int((focus_state.get("payload") or {}).get("task_id"))
-            except (TypeError, ValueError):
-                focus_task_id = None
-        focus_started_at = _focus_started_at(focus_state, focus_task_id)
 
         rows = await conn.fetch(
             """
@@ -1121,8 +979,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
             row,
             now_utc,
             end_local.astimezone(timezone.utc),
-            focus_task_id=focus_task_id,
-        ),
+            ),
     )
 
     tasks = []
@@ -1139,12 +996,6 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
                 "status": str(row["status"] or "todo"),
                 "deadline": deadline_local.isoformat() if deadline_local else None,
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
-                "focused": focus_task_id is not None and int(row["id"]) == focus_task_id,
-                "focused_since": (
-                    focus_started_at
-                    if focus_task_id is not None and int(row["id"]) == focus_task_id
-                    else None
-                ),
                 # Edit version: clients send it back so an edit never silently
                 # overwrites a change made by another client.
                 "updated_at": _iso_version(row.get("updated_at")),
@@ -1639,288 +1490,20 @@ async def handle_intake_cancel(request: web.Request, ctx) -> web.StreamResponse:
     return web.json_response(result, status=200 if result.get("ok") else 409)
 
 
-async def handle_capture(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request):
-        return _auth_error()
-
-    pool: asyncpg.Pool | None = ctx.deps.db_pool
-    if not pool:
-        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
-
-    try:
-        payload = await request.json()
-    except Exception:
-        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
-
-    from uuid import UUID
-    from bot.services.capture import save_capture, CaptureConflict
-    from bot.http.web_auth import browser_identity
-    if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
-        return web.json_response({"ok": False, "error": "invalid_json"}, status=400)
-    text = payload["text"].strip()
-    if not text:
-        return web.json_response({"ok": False, "error": "empty_text"}, status=400)
-    if len(text) > MAX_CAPTURE_LEN:
-        return web.json_response({"ok": False, "error": "text_too_long", "max_length": MAX_CAPTURE_LEN}, status=413)
-    key = None
-    if "client_request_id" in payload:
-        supplied = payload["client_request_id"]
-        try:
-            if not isinstance(supplied, str) or len(supplied) != 36:
-                raise ValueError()
-            key = str(UUID(supplied))
-        except (ValueError, TypeError, AttributeError):
-            return web.json_response({"ok": False, "error": "invalid_request_id"}, status=400)
-    try:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                result = await save_capture(conn, chat_id=int(getattr(ctx.deps, 'admin_id', 0) or 0),
-                    text=text, client_request_id=key, source='web' if browser_identity(request) else 'ios')
-    except CaptureConflict:
-        return web.json_response({"ok": False, "error": "capture_conflict"}, status=409)
-    return web.json_response(result, status=201)
 
 
-async def handle_task_focus(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
-
-    pool: asyncpg.Pool | None = ctx.deps.db_pool
-    if not pool:
-        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
-
-    try:
-        task_id = int(request.match_info["task_id"])
-    except Exception:
-        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
-            focus_state = await get_conversation_state(
-                conn,
-                int(ctx.deps.admin_id or 0),
-                "attention_focus",
-            )
-            payload = (focus_state or {}).get("payload") or {}
-            try:
-                previous_focus_id = int(payload.get("task_id"))
-            except (TypeError, ValueError):
-                previous_focus_id = None
-
-            started_at = _focus_started_at(focus_state, task_id)
-            if started_at is None:
-                started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-            row = await conn.fetchrow(
-                """
-                SELECT t.id, t.title, t.status, t.kind, t.project_id, p.code AS project_code
-                FROM tasks t
-                JOIN projects p ON p.id=t.project_id
-                WHERE t.id=$1
-                FOR UPDATE
-                """,
-                task_id,
-            )
-            if not row:
-                return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
-            if str(row["kind"] or "task").lower() == "super":
-                return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
-            current_status = str(row["status"] or "todo").lower()
-            if current_status in {"done", "postponed"}:
-                return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
-
-            if previous_focus_id is not None and previous_focus_id != task_id:
-                previous_status = _focus_previous_status(focus_state, previous_focus_id)
-                if previous_status:
-                    await conn.execute(
-                        """
-                        UPDATE tasks
-                        SET status=$2, updated_at=NOW()
-                        WHERE id=$1 AND status='in_progress'
-                        """,
-                        previous_focus_id,
-                        previous_status,
-                    )
-
-            if previous_focus_id == task_id:
-                previous_status = _focus_previous_status(focus_state, task_id)
-            else:
-                previous_status = current_status if current_status != "in_progress" else None
-
-            if current_status != "in_progress":
-                await conn.execute(
-                    "UPDATE tasks SET status='in_progress', updated_at=NOW() WHERE id=$1",
-                    task_id,
-                )
-                await db_add_event(
-                    conn,
-                    "task_in_progress",
-                    int(row["project_id"]),
-                    task_id,
-                    f"iOS focus: [{row['project_code']}] #{task_id} {row['title']}",
-                )
-
-            await set_conversation_state(
-                conn,
-                int(ctx.deps.admin_id or 0),
-                "attention_focus",
-                step="active",
-                payload={
-                    "task_id": task_id,
-                    "started_at": started_at,
-                    "previous_status": previous_status,
-                },
-                ttl_sec=None,
-            )
-
-    return web.json_response(
-        {
-            "ok": True,
-            "task_id": task_id,
-            "status": "in_progress",
-            "focused_since": started_at,
-        }
-    )
-
-async def handle_task_steps(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request):
-        return _auth_error()
-
-    pool: asyncpg.Pool | None = ctx.deps.db_pool
-    llm = getattr(ctx.deps, "llm", None)
-    if not pool:
-        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
-    if llm is None or not getattr(llm, "enabled", False):
-        return web.json_response({"ok": False, "error": "llm_unavailable"}, status=503)
-
-    try:
-        task_id = int(request.match_info["task_id"])
-    except Exception:
-        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT t.id, t.title, t.status, t.kind, p.code AS project_code
-            FROM tasks t
-            JOIN projects p ON p.id=t.project_id
-            WHERE t.id=$1
-            """,
-            task_id,
-        )
-
-    if not row:
-        return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
-    if str(row["kind"] or "task").lower() == "super":
-        return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
-    if str(row["status"] or "").lower() in {"done", "postponed"}:
-        return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
-
-    title = str(row["title"] or "").strip()
-    project = str(row["project_code"] or "").strip()
-    system_prompt = (
-        "You help a person start a task when initiation feels difficult. "
-        "Return JSON only with the shape {\"steps\":[\"...\"]}. "
-        "Give exactly one concrete physical next action: the smallest useful action. "
-        "The step must be short, specific, and directly doable. "
-        "Do not add motivation, explanation, priorities, deadlines, or new tasks. "
-        "Use the same language as the task title."
-    )
-    user_prompt = f"Task: {title}"
-    if project and project.upper() != "INBOX":
-        user_prompt += f"\nProject: {project}"
-
-    response_schema = {
-        "type": "object",
-        "properties": {
-            "steps": {
-                "type": "array",
-                "items": {"type": "string"},
-                "minItems": 1,
-                "maxItems": 1,
-            }
-        },
-        "required": ["steps"],
-        "additionalProperties": False,
-    }
-
-    try:
-        payload = await llm.generate_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response_schema=response_schema,
-        )
-    except Exception:
-        return web.json_response({"ok": False, "error": "llm_unavailable"}, status=503)
-
-    steps = _clean_task_steps(payload)[:1]
-    if not steps:
-        return web.json_response({"ok": False, "error": "invalid_llm_response"}, status=502)
-
-    return web.json_response(
-        {
-            "ok": True,
-            "task_id": task_id,
-            "steps": steps,
-        }
-    )
 
 
-async def handle_task_unfocus(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
 
-    pool: asyncpg.Pool | None = ctx.deps.db_pool
-    if not pool:
-        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
-
-    try:
-        task_id = int(request.match_info["task_id"])
-    except Exception:
-        return web.json_response({"ok": False, "error": "invalid_task_id"}, status=400)
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
-            focus_state = await get_conversation_state(
-                conn,
-                int(ctx.deps.admin_id or 0),
-                "attention_focus",
-            )
-            try:
-                focused_id = int((focus_state or {}).get("payload", {}).get("task_id"))
-            except (TypeError, ValueError):
-                focused_id = None
-
-            if focused_id == task_id:
-                previous_status = _focus_previous_status(focus_state, task_id)
-                if previous_status:
-                    await conn.execute(
-                        """
-                        UPDATE tasks
-                        SET status=$2, updated_at=NOW()
-                        WHERE id=$1 AND status='in_progress'
-                        """,
-                        task_id,
-                        previous_status,
-                    )
-                await clear_conversation_state(
-                    conn,
-                    int(ctx.deps.admin_id or 0),
-                    "attention_focus",
-                )
-
-    return web.json_response({"ok": True, "task_id": task_id, "status": "unfocused"})
 
 async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
+    """Idempotent: completing an already completed task succeeds."""
+    if not _authorized(request):
+        return _auth_error()
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:
         return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
-
     try:
         task_id = int(request.match_info["task_id"])
     except Exception:
@@ -1928,50 +1511,14 @@ async def handle_task_done(request: web.Request, ctx) -> web.StreamResponse:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _lock_attention_focus(conn, int(ctx.deps.admin_id or 0))
-            row = await conn.fetchrow(
-                """
-                SELECT t.id, t.title, t.status, t.kind, t.project_id, p.code AS project_code
-                FROM tasks t
-                JOIN projects p ON p.id=t.project_id
-                WHERE t.id=$1
-                FOR UPDATE
-                """,
-                task_id,
-            )
-            if not row:
-                return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
-            if str(row["kind"] or "task").lower() == "super":
-                return web.json_response({"ok": False, "error": "super_task_not_supported"}, status=409)
-            if str(row["status"] or "todo").lower() != "done":
-                await conn.execute(
-                    "UPDATE tasks SET status='done', updated_at=NOW() WHERE id=$1",
-                    task_id,
-                )
-                await db_add_event(
-                    conn,
-                    "task_done",
-                    int(row["project_id"]),
-                    task_id,
-                    f"iOS done: [{row['project_code']}] #{task_id} {row['title']}",
-                )
-
-            focus_state = await get_conversation_state(
-                conn,
-                int(ctx.deps.admin_id or 0),
-                "attention_focus",
-            )
             try:
-                focused_id = int((focus_state or {}).get("payload", {}).get("task_id"))
-            except (TypeError, ValueError):
-                focused_id = None
-            if focused_id == task_id:
-                await clear_conversation_state(
-                    conn,
-                    int(ctx.deps.admin_id or 0),
-                    "attention_focus",
-                )
-
+                await complete_task(conn, task_id=task_id)
+            except TaskActionError:
+                status = await conn.fetchval("SELECT status FROM tasks WHERE id=$1", task_id)
+                if status is None:
+                    return web.json_response({"ok": False, "error": "task_not_found"}, status=404)
+                if status != "done":
+                    return web.json_response({"ok": False, "error": "task_not_active"}, status=409)
     return web.json_response({"ok": True, "task_id": task_id, "status": "done"})
 
 
@@ -1995,8 +1542,8 @@ async def handle_inbox_idea(request: web.Request, ctx) -> web.StreamResponse:
 
 async def handle_task_plan(request: web.Request, ctx, *, planned: bool) -> web.StreamResponse:
     """Add a task to «На сегодня» or remove it; the widget may do both."""
-    if not _authorized(request, allow_widget=True):
-        return _auth_error(allow_widget=True)
+    if not _authorized(request):
+        return _auth_error()
 
     pool: asyncpg.Pool | None = ctx.deps.db_pool
     if not pool:

@@ -12,7 +12,7 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict
 import asyncpg
 from collections import defaultdict, deque
 
@@ -330,7 +330,7 @@ class ErrorHandler:
         
         try:
             if db_pool:
-                from bot.ui.screens import ui_render_home
+                from bot.ui.simple_daily import ui_render_home
                 from bot.ui.state import ui_get_state, ui_payload_with_toast, ui_set_state
                 
                 async with db_pool.acquire() as conn:
@@ -340,7 +340,6 @@ class ErrorHandler:
                 
                 # Attempt to render home screen with the toast
                 try:
-                    import aiogram
                     from aiogram.types import Message, Chat
                     mock_chat = Chat(id=chat_id, type="private")
                     mock_msg = Message(message_id=0, date=datetime.now(), chat=mock_chat, text="/start")

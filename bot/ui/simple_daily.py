@@ -1,8 +1,4 @@
-"""Minimal daily-use UI for the Telegram assistant.
-
-The legacy screens remain available for compatibility, but normal navigation is
-reduced to three surfaces: tasks, today, and a small secondary menu.
-"""
+"""Telegram screens: Сегодня, Все дела, ideas, help and a small «⋯» menu."""
 
 from __future__ import annotations
 
@@ -17,11 +13,30 @@ from bot.services.day_plan import local_today, today_plan_sql
 from bot.tz import resolve_tz_name, resolve_tzinfo
 from bot.ui.render import ui_render
 from bot.utils import h
-import bot.ui.screens as legacy
+from bot.services.calendar_today import fetch_today_calendar
+from bot.ui.state import _ui_payload_get, ui_get_state, ui_payload_take_toast, ui_set_state
 
 
 UTC = timezone.utc
 _default_icloud: ICloudCalDAVAdapter | None = None
+
+
+async def _pop_screen_toast(db_pool: asyncpg.Pool, chat_id: int) -> str | None:
+    """Take the one-time notice stored for the next screen."""
+    async with db_pool.acquire() as conn:
+        payload = _ui_payload_get(await ui_get_state(conn, chat_id))
+        toast_line, payload = ui_payload_take_toast(payload)
+        await ui_set_state(conn, chat_id, ui_payload=payload)
+    return toast_line
+
+
+def _local(value: datetime | None, tz) -> datetime | None:
+    """Stored timestamps are UTC; naive ones are UTC too."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(tz)
 
 
 def set_default_icloud(icloud: ICloudCalDAVAdapter | None) -> None:
@@ -70,7 +85,7 @@ def _daily_task_lines_and_buttons(rows, tz, *, offset: int = 0, quick_done: bool
         project = str(row.get("project") or "").strip()
         if project:
             meta.append(project)
-        deadline = legacy.to_local(row.get("deadline"), tz)
+        deadline = _local(row.get("deadline"), tz)
         if deadline:
             meta.append(f"до {deadline.strftime('%d.%m %H:%M')}")
         assignee = str(row.get("assignee") or "").strip()
@@ -130,7 +145,7 @@ async def ui_render_all_tasks(
     tz_name = resolve_tz_name(tz_name or "Europe/Moscow")
     tz = resolve_tzinfo(tz_name)
     chat_id = int(message.chat.id)
-    toast_line = await legacy._pop_screen_toast(db_pool, chat_id)
+    toast_line = await _pop_screen_toast(db_pool, chat_id)
 
     page_size = 20
     try:
@@ -289,7 +304,7 @@ async def ui_render_today(
     tz_name = resolve_tz_name(tz_name or "Europe/Moscow")
     tz = resolve_tzinfo(tz_name)
     chat_id = int(message.chat.id)
-    toast_line = notice or await legacy._pop_screen_toast(db_pool, chat_id)
+    toast_line = notice or await _pop_screen_toast(db_pool, chat_id)
     page_size = 10
     page = max(0, int(page or 0))
     plan_day = local_today(tz_name)
@@ -299,7 +314,7 @@ async def ui_render_today(
     bitrix_calendar_url = (os.getenv("ICLOUD_CALENDAR_URL_BITRIX") or "").strip()
 
     try:
-        calendar_block = await legacy._fetch_today_calendar_block(
+        calendar_block = await fetch_today_calendar(
             tz=tz,
             calendar_urls=[work_calendar_url, personal_calendar_url, bitrix_calendar_url],
             icloud=icloud,
@@ -379,8 +394,8 @@ async def ui_render_today(
     if events:
         lines.extend(["", "<b>Календарь</b>"])
         for event in events:
-            start_local = legacy._event_local(event.dtstart_utc, tz)
-            end_local = legacy._event_local(event.dtend_utc, tz)
+            start_local = _local(event.dtstart_utc, tz)
+            end_local = _local(event.dtend_utc, tz)
             if start_local and end_local:
                 when = f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
             elif start_local:
@@ -392,7 +407,7 @@ async def ui_render_today(
     if reminders:
         lines.extend(["", "<b>Напоминания</b>"])
         for reminder in reminders:
-            dt_local = legacy.to_local(reminder.get("remind_at"), tz)
+            dt_local = _local(reminder.get("remind_at"), tz)
             when = dt_local.strftime("%H:%M") if dt_local else "—"
             lines.append(f"<b>{h(when)}</b>  {h(str(reminder.get('text') or ''))}")
 
@@ -452,7 +467,7 @@ async def ui_render_home_more(
     force_new: bool = False,
 ) -> int:
     chat_id = int(message.chat.id)
-    toast_line = await legacy._pop_screen_toast(db_pool, chat_id)
+    toast_line = await _pop_screen_toast(db_pool, chat_id)
     lines = ["<b>Ещё</b>"]
     if toast_line:
         lines = [toast_line, ""] + lines
@@ -636,7 +651,7 @@ async def ui_render_help(
     preferred_message_id: int | None = None,
     force_new: bool = False,
 ) -> int:
-    toast_line = await legacy._pop_screen_toast(db_pool, int(message.chat.id))
+    toast_line = await _pop_screen_toast(db_pool, int(message.chat.id))
     lines = [
         "<b>Как пользоваться</b>",
         "",
@@ -659,42 +674,6 @@ async def ui_render_help(
             inline_keyboard=[[InlineKeyboardButton(text="Сегодня", callback_data="nav:home")]]
         ),
         screen="help",
-        fallback_message=message,
-        preferred_message_id=preferred_message_id,
-        force_new=force_new,
-        parse_mode="HTML",
-    )
-
-
-async def ui_render_add_menu(
-    message: Message,
-    db_pool: asyncpg.Pool,
-    *,
-    preferred_message_id: int | None = None,
-    force_new: bool = False,
-) -> int:
-    """Keep old /add entry points safe without making forms part of navigation."""
-    toast_line = await legacy._pop_screen_toast(db_pool, int(message.chat.id))
-    lines = [
-        "<b>Добавление</b>",
-        "",
-        "Ничего выбирать не нужно — напишите или надиктуйте дело прямо в чат.",
-        "Если нужно загрузить большой список, можно открыть импорт ниже.",
-    ]
-    if toast_line:
-        lines = [toast_line, ""] + lines
-    return await ui_render(
-        bot=message.bot,
-        db_pool=db_pool,
-        chat_id=int(message.chat.id),
-        text="\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="Добавить списком", callback_data="onboard:start")],
-                [InlineKeyboardButton(text="Сегодня", callback_data="nav:home")],
-            ]
-        ),
-        screen="add",
         fallback_message=message,
         preferred_message_id=preferred_message_id,
         force_new=force_new,

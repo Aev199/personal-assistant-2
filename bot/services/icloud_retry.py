@@ -24,7 +24,7 @@ async def retry_pending_icloud_events(
     batch_limit: int = 10,
     min_retry_interval_min: int = 15,
     max_retries: int = 3,
-    error_logger: Callable[[str, BaseException, dict | None], "asyncio.Future"] | None = None,
+    error_logger: Callable[[str, BaseException, dict | None], object] | None = None,
 ) -> None:
     """Retry pending iCloud events.
 

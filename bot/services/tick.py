@@ -13,6 +13,7 @@ from aiogram import Bot
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter
 from bot.services.icloud_retry import retry_pending_icloud_events
 from bot.services.logger import StructuredLogger, get_logger
+from bot.services.daily_messages import maybe_send_daily_messages
 from bot.services.reminders import next_repeat_time_utc_naive, send_reminder
 from bot.tz import to_db_utc
 
@@ -374,8 +375,15 @@ async def do_tick(
             or 0
         )
 
+    try:
+        daily_messages = await maybe_send_daily_messages(pool, bot=bot, chat_id=int(admin_id), tz_name=tz_name)
+    except Exception as exc:
+        log.warning("daily messages failed", error_type=type(exc).__name__, error_message=str(exc))
+        daily_messages = {"error": type(exc).__name__}
+
     return {
         "ok": True,
+        "habit_messages": daily_messages,
         "claimed": claimed_total,
         "delivered": delivered,
         "retried": retried,

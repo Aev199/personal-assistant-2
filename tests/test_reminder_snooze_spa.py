@@ -23,6 +23,7 @@ class _Conn:
             "telegram_message_id": 777,
             "claim_token": None,
         }
+        self.execute = AsyncMock(return_value="OK")
 
     async def fetchrow(self, query, *_args):
         if "telegram_message_id, claim_token" in query:
@@ -30,9 +31,6 @@ class _Conn:
         if "SELECT text, chat_id FROM reminders" in query:
             return {"text": "Напомнить", "chat_id": 10}
         raise AssertionError(f"Unexpected query: {query}")
-
-    async def execute(self, _query, *_args):
-        return "OK"
 
     async def fetchval(self, query, *_args):
         if "INSERT INTO reminders" in query:
@@ -119,7 +117,7 @@ class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
         delete_msg.assert_awaited_once()
 
 
-    async def test_snooze_from_alert_deletes_popup_and_rerenders_current_screen(self) -> None:
+    async def test_snooze_from_alert_deletes_popup(self) -> None:
         callback = SimpleNamespace(
             data="rem:snooze:15:5:tok123",
             message=SimpleNamespace(chat=SimpleNamespace(id=10), message_id=777),
@@ -131,12 +129,10 @@ class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.handlers.reminders.record_action_journal", AsyncMock(return_value=1)),
             patch("bot.handlers.reminders.ui_get_state", AsyncMock(return_value={"ui_payload": {}})),
             patch("bot.handlers.reminders.ui_set_state", AsyncMock()),
-            patch("bot.handlers.nav._rerender_current_screen", AsyncMock(return_value=900)) as rerender,
             patch("bot.handlers.reminders.try_delete_user_message", AsyncMock()) as delete_msg,
         ):
             await cb_rem_snooze(callback, _Pool(_Conn()), deps)
 
-        rerender.assert_awaited_once()
         delete_msg.assert_awaited_once()
 
     async def test_stale_alert_cannot_reschedule_a_newer_occurrence(self) -> None:
@@ -189,7 +185,6 @@ class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.handlers.reminders.record_action_journal", AsyncMock(return_value=1)),
             patch("bot.handlers.reminders.ui_get_state", AsyncMock(return_value={"ui_payload": {}})),
             patch("bot.handlers.reminders.ui_set_state", AsyncMock()),
-            patch("bot.handlers.nav._rerender_current_screen", AsyncMock(return_value=900)),
             patch("bot.handlers.reminders.try_delete_user_message", AsyncMock()),
         ):
             await cb_rem_snooze(callback, _Pool(conn), SimpleNamespace(
@@ -218,12 +213,10 @@ class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.handlers.reminders.record_action_journal", AsyncMock(return_value=1)),
             patch("bot.handlers.reminders.ui_get_state", AsyncMock(return_value={"ui_payload": {}})),
             patch("bot.handlers.reminders.ui_set_state", AsyncMock()),
-            patch("bot.handlers.nav._rerender_current_screen", AsyncMock(return_value=777)) as rerender,
             patch("bot.handlers.reminders.try_delete_user_message", AsyncMock()) as delete_msg,
         ):
             await cb_rem_snooze(callback, _Pool(_Conn()), deps)
 
-        rerender.assert_awaited_once()
         delete_msg.assert_not_awaited()
 
     async def test_snooze_tomorrow_uses_fixed_9am_label(self) -> None:
@@ -238,7 +231,6 @@ class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.handlers.reminders.record_action_journal", AsyncMock(return_value=1)),
             patch("bot.handlers.reminders.ui_get_state", AsyncMock(return_value={"ui_payload": {}})),
             patch("bot.handlers.reminders.ui_set_state", AsyncMock()),
-            patch("bot.handlers.nav._rerender_current_screen", AsyncMock(return_value=777)),
             patch("bot.handlers.reminders.try_delete_user_message", AsyncMock()),
         ):
             await cb_rem_snooze(callback, _Pool(_Conn()), deps)
@@ -257,7 +249,6 @@ class ReminderSnoozeSpaTests(unittest.IsolatedAsyncioTestCase):
             patch("bot.handlers.reminders.record_action_journal", AsyncMock(return_value=1)),
             patch("bot.handlers.reminders.ui_get_state", AsyncMock(return_value={"ui_payload": {}})),
             patch("bot.handlers.reminders.ui_set_state", AsyncMock()),
-            patch("bot.handlers.nav._rerender_current_screen", AsyncMock(return_value=777)),
             patch("bot.handlers.reminders.try_delete_user_message", AsyncMock()),
         ):
             await cb_rem_snooze(callback, _Pool(_Conn()), deps)

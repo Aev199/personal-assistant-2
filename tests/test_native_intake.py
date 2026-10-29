@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from bot.services.freeform_intake import IntakeIntent
+from bot.services.intake_rules import IntakeIntent
 from bot.services.native_intake import _classify, process_native_capture
 
 

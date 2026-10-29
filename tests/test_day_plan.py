@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from bot.http import companion
 from bot.services.day_plan import in_today_plan, local_today
-from bot.services.product_mode_spa import _habit_policy
+from bot.services.daily_messages import due_messages
 from bot.ui.day_plan import plan_picker_view
 
 MSK = ZoneInfo("Europe/Moscow")
@@ -55,28 +55,39 @@ def test_full_plan_stops_offering_more():
     assert all(not row[0].callback_data.startswith("plan:add") for row in markup.inline_keyboard)
 
 
-def test_morning_question_needs_only_some_active_task_and_never_weekends():
+def test_morning_question_needs_only_some_active_task_and_never_weekends(monkeypatch):
+    for name in ("ASSISTANT_MORNING_BRIEF_HOUR", "ASSISTANT_EVENING_NUDGE_HOUR", "ASSISTANT_WEEKEND_BRIEF"):
+        monkeypatch.delenv(name, raising=False)
     weekday = datetime(2026, 10, 19, 10, 5, tzinfo=MSK)
     saturday = datetime(2026, 10, 17, 10, 5, tzinfo=MSK)
-    backlog_only = {"today": 0, "overdue": 0, "reminders": 0, "active": 4, "inbox": 0}
-    allowed = _habit_policy(now_local=weekday, snapshot=backlog_only, onboarding_completed=True, active_internal=4)
-    assert allowed["morning_allowed"]
-    weekend = _habit_policy(now_local=saturday, snapshot=backlog_only, onboarding_completed=True, active_internal=4)
-    assert not weekend["morning_allowed"]
-    empty = _habit_policy(now_local=weekday, snapshot={"active": 0}, onboarding_completed=True, active_internal=0)
-    assert not empty["morning_allowed"]
+    early = datetime(2026, 10, 19, 9, 55, tzinfo=MSK)
+
+    def morning(now, **kw):
+        args = {"last_morning": None, "last_evening": None, "active_tasks": 4, "inbox_tasks": 0, **kw}
+        return due_messages(now, **args)["morning"]
+
+    assert morning(weekday)
+    assert not morning(saturday)
+    assert not morning(early)
+    assert not morning(weekday, active_tasks=0)
+    assert not morning(weekday, last_morning=weekday.date())
+
+
+def test_evening_nudge_is_opt_in_and_needs_some_inbox(monkeypatch):
+    evening = datetime(2026, 10, 19, 17, 30, tzinfo=MSK)
+    args = {"last_morning": None, "last_evening": None, "active_tasks": 9, "inbox_tasks": 5}
+    monkeypatch.delenv("ASSISTANT_EVENING_NUDGE", raising=False)
+    assert not due_messages(evening, **args)["evening"]
+    monkeypatch.setenv("ASSISTANT_EVENING_NUDGE", "1")
+    assert due_messages(evening, **args)["evening"]
+    assert not due_messages(evening, **{**args, "inbox_tasks": 2})["evening"]
 
 
 def test_default_times_are_ten_and_five(monkeypatch):
-    from bot.services import product_mode
+    from bot.services.daily_messages import message_hours
     monkeypatch.delenv("ASSISTANT_MORNING_BRIEF_HOUR", raising=False)
     monkeypatch.delenv("ASSISTANT_EVENING_NUDGE_HOUR", raising=False)
-    import inspect
-    from bot.services import product_mode_spa
-    source = inspect.getsource(product_mode_spa.maybe_send_habit_messages_spa)
-    assert '"ASSISTANT_MORNING_BRIEF_HOUR", 10' in source
-    assert '"ASSISTANT_EVENING_NUDGE_HOUR", 17' in source
-    assert product_mode._env_hour("ASSISTANT_MORNING_BRIEF_HOUR", 10) == 10
+    assert message_hours() == (10, 17)
 
 
 def test_plan_routes_exist_and_require_a_token(monkeypatch):

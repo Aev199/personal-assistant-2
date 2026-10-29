@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.db import db_add_event, ensure_inbox_project_id, ensure_personal_project_id
 from bot.db.runtime_state import (
-    create_pending_action,
     mark_pending_action_status,
     record_action_journal,
-    remember_recent_action,
-    update_pending_action_payload,
 )
 from bot.deps import AppDeps
-from bot.services.vault_sync import background_project_sync
-from bot.tz import fmt_local, to_db_utc
-from bot.ui.render import ui_render
-from bot.utils import h
-from bot.services.background import fire_and_forget
+from bot.tz import to_db_utc
 
 
 def _parse_iso_dt(raw: str | None) -> datetime | None:
@@ -32,148 +23,6 @@ def _parse_iso_dt(raw: str | None) -> datetime | None:
         return datetime.fromisoformat(str(raw))
     except Exception:
         return None
-
-
-def _can_write(conn: Any) -> bool:
-    return hasattr(conn, "execute") and hasattr(conn, "fetchval")
-
-
-def _event_summary(kind: str, title: str, project_code: str | None) -> str:
-    title = str(title or "").strip()
-    project_code = str(project_code or "").strip()
-    if kind == "work":
-        work_tpl = os.getenv("ICLOUD_WORK_SUMMARY_TEMPLATE", "{project_prefix}{title}")
-        prefix = ""
-        if project_code and title and not title.startswith(f"{project_code}:"):
-            prefix = f"{project_code}: "
-        return work_tpl.format(title=title, project=project_code, project_prefix=prefix).strip()
-    personal_tpl = os.getenv("ICLOUD_PERSONAL_SUMMARY_TEMPLATE", "{title}")
-    return personal_tpl.format(title=title, project="", project_prefix="").strip()
-
-
-def _event_toggle_button_text(calendar_kind: str | None) -> str:
-    current = str(calendar_kind or "personal").strip().lower()
-    return "🏡 Личное" if current == "work" else "💼 Рабочее"
-
-
-def _preview_keyboard(kind: str, pending_action_id: int, payload: dict[str, Any]) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"llm:confirm:{pending_action_id}"),
-            InlineKeyboardButton(text="✖ Отмена", callback_data=f"llm:cancel:{pending_action_id}"),
-        ]
-    ]
-    if kind == "event":
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=_event_toggle_button_text(payload.get("calendar_kind")),
-                    callback_data=f"llm:toggle_event_kind:{pending_action_id}",
-                )
-            ]
-        )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _preview_text(kind: str, payload: dict[str, Any], *, tz_name: str) -> str:
-    header = "⏳ ЧЕРНОВИК\n"
-    if kind == "task":
-        bits = [f"Создать задачу: {payload.get('title') or ''}"]
-        if payload.get("project_code"):
-            bits.append(f"Проект: {payload['project_code']}")
-        if payload.get("assignee_name"):
-            bits.append(f"Исполнитель: {payload['assignee_name']}")
-        dt = _parse_iso_dt(payload.get("deadline_local"))
-        if dt:
-            bits.append(f"Срок: {dt.strftime('%d.%m %H:%M')}")
-        return header + "\n".join(bits)
-    if kind == "personal_task":
-        bits = [f"Добавить личную задачу: {payload.get('title') or ''}"]
-        dt = _parse_iso_dt(payload.get("deadline_local"))
-        if dt:
-            bits.append(f"Срок: {dt.strftime('%d.%m %H:%M')}")
-        return header + "\n".join(bits)
-    if kind == "event":
-        bits = [f"Создать событие: {payload.get('title') or ''}"]
-        bits.append(f"Календарь: {'рабочий' if payload.get('calendar_kind') == 'work' else 'личный'}")
-        dt = _parse_iso_dt(payload.get("start_local"))
-        if dt:
-            bits.append(f"Старт: {dt.strftime('%d.%m %H:%M')}")
-        if payload.get("duration_min"):
-            bits.append(f"Длительность: {payload['duration_min']} мин")
-        if payload.get("project_code"):
-            bits.append(f"Проект: {payload['project_code']}")
-        return header + "\n".join(bits)
-    if kind == "idea":
-        return header + f"Добавить идею:\n{payload.get('idea_text') or ''}"
-    if kind == "reminder":
-        dt = _parse_iso_dt(payload.get("remind_at_local"))
-        when = dt.strftime("%d.%m %H:%M") if dt else "?"
-        return header + f"Создать напоминание:\n{payload.get('reminder_text') or ''}\nКогда: {when}"
-    return header + "Подтвердите действие."
-
-
-async def create_pending_preview(
-    message: Message,
-    *,
-    db_pool: asyncpg.Pool,
-    deps: AppDeps,
-    kind: str,
-    payload: dict[str, Any],
-    fingerprint: str,
-    summary: str,
-    source: str,
-    force_new: bool = False,
-) -> int:
-    ttl_sec = max(60, int(os.getenv("PENDING_ACTION_TTL_SEC", "900")))
-    async with db_pool.acquire() as conn:
-        pending_action_id = await create_pending_action(
-            conn,
-            chat_id=int(message.chat.id),
-            kind=kind,
-            payload={**payload, "source": source},
-            source_message_id=int(getattr(message, "message_id", 0) or 0),
-            fingerprint=fingerprint,
-            ttl_sec=ttl_sec,
-        )
-        await remember_recent_action(
-            conn,
-            chat_id=int(message.chat.id),
-            fingerprint=fingerprint,
-            action=kind,
-            summary=summary,
-            pending_action_id=int(pending_action_id),
-            ttl_sec=max(45, ttl_sec),
-        )
-
-    if ".batch" in source:
-        return int(pending_action_id)
-
-    kb = _preview_keyboard(kind, int(pending_action_id), payload)
-    text = _preview_text(kind, payload, tz_name=deps.tz_name)
-
-    if force_new:
-        draft_msg = await message.answer(text, reply_markup=kb, parse_mode=None)
-        # Store draft message_id so cleanup handlers can delete it later
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE pending_actions SET source_message_id=$1 WHERE id=$2",
-                int(draft_msg.message_id),
-                int(pending_action_id),
-            )
-    else:
-        await ui_render(
-            bot=message.bot,
-            db_pool=db_pool,
-            chat_id=int(message.chat.id),
-            text=text,
-            reply_markup=kb,
-            screen="llm_draft",
-            payload={"pending_action_id": int(pending_action_id), "kind": kind},
-            fallback_message=message,
-            parse_mode=None,
-        )
-    return int(pending_action_id)
 
 
 async def execute_pending_action(
@@ -233,15 +82,6 @@ async def execute_pending_action(
                 action_key=f"pending-confirm:{pending_action_id}",
             )
             await mark_pending_action_status(conn, pending_action_id=pending_action_id, status="executed")
-        fire_and_forget(
-            background_project_sync(
-                int(payload["project_id"]),
-                db_pool,
-                deps.vault,
-                error_logger=(deps.db_log_error or (lambda _w, _e, _c=None: None)),
-            ),
-            label="vault_sync",
-        )
         return f"✅ Задача создана: {payload.get('title') or ''}"
 
     if kind == "personal_task":
@@ -491,16 +331,6 @@ async def execute_pending_action(
                 action_key=f"pending-confirm:{pending_action_id}",
             )
             await mark_pending_action_status(conn, pending_action_id=pending_action_id, status="executed")
-        if payload.get("calendar_kind") == "work" and payload.get("project_id"):
-            fire_and_forget(
-                background_project_sync(
-                    int(payload["project_id"]),
-                    db_pool,
-                    deps.vault,
-                    error_logger=(deps.db_log_error or (lambda _w, _e, _c=None: None)),
-                ),
-                label="vault_sync",
-            )
         if synced:
             return "✅ Событие создано и синхронизировано с iCloud"
         return "⚠️ Событие сохранено локально. Синхронизация с iCloud запланирована."

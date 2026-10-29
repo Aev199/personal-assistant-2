@@ -1,7 +1,6 @@
 """aiohttp endpoints.
 
-Keep operational HTTP endpoints (cron tick, health, backup) out of the Telegram
-handlers.
+Operational HTTP endpoints: the minute cron tick, health and status.
 
 All endpoints use the project's structured logger (via ``deps.logger``) when
 available, falling back to a module logger.
@@ -19,9 +18,7 @@ import asyncpg
 from aiohttp import web
 from aiogram import Bot
 
-from bot.adapters.storage_adapter import DropboxStorageAdapter, GCSStorageAdapter, S3StorageAdapter
 from bot.deps import AppDeps
-from bot.services.backup import create_backup_service
 from bot.services.background import fire_and_forget
 from bot.services.logger import StructuredLogger, get_logger
 from bot.services.tick import do_tick as do_tick_service
@@ -31,7 +28,6 @@ AsyncCallable = Callable[[], Awaitable[None]]
 
 # Cross-process locks (Postgres advisory locks)
 LOCK_KEY_TICK = 912_345_001
-LOCK_KEY_BACKUP = 912_345_002
 
 
 def _log_from(ctx_deps: AppDeps | None) -> StructuredLogger:
@@ -53,23 +49,12 @@ class HttpContext:
     tick_send_timeout_sec: float
     icloud_enabled: bool
 
-    # backup env/config
-    backup_storage_backend: str
-    backup_retention_days: int
-    aws_s3_bucket: str
-    aws_s3_region: str
-    dropbox_access_token: str
-    dropbox_backup_path: str
-    gcs_bucket: str
-    gcs_project_id: str
-    gcs_credentials_json: str
     mode: str = "polling-web"
 
     # webhook self-heal (optional)
     refresh_webhook: Optional[Callable[[], Awaitable[None]]] = None
     started_at_ts: float = 0.0
     tick_lock: asyncio.Lock | None = None
-    backup_lock: asyncio.Lock | None = None
     last_tick_started_at: float | None = None
     last_tick_finished_at: float | None = None
     last_tick_status: str = "never"
@@ -91,18 +76,10 @@ def attach_routes(app: web.Application, ctx: HttpContext) -> None:
     async def _internal_status(request: web.Request) -> web.StreamResponse:
         return await handle_internal_status(request, ctx)
 
-    async def _backup(request: web.Request) -> web.StreamResponse:
-        return await handle_backup(request, ctx)
-
-    async def _keepalive(request: web.Request) -> web.StreamResponse:
-        return await handle_keepalive(request, ctx)
-
     app.router.add_get("/tick", _tick)
     app.router.add_get("/ping", _ping)
     app.router.add_get("/health", _health)
     app.router.add_get("/internal/status", _internal_status)
-    app.router.add_get("/keepalive", _keepalive)
-    app.router.add_post("/backup", _backup)
 
 
 def _authorized(request: web.Request, ctx: HttpContext) -> bool:
@@ -306,126 +283,3 @@ async def handle_internal_status(request: web.Request, ctx: HttpContext) -> web.
     return web.json_response(body)
 
 
-async def handle_backup(request: web.Request, ctx: HttpContext) -> web.StreamResponse:
-    """Backup endpoint for Render cron job."""
-
-    log = _log_from(ctx.deps)
-
-    # Protection (required by default)
-    if not _authorized(request, ctx):
-        if not ctx.internal_api_key:
-            return web.Response(status=403, text="INTERNAL_API_KEY not configured")
-        return web.Response(status=403, text="Forbidden")
-
-    if not ctx.backup_storage_backend:
-        log.warning("Backup endpoint called but BACKUP_STORAGE_BACKEND not configured")
-        return web.Response(status=503, text="Backup not configured")
-
-    if not ctx.database_url:
-        log.error("DATABASE_URL not configured")
-        return web.Response(status=500, text="DATABASE_URL not configured")
-
-    pool: asyncpg.Pool | None = ctx.deps.db_pool
-    if not pool:
-        return web.Response(status=500, text="No DB pool")
-
-    lock = ctx.backup_lock or asyncio.Lock()
-    if lock.locked():
-        return web.Response(text="BUSY")
-
-    # Cross-process lock (prevents concurrent backups across workers/instances)
-    try:
-        async with pool.acquire() as lock_conn:
-            got = await lock_conn.fetchval("SELECT pg_try_advisory_lock($1)", LOCK_KEY_BACKUP)
-            if not got:
-                return web.Response(text="BUSY")
-
-            try:
-                async with lock:
-                    # Storage backend
-                    if ctx.backup_storage_backend == "s3":
-                        if not ctx.aws_s3_bucket:
-                            return web.Response(status=503, text="AWS_S3_BUCKET not configured")
-                        storage_adapter = S3StorageAdapter(bucket=ctx.aws_s3_bucket, region=ctx.aws_s3_region)
-                    elif ctx.backup_storage_backend == "dropbox":
-                        if not ctx.dropbox_access_token:
-                            return web.Response(status=503, text="DROPBOX_ACCESS_TOKEN not configured")
-                        storage_adapter = DropboxStorageAdapter(
-                            access_token=ctx.dropbox_access_token,
-                            base_path=ctx.dropbox_backup_path,
-                        )
-                    elif ctx.backup_storage_backend == "gcs":
-                        if not ctx.gcs_bucket:
-                            return web.Response(status=503, text="GCS_BUCKET not configured")
-                        storage_adapter = GCSStorageAdapter(
-                            bucket=ctx.gcs_bucket,
-                            project_id=ctx.gcs_project_id,
-                            credentials_json=ctx.gcs_credentials_json,
-                        )
-                    else:
-                        return web.Response(
-                            status=503,
-                            text=f"Invalid BACKUP_STORAGE_BACKEND: {ctx.backup_storage_backend}",
-                        )
-
-                    backup_logger = getattr(ctx.deps, "logger", None) or get_logger("bot.backup")
-                    backup_service = create_backup_service(
-                        db_url=ctx.database_url,
-                        storage_adapter=storage_adapter,
-                        logger=backup_logger,
-                    )
-
-                    log.info("Starting scheduled backup", backend=ctx.backup_storage_backend)
-                    result = await backup_service.create_backup()
-
-                    if result.success:
-                        log.info(
-                            "Backup completed successfully",
-                            backup_id=result.backup_id,
-                            file_path=result.file_path,
-                            file_size_bytes=result.file_size_bytes,
-                            duration_seconds=result.duration_seconds,
-                        )
-                        return web.json_response(
-                            {
-                                "ok": True,
-                                "backup_id": result.backup_id,
-                                "file_path": result.file_path,
-                                "file_size_bytes": result.file_size_bytes,
-                                "duration_seconds": result.duration_seconds,
-                            }
-                        )
-
-                    log.error(
-                        "Backup failed",
-                        error_message=result.error_message,
-                        backup_id=result.backup_id,
-                        duration_seconds=result.duration_seconds,
-                    )
-                    return web.json_response(
-                        {
-                            "ok": False,
-                            "backup_id": result.backup_id,
-                            "error": result.error_message,
-                            "duration_seconds": result.duration_seconds,
-                        },
-                        status=500,
-                    )
-            finally:
-                try:
-                    await lock_conn.execute("SELECT pg_advisory_unlock($1)", LOCK_KEY_BACKUP)
-                except Exception:
-                    pass
-    except Exception as e:
-        log.error("backup lock failed", error=e)
-        return web.Response(status=500, text="Lock error")
-
-
-async def handle_keepalive(request: web.Request, ctx: HttpContext) -> web.StreamResponse:
-    return web.json_response(
-        {
-            "ok": True,
-            "mode": ctx.mode,
-            "uptime_sec": int(time.time() - (ctx.started_at_ts or time.time())),
-        }
-    )

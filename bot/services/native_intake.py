@@ -27,7 +27,7 @@ from bot.db.runtime_state import (
     set_conversation_state,
 )
 from bot.persona import is_solo_mode
-from bot.services import freeform_intake as intake
+from bot.services import intake_rules as intake
 from bot.services.capture import save_capture
 from bot.services.pending_actions import execute_pending_action
 from bot.tz import resolve_tz_name

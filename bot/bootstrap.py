@@ -1,8 +1,4 @@
-"""Bootstrap helpers.
-
-This module centralizes creation of the aiogram Bot/Dispatcher and wiring of
-external integrations (WebDAV/Obsidian vault and iCloud CalDAV).
-"""
+"""Create the Telegram bot, dispatcher, integrations and the shared deps container."""
 
 from __future__ import annotations
 
@@ -14,25 +10,12 @@ from bot.adapters.deepseek_adapter import DeepSeekAdapter
 from bot.adapters.gemini_adapter import GeminiAdapter
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter, ICloudCalDAVAuth
 from bot.adapters.llm_router import ResilientLLMAdapter
-from bot.adapters.webdav_adapter import WebDavAdapter
 from bot.config import load_config
 from bot.deps import AppDeps
-from bot.middlewares.fsm_persistence import FsmPersistenceMiddleware
+from bot.handlers.errors import register as register_errors
 from bot.middlewares.guards import ProcessedUpdateMiddleware, SingleUserGuardMiddleware
-from bot.services.onboarding_import import install_onboarding_import
-from bot.services.product_mode import install_product_mode
-from bot.services.product_mode_overrides import install_product_mode_overrides
-from bot.services.product_mode_spa import install_product_mode_spa
-from bot.services.vault_manager import VaultManager
-from bot.ui.simple_mode import install_simple_ui
-
-# Screen functions are imported by value in several handlers/services. Install
-# the minimal facade before importing those modules so production binds the
-# simplified daily UI while legacy renderers remain available internally.
-install_simple_ui()
-
-from bot.handlers import register_errors  # noqa: E402
-from bot.tg import register as register_telegram  # noqa: E402
+from bot.tg import register as register_telegram
+from bot.ui.simple_daily import set_default_icloud
 
 
 def build_core(
@@ -46,16 +29,11 @@ def build_core(
     """Create bot, dispatcher and integrations.
 
     Returns:
-        (bot, dp, cloud, vault, icloud, llm)
+        (bot, dp, icloud, llm)
 
     Side effects:
         Stores a single dependency container under ``dp.workflow_data['deps']``.
     """
-    install_product_mode()
-    install_product_mode_overrides()
-    install_product_mode_spa()
-    install_onboarding_import()
-
     bot = Bot(token=bot_token)
 
     dp = Dispatcher()
@@ -63,20 +41,12 @@ def build_core(
     guard = SingleUserGuardMiddleware(admin_id=admin_id)
     dp.message.outer_middleware.register(guard)
     dp.callback_query.outer_middleware.register(guard)
-
-    fsm_persistence = FsmPersistenceMiddleware()
-    dp.message.middleware.register(fsm_persistence)
-    dp.callback_query.middleware.register(fsm_persistence)
     register_telegram(dp)
     register_errors(dp)
-
-    cloud = WebDavAdapter()
-    vault = VaultManager(cloud, tz=tz_name)
 
     icloud = ICloudCalDAVAdapter(
         ICloudCalDAVAuth(apple_id=icloud_apple_id, app_password=icloud_app_password)
     )
-    from bot.ui.simple_daily import set_default_icloud
     set_default_icloud(icloud)
 
     gemini = GeminiAdapter(
@@ -99,16 +69,10 @@ def build_core(
     deps = AppDeps(
         admin_id=int(admin_id or 0),
         tz_name=tz_name,
-        cloud=cloud,
-        vault=vault,
         icloud=icloud,
         llm=llm,
         config=load_config(),
     )
 
-    try:
-        dp.workflow_data["deps"] = deps
-    except Exception:
-        pass
-
-    return bot, dp, cloud, vault, icloud, llm
+    dp.workflow_data["deps"] = deps
+    return bot, dp, icloud, llm

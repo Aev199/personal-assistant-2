@@ -9,8 +9,6 @@ import asyncpg
 
 from bot.adapters.icloud_caldav_adapter import ICloudCalDAVAdapter
 from bot.adapters.llm_router import ResilientLLMAdapter
-from bot.adapters.webdav_adapter import WebDavAdapter
-from bot.services.vault_manager import VaultManager
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot.config import Config
@@ -27,8 +25,6 @@ class AppDeps:
     admin_id: int
     tz_name: str
 
-    cloud: WebDavAdapter
-    vault: VaultManager
     icloud: ICloudCalDAVAdapter
     llm: ResilientLLMAdapter | None = None
     config: Optional["Config"] = None

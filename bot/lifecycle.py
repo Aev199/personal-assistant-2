@@ -2,7 +2,7 @@
 
 Aiogram startup/shutdown hooks are responsible for:
 
-- starting / closing integration sessions (WebDAV, iCloud)
+- starting / closing integration sessions (iCloud, LLM)
 - creating and closing the asyncpg pool
 - best-effort DB schema bootstrap
 - webhook self-heal loop
@@ -27,7 +27,7 @@ from bot.services.webhook import delayed_set_webhook, webhook_keeper
 
 
 def _db_pool_params() -> tuple[int, int, float]:
-    """Pool sizing defaults for Render + free DB tiers."""
+    """Pool sizing defaults for a small single-user database."""
     try:
         mn = int(os.getenv("DB_MIN_POOL", "1"))
     except Exception:
@@ -55,7 +55,6 @@ def _get_log(dp: Dispatcher) -> StructuredLogger:
 def make_on_startup(
     *,
     dp: Dispatcher,
-    cloud,
     icloud,
     llm,
     database_url: str,
@@ -69,9 +68,6 @@ def make_on_startup(
         log = _get_log(dp)
 
         # Start integrations
-        if hasattr(cloud, "startup"):
-            await cloud.startup()
-
         if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
             try:
                 await icloud.startup()
@@ -107,14 +103,6 @@ def make_on_startup(
                 # Do not fail startup if the DB rejects session settings.
                 pass
 
-        # Render Postgres frequently requires SSL; if the URL doesn't specify sslmode,
-        # enforce SSL in Render to avoid silent disconnects during startup.
-        force_ssl = False
-        if os.getenv("RENDER_SERVICE_ID") or os.getenv("RENDER"):
-            u = (database_url or "").lower()
-            if "sslmode=" not in u and "ssl=" not in u:
-                force_ssl = True
-
         try:
             connect_attempts = int(os.getenv("DB_CONNECT_ATTEMPTS", "8"))
         except Exception:
@@ -134,8 +122,6 @@ def make_on_startup(
             "statement_cache_size": 0,
             "init": _db_init,
         }
-        if force_ssl:
-            pool_kwargs["ssl"] = True
 
         last_err: Exception | None = None
         pool: asyncpg.Pool | None = None
@@ -151,15 +137,9 @@ def make_on_startup(
                     attempts=connect_attempts,
                     error_type=type(e).__name__,
                     error_message=str(e),
-                    force_ssl=bool(force_ssl),
                 )
                 if attempt >= connect_attempts:
                     # Startup may abort before shutdown hook runs; cleanup to avoid unclosed sessions.
-                    if hasattr(cloud, "close"):
-                        try:
-                            await cloud.close()
-                        except Exception:
-                            pass
                     if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
                         try:
                             await icloud.close()
@@ -267,11 +247,6 @@ def make_on_startup(
                 except Exception:
                     pass
                 # Startup may abort before shutdown hook runs; cleanup to avoid unclosed sessions.
-                if hasattr(cloud, "close"):
-                    try:
-                        await cloud.close()
-                    except Exception:
-                        pass
                 if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
                     try:
                         await icloud.close()
@@ -322,15 +297,10 @@ def make_on_startup(
     return _on_startup
 
 
-def make_on_shutdown(*, dp: Dispatcher, cloud, icloud, llm):
+def make_on_shutdown(*, dp: Dispatcher, icloud, llm):
     async def _on_shutdown(bot: Bot) -> None:
         log = _get_log(dp)
 
-        if hasattr(cloud, "close"):
-            try:
-                await cloud.close()
-            except Exception:
-                pass
 
         if os.getenv("ICLOUD_APPLE_ID", "") and os.getenv("ICLOUD_APP_PASSWORD", ""):
             try:

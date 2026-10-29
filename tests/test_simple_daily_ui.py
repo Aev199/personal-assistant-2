@@ -62,7 +62,7 @@ class SimpleDailyUiTests(unittest.IsolatedAsyncioTestCase):
     async def test_home_is_one_unfiltered_urgency_sorted_list(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=1), bot=SimpleNamespace())
         with (
-            patch.object(simple_daily.legacy, "_pop_screen_toast", AsyncMock(return_value=None)),
+            patch.object(simple_daily, "_pop_screen_toast", AsyncMock(return_value=None)),
             patch.object(simple_daily, "ui_render", AsyncMock(return_value=7)) as render,
         ):
             await simple_daily.ui_render_all_tasks(message, _Pool(_Conn()), tz_name="Europe/Moscow")
@@ -102,7 +102,7 @@ class SimpleDailyUiTests(unittest.IsolatedAsyncioTestCase):
     async def test_secondary_menu_hides_internal_product_surfaces(self) -> None:
         message = SimpleNamespace(chat=SimpleNamespace(id=1), bot=SimpleNamespace())
         with (
-            patch.object(simple_daily.legacy, "_pop_screen_toast", AsyncMock(return_value=None)),
+            patch.object(simple_daily, "_pop_screen_toast", AsyncMock(return_value=None)),
             patch.object(simple_daily, "ui_render", AsyncMock(return_value=7)) as render,
         ):
             await simple_daily.ui_render_home_more(message, _Pool(object()))

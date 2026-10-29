@@ -1,216 +1,116 @@
-# Personal Assistant Bot
+# Personal Assistant
 
-Single-user personal assistant built with `aiogram`, `asyncpg`, Gemini/DeepSeek, iCloud CalDAV, a Telegram SPA, and a native iOS client.
+Личный помощник для задач, напоминаний и встреч одного человека.
+Цель — разгрузить память: быстро записать мысль, утром выбрать дела на день,
+не потерять ни одной записи.
 
-## Browser interface
+## Как устроено
 
-The shared browser client is served at `/app/` by the existing Python service.
-See [setup and rollback instructions](docs/web-interface.md). Configure
-`ASSISTANT_PUBLIC_ORIGIN` with the exact HTTPS origin; native app and widget tokens
-keep their existing API access. Installable PWA and iOS notification delivery are
-separate follow-up stages.
+Один Python-сервис (`bot.py`) и одна база PostgreSQL. Все клиенты работают
+с общими данными и одним способом записи.
 
-## Product model
+| Клиент | Роль |
+|---|---|
+| **Telegram** | Записать текстом или голосом. «Сегодня», «Все дела», карточка задачи. Напоминания, а по будням в 10:00 — «Что сегодня?» |
+| **iPhone** (`ios/`) | Три вкладки «Сегодня», «Задачи», «Идеи». Виджет «На сегодня», голосовая запись с кнопки действия |
+| **Веб** (`/app/`) | Рабочий компьютер: списки, разбор «Входящих», запись |
 
-The bot is optimized for low-friction capture rather than form filling:
+**Запись.** Текст разбирает Gemini: задача, личное дело, напоминание, идея или
+встреча. Если Gemini недоступен или не ответил за 10 секунд, текст сохраняется
+во «Входящие». Встречу в календарь iCloud нужно подтвердить одной кнопкой.
+Неизвестный проект — запись попадает во «Входящие», неизвестный человек —
+исполнитель остаётся пустым. Только что созданную запись можно отменить в
+течение 15 минут.
 
-- text and voice messages are classified into work tasks, personal tasks, ideas, reminders, and events;
-- safe captures execute immediately and remain undoable;
-- calendar events retain an explicit confirmation step during ordinary free-form use;
-- unknown project references fall back to `INBOX`;
-- Postgres remains the source of truth for work tasks, personal tasks, ideas, reminders, runtime state, and audit data.
+**На сегодня.** Это короткий список дел на день, общий для всех клиентов. В нём
+дела, выбранные на сегодня, и дела со сроком на сегодня (их можно убрать из списка).
+Ночью ничего не пропадает: невыполненное просто остаётся в общем списке.
 
-## Free-form lists and SPA receipts
+**Календарь** iCloud читается для встреч на сегодня. Создание встречи требует
+подтверждения.
 
-Multi-item free-form text and voice messages use the existing batch classifier
-and execution pipeline. Before classification, the original text/transcript is
-retained in a durable receipt in `conversation_state` (no expiration). Each
-recognized item and its pending-action ID are then saved incrementally. Incomplete
-items and unavailable destinations remain in the receipt instead of disappearing
-or being moved to the work Inbox. Work and personal tasks stay in Assistant; ideas are stored separately so they do not become obligations. The explicit `/setup` import is a separate existing flow.
+## Код
 
-One SPA receipt replaces the current screen and distinguishes executed actions,
-pending confirmations, errors, and unprocessed items using database statuses.
-Calendar events still require confirmation; open their individual preview from
-the receipt. Receipts can be reopened through **More → Records (Записи)**, including
-the original input. The receipt itself is not a scheduled reminder: items lacking
-required details still need clarification before they can be executed.
+```
+bot/
+  tg/             Telegram: запись, экраны, карточка задачи
+  http/           API для iPhone и веба, служебные адреса (/tick, /health)
+  web/            веб-интерфейс (один HTML, CSS и JS)
+  services/       общая логика: запись (native_intake + intake_rules),
+                  «На сегодня» (day_plan), утренние сообщения, напоминания (tick)
+  adapters/       Gemini, DeepSeek (запасной), iCloud CalDAV
+  db/             схема и служебные таблицы
+ios/              Swift-приложение и виджет (XcodeGen)
+tests/            тесты сервера, контракт iPhone-клиента, проверка веба в браузере
+```
 
-`ASSISTANT_RICH_MESSAGES=1` (default) enables a collapsed original-input section
-using Telegram Rich Messages when supported by the installed aiogram. Rich content
-is edited on the existing SPA anchor. Unsupported rich payloads retry ordinary
-HTML on the same anchor; older aiogram installations use HTML directly. Set the
-variable to `0` to disable rich rendering. Long source text remains available via
-pagination in both modes. Voice progress also uses the SPA renderer.
+Схема базы создаётся и дополняется сама при запуске; изменения только добавочные.
 
-References: [Rich message formatting](https://core.telegram.org/bots/api#rich-message-formatting-options),
-[editing messages](https://core.telegram.org/bots/api#editmessagetext).
+## Сервер (VPS)
 
-## Daily use
+- Каталог `/opt/personal-assistant-2`, владелец `personalassistant`.
+- Служба `personal-assistant-bot.service`, слушает `127.0.0.1:10001`.
+- Настройки в `/etc/personal-assistant-bot.env`. Секреты в репозиторий не попадают.
+- Nginx проксирует HTTPS на сервис.
+- Cron раз в минуту вызывает `/tick` (`/etc/cron.d/personal-assistant-bot-tick`):
+  напоминания и утренние сообщения работают только с ним.
 
-Send one task as plain text; choosing a project or due date is optional. The home
-screen shows up to three tasks due before tomorrow and uses the remaining slots
-(up to five total) for undated or upcoming work. This keeps unscheduled work
-visible even when overdue tasks accumulate. Work and personal tasks use the same internal attention feed.
-
-Open a task by its title, or tap the separate ✓ button to complete it. The home
-screen offers the existing 30-second undo for completion. The persistent menu
-keeps Today, Add, All tasks, Reminders, and capture undo; Projects, Inbox, and
-administration are under More. Add stays available if the LLM is offline so
-manual capture remains reachable.
-
-## Initial population
-
-Start with one task, or import a short list when several tasks are already on your mind.
-
-Start with either:
-
-- `/setup`;
-- `➕ Добавить` → `Добавить списком`.
-
-Then send a text or voice list. Two or three items are enough to start. The setup flow:
-
-1. splits the dump into independent items;
-2. classifies work, personal tasks, ideas, reminders, and events;
-3. groups recurring work topics and suggests projects;
-4. shows one combined preview;
-5. saves everything after one confirmation.
-
-Two save modes are available:
-
-- `Сохранить всё` creates suggested projects and uses existing ones;
-- `Без новых проектов` still uses matching existing projects, but routes new/uncertain groupings to `INBOX`.
-
-The import is lossless by design. If an external calendar is unavailable during import, or a reminder time is incomplete, the item is preserved internally instead of being dropped.
-
-Voice transcription requires Gemini. The resulting transcript can still be classified by DeepSeek if the Gemini classification request fails.
-
-## LLM provider routing
-
-Text classification uses this order:
-
-1. Gemini primary model and its configured Gemini model fallbacks;
-2. DeepSeek fallback when Gemini is unavailable, rate-limited, has an open circuit breaker, returns malformed output, or is not configured.
-
-DeepSeek is also allowed as the only text provider. Audio transcription remains Gemini-only.
-
-## Proactive messages
-
-Proactive messages are quiet by default until the system has useful content:
-
-- no morning card before onboarding is completed, unless at least five internal tasks already exist;
-- no empty “day is free” card;
-- weekend morning cards are disabled by default;
-- a morning card is sent only when today contains tasks, overdue work, or reminders;
-- evening Inbox nudges are disabled by default and require explicit opt-in;
-- proactive cards replace the existing SPA anchor instead of leaving a second permanent bot message.
-
-## Required environment variables
-
-- `BOT_TOKEN`
-- `DATABASE_URL`
-- `ADMIN_ID`
-- `INTERNAL_API_KEY`
-
-At least one text LLM provider must be configured:
-
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY`; and/or
-- `DEEPSEEK_API_KEY`.
-
-## LLM environment variables
-
-Gemini:
-
-- `GEMINI_BASE_URL`
-- `GEMINI_LLM_MODEL`
-- `GEMINI_TRANSCRIBE_MODEL`
-- `GEMINI_TIMEOUT_SEC`
-- `GEMINI_FALLBACK_MODELS` — comma-separated Gemini model names
-
-DeepSeek:
-
-- `DEEPSEEK_API_KEY`
-- `DEEPSEEK_BASE_URL` — default `https://api.deepseek.com`
-- `DEEPSEEK_MODEL` — default `deepseek-v4-flash`
-- `DEEPSEEK_TIMEOUT_SEC` — default `45`
-- `DEEPSEEK_MAX_TOKENS` — default `8192`, useful for large onboarding dumps
-- `DEEPSEEK_USER_ID` — optional stable anonymized caller identifier
-
-## Assistant behavior variables
-
-- `ASSISTANT_INSTANT_CAPTURE=1`
-- `ASSISTANT_HABIT_MESSAGES=1`
-- `ASSISTANT_MORNING_BRIEF_HOUR=8`
-- `ASSISTANT_WEEKEND_BRIEF=0`
-- `ASSISTANT_EVENING_NUDGE=0`
-- `ASSISTANT_EVENING_NUDGE_HOUR=19`
-- `ASSISTANT_MIN_ITEMS_FOR_HABITS=5`
-- `ASSISTANT_EVENING_INBOX_THRESHOLD=3`
-
-Set `ASSISTANT_INSTANT_CAPTURE=0` to restore confirmation cards for all ordinary LLM-originated actions. Set `ASSISTANT_HABIT_MESSAGES=0` to disable all proactive cards.
-
-## Integration variables
-
-- `ICLOUD_APPLE_ID`
-- `ICLOUD_APP_PASSWORD`
-- `ICLOUD_CALENDAR_URL_WORK`
-- `ICLOUD_CALENDAR_URL_PERSONAL`
-- `BACKUP_STORAGE_BACKEND`
-- `BACKUP_RETENTION_DAYS`
-
-## Local run
+Обновление (под root):
 
 ```bash
-pip install -r requirements.txt
-python bot.py
+cd /opt/personal-assistant-2
+sudo -u personalassistant git status --short      # должно быть пусто
+sudo -u personalassistant git rev-parse --short HEAD   # запишите для отката
+sudo -u personalassistant git fetch origin
+sudo -u personalassistant git switch main 2>/dev/null || sudo -u personalassistant git switch --track origin/main
+sudo -u personalassistant git pull --ff-only
+systemctl restart personal-assistant-bot.service
+systemctl status personal-assistant-bot.service --no-pager | head -5
+curl -s http://127.0.0.1:10001/health
 ```
 
-Runtime mode is selected by `BOT_RUNTIME_MODE`:
+Откат: `sudo -u personalassistant git switch --detach ЗАПИСАННАЯ-ВЕРСИЯ` и тот же перезапуск.
 
-- `webhook` — recommended on Render Free;
-- `polling-web` — fallback/debug mode;
-- `auto` — webhook when `WEBHOOK_URL` exists, otherwise polling-web.
+Второй экземпляр для другого человека: [docs/second-instance.md](docs/second-instance.md).
 
-## HTTP endpoints
+## Настройки
 
-- `GET /ping` — liveness;
-- `GET /health` — readiness;
-- `GET /keepalive` — Render keep-warm endpoint;
-- `GET /tick` — reminders, retries, synchronization, and useful proactive cards;
-- `GET /internal/status` — protected operational status;
-- `POST /backup` — protected backup trigger.
+Обязательные:
 
-Protected endpoints require:
+| Переменная | Что это |
+|---|---|
+| `BOT_TOKEN` | токен Telegram-бота |
+| `ADMIN_ID` | ваш Telegram id; бот отвечает только вам |
+| `DATABASE_URL` | PostgreSQL |
+| `INTERNAL_API_KEY` | ключ для `/tick` (заголовок `X-Internal-Key`) |
+| `ASSISTANT_API_TOKEN` | ключ приложения: iPhone, виджет, вход в веб (старое имя `COMPANION_API_TOKEN` тоже работает) |
+| `ASSISTANT_PUBLIC_ORIGIN` | адрес сайта для веб-входа, например `https://example.org` |
+| `GEMINI_API_KEY` | разбор записи и голоса |
+| `BOT_TIMEZONE` | часовой пояс, по умолчанию `Europe/Moscow` |
 
-```text
-X-Internal-Key: <INTERNAL_API_KEY>
-```
+Дополнительные:
 
-## Render deployment
+| Переменная | Что это |
+|---|---|
+| `WEBHOOK_URL` | если задан, Telegram работает через webhook, иначе через polling |
+| `ICLOUD_APPLE_ID`, `ICLOUD_APP_PASSWORD`, `ICLOUD_CALENDAR_URL_WORK`, `ICLOUD_CALENDAR_URL_PERSONAL`, `ICLOUD_CALENDAR_URL_BITRIX` | календари iCloud |
+| `DEEPSEEK_API_KEY` | запасная модель, если Gemini недоступен |
+| `ASSISTANT_MORNING_BRIEF_HOUR` / `ASSISTANT_EVENING_NUDGE_HOUR` | 10 и 17 по умолчанию |
+| `ASSISTANT_EVENING_NUDGE=1` | вечернее напоминание про «Входящие» (по умолчанию выключено) |
+| `ASSISTANT_WEEKEND_BRIEF=1` | сообщения и в выходные (по умолчанию нет) |
+| `NATIVE_INTAKE_CLASSIFY_TIMEOUT_SEC` | сколько ждать Gemini перед записью во «Входящие», 10 |
 
-Recommended setup:
+Переменные Render, Obsidian/Яндекс.Диска, облачных копий и Google Tasks больше
+не читаются, их можно удалить из файла настроек.
 
-1. Create a Render Web Service.
-2. Start with `python bot.py`.
-3. Configure `BOT_RUNTIME_MODE=webhook` and `WEBHOOK_URL`.
-4. Add cron calls to `/keepalive`, `/tick`, and `/backup` using `X-Internal-Key` where required.
-
-Render Free remains a compromise platform. Cold starts can delay reminders; delayed delivery is preferred over silent loss.
-
-## Data model highlights
-
-- `tasks` — internal work, Inbox and personal tasks;
-- `ideas` — lightweight non-actionable captures;
-- `reminders` — durable queue, retry and delivery state;
-- `pending_actions` — persisted execution records and event drafts;
-- `conversation_state` — restart-safe follow-up and bulk state;
-- `action_journal` — executed actions and undo metadata;
-- `assistant_habit_state` — proactive-message dates and onboarding completion marker.
-
-## Verification
+## Проверки
 
 ```bash
-pytest -q
+pip install -r requirements.txt pytest
+python -m pytest -q
+TEST_DATABASE_URL=postgresql://…/test python -m pytest -q   # плюс проверки на настоящей базе
+node tests/web-browser.cjs                                  # веб в браузере (нужен Playwright)
 ```
 
-The target is a low-friction, restart-resilient single-user assistant rather than a strict real-time SLA.
+На GitHub проверка `ci` запускает всё это при каждом изменении `main` и в
+pull request. IPA собирается вручную: Actions → iOS IPA → Run workflow.

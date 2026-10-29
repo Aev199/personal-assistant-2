@@ -1,13 +1,8 @@
 name: iOS IPA
 
+# Manual only: macOS minutes are expensive, build when an IPA is needed.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - feat/ios-primary-client
-    paths:
-      - "ios/**"
-      - ".github/workflows/ios-ipa.yml"
 
 permissions:
   contents: read

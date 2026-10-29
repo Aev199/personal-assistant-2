@@ -34,15 +34,16 @@ Canonical native-client routes:
 - GET /api/v1/ideas
 - POST /api/v1/ideas/{id}/promote
 - POST /api/v1/ideas/{id}/archive
-- POST /api/v1/capture with a JSON text field
+- POST /api/v1/intake with a JSON text field (the same capture core as Telegram and the web)
+- GET /api/v1/intake/pending, POST /api/v1/intake/{id}/confirm and /cancel — calendar events wait for one tap
 - POST /api/v1/intake/audio with multipart AAC/M4A voice data
 - POST /api/v1/tasks/{id}/done
 - POST /api/v1/tasks/{id}/plan and /unplan — add to or remove from «На сегодня»; tasks carry `today_plan`
 - PATCH /api/v1/tasks/{id} with `expected_updated_at`; a change made meanwhile from the web or Telegram returns 409 `task_conflict` instead of being overwritten
 
-Legacy /api/v1/companion/... routes remain as compatibility aliases. Current iOS builds try the canonical route first and fall back to legacy routes where possible, so the app can survive a rolling backend upgrade.
+These are the only routes; the old /api/v1/companion aliases, the focus endpoints and the separate widget token were removed.
 
-Authentication uses Bearer tokens. ASSISTANT_API_TOKEN is the preferred full-client environment variable. Existing COMPANION_API_TOKEN remains supported as a fallback. COMPANION_WIDGET_TOKEN remains supported only for older widget builds with restricted read/done scope.
+Authentication uses one Bearer token, ASSISTANT_API_TOKEN (the older name COMPANION_API_TOKEN is still read). The app and the widget share it.
 
 Free-form capture uses the backend intake service shared with Telegram. Swift does not classify intent. Work tasks, personal tasks, reminders and ideas are persisted by the backend; ideas remain non-actionable until explicitly promoted.
 

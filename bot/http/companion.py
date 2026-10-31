@@ -22,6 +22,7 @@ from bot.services.native_intake import process_native_capture, confirm_native_ac
 from bot.services.ideas import list_active_ideas, promote_idea, archive_idea
 from bot.services.calendar_today import TodayCalendarSnapshot, fetch_today_calendar
 from bot.services.task_actions import TaskActionError, complete_task
+from bot.services.reminder_list import ReminderNotActive, cancel_reminder, list_upcoming, reminder_to_task
 from bot.services.day_plan import DayPlanError, in_today_plan, local_today, set_planned, today_plan_sql
 from bot.services.reminders import (
     mark_telegram_reminder_snoozed,
@@ -81,6 +82,13 @@ def _iso_version(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
+
+
+def _client_time(value: datetime | None) -> str | None:
+    """ISO time without fractions: iOS JSONDecoder.iso8601 rejects «.123456»."""
+    if value is None:
+        return None
+    return value.replace(microsecond=0).isoformat()
 
 
 def _utc_naive(value: datetime) -> datetime:
@@ -315,6 +323,15 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     async def _done(request: web.Request) -> web.StreamResponse:
         return await handle_task_done(request, ctx)
 
+    async def _reminders(request: web.Request) -> web.StreamResponse:
+        return await handle_reminders(request, ctx)
+
+    async def _reminder_cancel(request: web.Request) -> web.StreamResponse:
+        return await handle_reminder_change(request, ctx, to_task=False)
+
+    async def _reminder_to_task(request: web.Request) -> web.StreamResponse:
+        return await handle_reminder_change(request, ctx, to_task=True)
+
     async def _plan(request: web.Request) -> web.StreamResponse:
         return await handle_task_plan(request, ctx, planned=True)
 
@@ -350,6 +367,9 @@ def attach_companion_routes(app: web.Application, ctx) -> None:
     app.router.add_post("/api/v1/intake/{pending_action_id}/cancel", _intake_cancel)
     app.router.add_post("/api/v1/tasks/{task_id}/done", _done)
     app.router.add_post("/api/v1/tasks/{task_id}/plan", _plan)
+    app.router.add_get("/api/v1/reminders", _reminders)
+    app.router.add_post("/api/v1/reminders/{reminder_id}/cancel", _reminder_cancel)
+    app.router.add_post("/api/v1/reminders/{reminder_id}/to-task", _reminder_to_task)
     app.router.add_post("/api/v1/tasks/{task_id}/unplan", _unplan)
     app.router.add_post("/api/v1/attention/dismiss-event", _dismiss_event)
     app.router.add_post("/api/v1/reminders/{reminder_id}/snooze", _snooze_reminder)
@@ -470,7 +490,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
                 "kind": str(row["kind"] or "task"),
                 "assignee": str(row["assignee"] or ""),
                 "status": str(row["status"] or "todo"),
-                "deadline": deadline_local.isoformat() if deadline_local else None,
+                "deadline": _client_time(deadline_local),
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
                 # Edit version: clients send it back so an edit never silently
                 # overwrites a change made by another client.
@@ -488,7 +508,7 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             {
                 "id": int(row["id"]),
                 "text": str(row["text"] or ""),
-                "at": remind_local.isoformat() if remind_local else None,
+                "at": _client_time(remind_local),
             }
         )
 
@@ -534,8 +554,8 @@ async def handle_today(request: web.Request, ctx) -> web.StreamResponse:
             {
                 "id": event_id,
                 "title": str(event.summary or "Без названия"),
-                "start": start_local_event.isoformat(),
-                "end": end_local_event.isoformat(),
+                "start": _client_time(start_local_event),
+                "end": _client_time(end_local_event),
                 "kind": calendar_kind,
             }
         )
@@ -841,7 +861,7 @@ async def handle_reminder_snooze(request: web.Request, ctx) -> web.StreamRespons
             "status": "snoozed",
             "reminder_id": reminder_id,
             "new_reminder_id": int(new_id),
-            "at": new_time.isoformat(),
+            "at": _client_time(new_time),
             "minutes": minutes,
         }
     )
@@ -994,7 +1014,7 @@ async def handle_tasks(request: web.Request, ctx) -> web.StreamResponse:
                 "kind": str(row["kind"] or "task"),
                 "assignee": str(row["assignee"] or ""),
                 "status": str(row["status"] or "todo"),
-                "deadline": deadline_local.isoformat() if deadline_local else None,
+                "deadline": _client_time(deadline_local),
                 "overdue": bool(deadline_utc and deadline_utc < now_utc),
                 # Edit version: clients send it back so an edit never silently
                 # overwrites a change made by another client.
@@ -1561,3 +1581,50 @@ async def handle_task_plan(request: web.Request, ctx, *, planned: bool) -> web.S
     except DayPlanError as exc:
         return web.json_response({"ok": False, "error": exc.code}, status=exc.status)
     return web.json_response(result)
+
+
+async def handle_reminders(request: web.Request, ctx) -> web.StreamResponse:
+    """Upcoming reminders, so every client can see and change them."""
+    if not _authorized(request):
+        return _auth_error()
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+
+    tz = ZoneInfo(resolve_tz_name(ctx.deps.tz_name))
+    async with pool.acquire() as conn:
+        rows = await list_upcoming(conn, chat_id=int(ctx.deps.admin_id or 0))
+    reminders = []
+    for row in rows:
+        at = _utc_aware(row["remind_at"])
+        reminders.append({
+            "id": int(row["id"]),
+            "text": str(row["text"] or ""),
+            "at": _client_time(at.astimezone(tz)) if at else None,
+            "repeat": str(row["repeat"] or "none"),
+        })
+    return web.json_response({"ok": True, "reminders": reminders})
+
+
+async def handle_reminder_change(request: web.Request, ctx, *, to_task: bool) -> web.StreamResponse:
+    if not _authorized(request):
+        return _auth_error()
+    pool: asyncpg.Pool | None = ctx.deps.db_pool
+    if not pool:
+        return web.json_response({"ok": False, "error": "db_unavailable"}, status=503)
+    try:
+        reminder_id = int(request.match_info["reminder_id"])
+    except (KeyError, TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_reminder_id"}, status=400)
+
+    chat_id = int(ctx.deps.admin_id or 0)
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                if to_task:
+                    task = await reminder_to_task(conn, chat_id=chat_id, reminder_id=reminder_id)
+                    return web.json_response({"ok": True, "status": "converted", **task})
+                await cancel_reminder(conn, chat_id=chat_id, reminder_id=reminder_id)
+    except ReminderNotActive:
+        return web.json_response({"ok": False, "error": "reminder_not_active"}, status=409)
+    return web.json_response({"ok": True, "status": "cancelled"})

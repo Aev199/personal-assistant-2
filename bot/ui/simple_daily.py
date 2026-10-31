@@ -475,9 +475,10 @@ async def ui_render_home_more(
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text="Напоминания", callback_data="rl:list"),
                 InlineKeyboardButton(text="Идеи", callback_data="nav:ideas:0"),
-                InlineKeyboardButton(text="Помощь", callback_data="nav:help"),
             ],
+            [InlineKeyboardButton(text="Помощь", callback_data="nav:help")],
             [
                 InlineKeyboardButton(text="Сегодня", callback_data="nav:home"),
                 InlineKeyboardButton(text="Все дела", callback_data="nav:all:all:0"),

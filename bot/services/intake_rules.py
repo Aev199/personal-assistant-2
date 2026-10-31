@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
@@ -577,8 +577,10 @@ def _intake_system_prompt(
         "- project_code/project_name only when the work event clearly belongs to a project.\n"
         "For action=idea return idea_text with the raw non-actionable thought to store in Assistant.\n"
         "Use action=reply only if the request is not actionable or required data is missing.\n"
-        "Prefer reminder when the user explicitly asks to remind. "
-        "Prefer event for meetings, calls, appointments, calendar bookings, and time blocks. "
+        "Use reminder ONLY when the user explicitly asks to be reminded (напомни, напомнить, remind). "
+        "A call, errand or to-do with a day but without such a request is a task with deadline_local "
+        "on that day (18:00 when no time is given), never a reminder. "
+        "Prefer event for meetings and appointments that have a start time (встреча, созвон в 15:00). "
         "Prefer idea for thoughts, concepts, brainstorm items, things to capture without a deadline. "
         "Prefer personal_task for personal todos, errands, purchases, and household tasks. "
         "Prefer task for actionable work items.\n"
@@ -637,8 +639,9 @@ def _intake_system_prompt_batch(
         "For action=idea include:\n"
         "- title (used as idea_text)\n\n"
         "Rules:\n"
-        "- Prefer reminder when the user explicitly asks to remind.\n"
-        "- Prefer event for meetings, calls, appointments, calendar bookings.\n"
+        "- Use reminder ONLY when the user explicitly asks to be reminded (напомни, напомнить, remind); "
+        "a call or to-do with a day but no such request is a task due that day (18:00 when no time).\n"
+        "- Prefer event for meetings and appointments that have a start time.\n"
         "- Prefer idea for thoughts, concepts, brainstorm items without a deadline.\n"
         "- Prefer personal_task for personal todos, errands, purchases, household tasks.\n"
         "- Prefer task for actionable work items.\n"
@@ -743,3 +746,37 @@ def _normalize_batch_payloads(raw_response: dict[str, Any], *, retain_incomplete
         if intent.action != "reply" or (retain_incomplete and intent.needs_followup):
             intents.append(intent)
     return intents, reply
+
+
+_REMIND_WORDS = re.compile(r"напомн|remind", re.IGNORECASE)
+
+
+def _reminders_only_when_asked(intents: list[IntakeIntent], *, text: str) -> list[IntakeIntent]:
+    """A reminder pings at a set time, so it is created only when the user asks to be reminded.
+
+    «Позвонить подрядчику завтра» is a task due tomorrow, whatever the model chose;
+    «напомни завтра в 10 позвонить» stays a reminder.
+    """
+    if _REMIND_WORDS.search(text or ""):
+        return intents
+    result: list[IntakeIntent] = []
+    for intent in intents:
+        if intent.action == "reminder":
+            intent = replace(
+                intent,
+                action="task",
+                title=intent.reminder_text or intent.title,
+                deadline_local=intent.remind_at_local or intent.deadline_local,
+            )
+        elif intent.needs_followup and intent.followup_action == "reminder":
+            intent = replace(
+                intent,
+                action="task",
+                title=intent.reminder_text or intent.title or _clean(text),
+                needs_followup=False,
+                followup_prompt="",
+                followup_action=None,
+                missing_fields=(),
+            )
+        result.append(intent)
+    return result

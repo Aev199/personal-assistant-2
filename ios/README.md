@@ -38,6 +38,7 @@ Canonical native-client routes:
 - GET /api/v1/intake/pending, POST /api/v1/intake/{id}/confirm and /cancel — calendar events wait for one tap
 - POST /api/v1/intake/audio with multipart AAC/M4A voice data
 - POST /api/v1/tasks/{id}/done
+- GET /api/v1/reminders, POST /api/v1/reminders/{id}/cancel and /to-task — the bell in **Задачи** lists upcoming reminders
 - POST /api/v1/tasks/{id}/plan and /unplan — add to or remove from «На сегодня»; tasks carry `today_plan`
 - PATCH /api/v1/tasks/{id} with `expected_updated_at`; a change made meanwhile from the web or Telegram returns 409 `task_conflict` instead of being overwritten
 

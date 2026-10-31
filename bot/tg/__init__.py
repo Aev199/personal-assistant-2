@@ -23,6 +23,7 @@ from bot.deps import AppDeps
 from bot.services.capture import save_capture
 from bot.services.day_plan import DayPlanError, local_today, set_planned
 from bot.services.native_intake import cancel_native_action, confirm_native_action, process_native_capture
+from bot.services.reminder_list import ReminderNotActive, cancel_reminder, list_upcoming, reminder_to_task
 from bot.services.task_actions import DUE_CHOICES, TaskActionError, complete_task, set_due
 from bot.services.undo import undo_latest
 from bot.tz import resolve_tz_name
@@ -479,6 +480,64 @@ async def cb_nav(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) 
         await show_today(message, db_pool, deps, edit=True)
 
 
+REPEAT_LABELS = {"daily": "каждый день", "weekly": "каждую неделю", "monthly": "каждый месяц", "workdays": "по будням"}
+
+
+async def show_reminders(message: Message, db_pool: asyncpg.Pool, deps: AppDeps, *, notice: str | None = None) -> None:
+    """Upcoming reminders: each can become a task or be deleted."""
+    tz = ZoneInfo(resolve_tz_name(deps.tz_name))
+    async with db_pool.acquire() as conn:
+        rows = await list_upcoming(conn, chat_id=int(message.chat.id), limit=20)
+    lines = ([notice, ""] if notice else []) + ["<b>Напоминания</b>"]
+    kb: list[list[InlineKeyboardButton]] = []
+    if not rows:
+        lines += ["", "Напоминаний нет."]
+    for number, row in enumerate(rows, 1):
+        at = row["remind_at"]
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        repeat = REPEAT_LABELS.get(str(row["repeat"] or "none"), "")
+        when = f"{at.astimezone(tz):%d.%m %H:%M}" + (f", {repeat}" if repeat else "")
+        lines.append(f"{number}. {h(row['text'])} · {when}")
+        rid = int(row["id"])
+        kb.append([
+            InlineKeyboardButton(text=f"📝 {number} в задачу", callback_data=f"rl:{rid}:task"),
+            InlineKeyboardButton(text=f"🗑 {number} удалить", callback_data=f"rl:{rid}:del"),
+        ])
+    kb.append([InlineKeyboardButton(text="⬅ Сегодня", callback_data="nav:today")])
+    await ui_render(
+        bot=message.bot,
+        db_pool=db_pool,
+        chat_id=int(message.chat.id),
+        text="\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        screen="reminders",
+        fallback_message=message,
+        preferred_message_id=int(message.message_id),
+        parse_mode="HTML",
+    )
+
+
+async def cb_reminders(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
+    parts = (callback.data or "").split(":")
+    message = callback.message
+    notice = None
+    if len(parts) == 3 and parts[1].isdigit() and parts[2] in {"task", "del"}:
+        try:
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    if parts[2] == "task":
+                        task = await reminder_to_task(conn, chat_id=int(message.chat.id), reminder_id=int(parts[1]))
+                        notice = f"📝 Теперь это задача: {h(task['title'])}"
+                    else:
+                        text = await cancel_reminder(conn, chat_id=int(message.chat.id), reminder_id=int(parts[1]))
+                        notice = f"🗑 Удалено: {h(text)}"
+        except ReminderNotActive:
+            notice = "Это напоминание уже сработало или удалено."
+    await callback.answer()
+    await show_reminders(message, db_pool, deps, notice=notice)
+
+
 async def cb_stale(callback: CallbackQuery, db_pool: asyncpg.Pool, deps: AppDeps) -> None:
     """Buttons from screens of older versions open today's screen instead of failing."""
     await callback.answer("Этот экран устарел")
@@ -511,6 +570,7 @@ def register(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_task_card, F.data.startswith("tc:"))
     dp.callback_query.register(cb_task, F.data.regexp(r"^task:\d+(?::done_quick)?$"))
     dp.callback_query.register(cb_nav, F.data.startswith("nav:"))
+    dp.callback_query.register(cb_reminders, F.data.startswith("rl:"))
     register_day_plan(dp)
     register_ideas(dp)
     register_reminders(dp)

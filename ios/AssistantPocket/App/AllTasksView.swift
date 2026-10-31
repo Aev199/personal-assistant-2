@@ -30,6 +30,7 @@ struct AllTasksView: View {
     @State private var errorMessage: String?
     @State private var actionError: String?
     @State private var editingTask: TodayTask?
+    @State private var showReminders = false
 
     var body: some View {
         Group {
@@ -70,6 +71,15 @@ struct AllTasksView: View {
         .navigationTitle("Задачи")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    showReminders = true
+                } label: {
+                    Image(systemName: "bell")
+                }
+                .accessibilityLabel("Напоминания")
+            }
+
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Link(destination: URL(string: "assistantpocket://capture?mode=voice")!) {
                     Image(systemName: "mic")
@@ -88,6 +98,15 @@ struct AllTasksView: View {
         }
         .onChange(of: refreshToken) { _, _ in
             Task { await load() }
+        }
+        .sheet(isPresented: $showReminders) {
+            RemindersView {
+                Task {
+                    await load()
+                    onChanged()
+                }
+            }
+            .environmentObject(settings)
         }
         .sheet(item: $editingTask) { task in
             TaskEditView(task: task) {

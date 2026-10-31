@@ -570,6 +570,9 @@ async def process_native_capture(
             ),
             timeout=_classify_timeout_sec(),
         )
+        intents = intake._reminders_only_when_asked(
+            intents, text=intake._merge_freeform_text(prepend_text, text)
+        )
     except Exception as exc:
         error = "classify_timeout" if isinstance(exc, asyncio.TimeoutError) else str(exc)
         return await _save_to_inbox_without_parsing(

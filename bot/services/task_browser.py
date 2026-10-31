@@ -39,7 +39,7 @@ async def list_tasks(conn, *, scope: str, inbox: bool, limit: int, cursor: int |
                       'project':'' if r['kind']=='personal' else r['project'],
                       'status':r['status'],'assignee':r['assignee'],
                       'today_plan':bool(r['today_plan']),'planned':bool(r['planned']),
-                      'deadline':iso(r['deadline']),'updated_at':iso(r['updated_at'])})
+                      'deadline':iso(r['deadline'].replace(microsecond=0)) if r['deadline'] else None,'updated_at':iso(r['updated_at'])})
     return {'ok':True,'tasks':tasks,'next_cursor':int(rows[limit-1]['id']) if len(rows)>limit else None}
 
 

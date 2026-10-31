@@ -299,3 +299,49 @@ def test_undo_removes_only_a_recent_capture():
             titles=[r['title'] for r in await conn.fetch('SELECT title FROM tasks')]
             assert titles == ['старая запись']
     asyncio.run(run())
+
+
+def test_reminders_can_be_listed_deleted_and_turned_into_tasks():
+    async def run():
+        from datetime import datetime
+        from bot.services.reminder_list import list_upcoming, cancel_reminder, reminder_to_task, ReminderNotActive
+        async with database(runtime=True) as (conn,pool):
+            add=lambda text,at: conn.fetchval("INSERT INTO reminders(chat_id,text,remind_at) VALUES(9,$1,$2) RETURNING id",text,at)
+            call=await add('Позвонить подрядчику',datetime(2030,1,2,6,0)); old=await add('Купить хлеб',datetime(2030,1,1,9,0))
+            assert [r['text'] for r in await list_upcoming(conn,chat_id=9)] == ['Купить хлеб','Позвонить подрядчику']
+            async with conn.transaction():
+                task=await reminder_to_task(conn,chat_id=9,reminder_id=call)
+            row=await conn.fetchrow("SELECT t.title,t.deadline,p.code FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=$1",task['task_id'])
+            assert (row['title'],row['deadline'],row['code']) == ('Позвонить подрядчику',datetime(2030,1,2,6,0),'INBOX')
+            async with conn.transaction():
+                assert await cancel_reminder(conn,chat_id=9,reminder_id=old) == 'Купить хлеб'
+            assert await list_upcoming(conn,chat_id=9) == []
+            with pytest.raises(ReminderNotActive):
+                async with conn.transaction():
+                    await cancel_reminder(conn,chat_id=9,reminder_id=old)
+    asyncio.run(run())
+
+
+def test_client_times_have_no_fractions_even_after_snooze():
+    """iOS JSONDecoder.iso8601 rejects fractions; one bad value would blank Today and the widget."""
+    async def run():
+        import json, re
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+        from bot.http import companion
+        async with database(runtime=True) as (conn,pool):
+            os.environ['ASSISTANT_API_TOKEN']='app'
+            snoozed=(datetime.now(timezone.utc)+timedelta(minutes=15, microseconds=123456)).replace(tzinfo=None)
+            await conn.execute("INSERT INTO reminders(chat_id,text,remind_at) VALUES(9,'отложено',$1)",snoozed)
+            project=await conn.fetchval("INSERT INTO projects(code,name,status) VALUES('INBOX','Входящие','active') RETURNING id")
+            await conn.execute("INSERT INTO tasks(project_id,title,status,kind,deadline) VALUES($1,'срок',$2,'task',$3)",project,'todo',snoozed)
+            class Request:
+                headers={'Authorization':'Bearer app'}; cookies={}; query={'limit':'500'}
+            ctx=SimpleNamespace(deps=SimpleNamespace(db_pool=pool,tz_name='Europe/Moscow',admin_id=9,icloud=None))
+            for handler in (companion.handle_today, companion.handle_reminders, companion.handle_tasks):
+                body=(await handler(Request(),ctx)).text
+                payload=json.loads(body)
+                times=[t.get('deadline') for t in payload.get('tasks',[])]+[r.get('at') for r in payload.get('reminders',[])]
+                assert any(times), handler.__name__
+                assert not any(t and re.search(r':\d\d\.\d', t) for t in times), (handler.__name__, times)
+    asyncio.run(run())

@@ -390,3 +390,19 @@ def test_unknown_project_goes_to_inbox_and_unknown_person_is_left_empty():
     assert result == (1, "INBOX", None)
     team = [TeamOption(id=5, name="Иван Петров")]
     assert _resolve_assignee(requested_name="Сидоров", raw_text="поручить Сидорову", team=team) == (None, None, None)
+
+
+def test_reminder_only_when_the_user_asks_to_be_reminded():
+    from bot.services.intake_rules import IntakeIntent, _reminders_only_when_asked
+
+    model = [IntakeIntent(action="reminder", reminder_text="Позвонить подрядчику", remind_at_local="2026-11-01 09:00")]
+    task = _reminders_only_when_asked(model, text="позвонить подрядчику завтра")[0]
+    assert (task.action, task.title, task.deadline_local) == ("task", "Позвонить подрядчику", "2026-11-01 09:00")
+
+    kept = _reminders_only_when_asked(model, text="напомни завтра в 9 позвонить подрядчику")[0]
+    assert kept.action == "reminder"
+
+    question = [IntakeIntent(action="reply", needs_followup=True, followup_action="reminder",
+                             followup_prompt="Когда напомнить?", reminder_text="Позвонить подрядчику")]
+    task = _reminders_only_when_asked(question, text="позвонить подрядчику")[0]
+    assert task.action == "task" and not task.needs_followup and task.title == "Позвонить подрядчику"

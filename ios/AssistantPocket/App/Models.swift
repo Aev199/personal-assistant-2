@@ -231,3 +231,35 @@ struct APIErrorResponse: Decodable {
     let ok: Bool?
     let error: String?
 }
+
+struct RemindersResponse: Decodable {
+    let ok: Bool
+    let reminders: [UpcomingReminder]
+}
+
+struct UpcomingReminder: Decodable, Identifiable {
+    let id: Int
+    let text: String
+    let at: Date?
+    let repeatRule: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, text, at
+        case repeatRule = "repeat"
+    }
+
+    var repeatLabel: String? {
+        switch repeatRule {
+        case "daily": return "каждый день"
+        case "weekly": return "каждую неделю"
+        case "monthly": return "каждый месяц"
+        case "workdays": return "по будням"
+        default: return nil
+        }
+    }
+}
+
+struct ReminderMutationResponse: Decodable {
+    let ok: Bool
+    let status: String
+}

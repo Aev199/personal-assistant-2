@@ -15,6 +15,7 @@ let tasks=[
  {id:5,title:'Проверить экспорт в PLAXIS',project:'SoilStiffness',kind:'task',status:'todo',deadline:null,updated_at:'2026-10-17T08:00:00+00:00',today_plan:false}
 ];
 let ideas=[{id:1,text:'Контекстный поиск по рабочему архиву'}];
+let reminders=[{id:7,text:'Позвонить подрядчику',at:today+'T09:00:00+03:00',repeat:'none'}];
 let conflict=false,failTasksOnce=false,failInboxOnce=false,confirmed=false;
 const server=http.createServer(async(req,res)=>{
  const u=new URL(req.url,'http://localhost');let body='';for await(const c of req)body+=c;
@@ -39,6 +40,9 @@ const server=http.createServer(async(req,res)=>{
    return json({ok:true,timezone:'Europe/Moscow',tasks:list.slice(0,2),next_cursor:list.length>2?list[1].id:null});
   }
   if(u.pathname==='/api/v1/ideas')return json({ok:true,ideas,total:ideas.length});
+  if(u.pathname==='/api/v1/reminders')return json({ok:true,reminders});
+  const rm=u.pathname.match(/\/reminders\/(\d+)\/(to-task|cancel)$/);
+  if(rm){const r=reminders.find(x=>x.id===Number(rm[1]));reminders=reminders.filter(x=>x!==r);if(rm[2]==='to-task')tasks.push({id:90,title:r.text,project:'INBOX',kind:'task',status:'todo',deadline:r.at,updated_at:new Date().toISOString(),today_plan:false});return json({ok:true,status:rm[2]==='to-task'?'converted':'cancelled'});}
   if(u.pathname==='/api/v1/intake'){
    captureKeys.push(data.client_id);
    if(data.text.startsWith('встреча')&&!committed.has(data.client_id)){committed.set(data.client_id,null);return json({ok:true,status:'needs_confirmation',saved:[],needs_input:[],pending:[{pending_action_id:8,title:'Встреча с подрядчиком',kind:'event'}]});}
@@ -113,11 +117,14 @@ const server=http.createServer(async(req,res)=>{
   await page.getByRole('button',{name:'Добавить',exact:true}).click();
   await page.getByText('Добавлено в календарь',{exact:true}).waitFor();assert(confirmed);
   await page.getByRole('button',{name:'Идеи',exact:true}).first().click();await page.getByText('Контекстный поиск по рабочему архиву',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Напоминания',exact:true}).first().click();await page.getByText('Позвонить подрядчику',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'В задачу',exact:true}).click();await page.getByText('Напоминаний нет.',{exact:true}).waitFor();
+  assert(tasks.some(t=>t.title==='Позвонить подрядчику'),'reminder must become a task');
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Задачи',exact:true}).last().click();await page.getByRole('button',{name:'Личное',exact:true}).click();
   await page.getByText('Записаться на сервис автомобиля',{exact:true}).waitFor();
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   if(process.env.SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR,'assistant-web-mobile.png'),fullPage:true});
-  assert.deepEqual(errors,[]);console.log('Browser acceptance passed: login, calendar failure, pagination, today plan, conflict, capture retry, clarification, calendar confirmation, ideas, mobile.');
+  assert.deepEqual(errors,[]);console.log('Browser acceptance passed: login, calendar failure, pagination, today plan, conflict, capture retry, clarification, calendar confirmation, ideas, reminders, mobile.');
  }finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1});

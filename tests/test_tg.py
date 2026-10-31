@@ -203,3 +203,22 @@ def test_only_thin_handlers_are_registered_and_old_buttons_fall_back_to_today():
     assert messages[-2:] == ["on_voice", "on_text"]
     for gone in ("cb_add_event_start", "cb_bulk", "cb_nav_projects", "cb_nav_team"):
         assert gone not in callbacks
+
+
+def test_reminders_screen_lists_and_changes_reminders():
+    rows = [{"id": 3, "text": "Позвонить подрядчику", "remind_at": datetime(2026, 11, 1, 6, 0), "repeat": "none"},
+            {"id": 4, "text": "Планёрка", "remind_at": datetime(2026, 11, 2, 7, 0), "repeat": "workdays"}]
+    callback = SimpleNamespace(data="rl:3:task", message=_message(), answer=AsyncMock())
+    to_task = AsyncMock(return_value={"task_id": 10, "title": "Позвонить подрядчику"})
+    with (
+        patch.object(tg, "reminder_to_task", to_task),
+        patch.object(tg, "list_upcoming", AsyncMock(return_value=rows[1:])),
+        patch.object(tg, "ui_render", AsyncMock()) as render,
+    ):
+        asyncio.run(tg.cb_reminders(callback, _Pool(), DEPS))
+    assert to_task.await_args.kwargs["reminder_id"] == 3
+    text = render.await_args.kwargs["text"]
+    assert "📝 Теперь это задача: Позвонить подрядчику" in text
+    assert "1. Планёрка · 02.11 10:00, по будням" in text
+    buttons = [b.callback_data for b in render.await_args.kwargs["reply_markup"].inline_keyboard[0]]
+    assert buttons == ["rl:4:task", "rl:4:del"]

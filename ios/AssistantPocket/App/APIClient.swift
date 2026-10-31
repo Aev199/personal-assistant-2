@@ -250,6 +250,22 @@ struct APIClient {
         return try decode(TaskMutationResponse.self, data: data, response: response)
     }
 
+    func loadReminders() async throws -> RemindersResponse {
+        let (data, response) = try await send(path: "/api/v1/reminders")
+        return try decode(RemindersResponse.self, data: data, response: response)
+    }
+
+    /// `toTask` turns the reminder into an Inbox task due at the reminder time.
+    func changeReminder(reminderID: Int, toTask: Bool) async throws -> ReminderMutationResponse {
+        let action = toTask ? "to-task" : "cancel"
+        let (data, response) = try await send(
+            path: "/api/v1/reminders/\(reminderID)/\(action)",
+            method: "POST",
+            body: Data("{}".utf8)
+        )
+        return try decode(ReminderMutationResponse.self, data: data, response: response)
+    }
+
     func acknowledgeReminder(reminderID: Int) async throws -> AttentionMutationResponse {
         let req = try request(
             path: "/api/v1/reminders/\(reminderID)/ack",

@@ -893,3 +893,19 @@ def test_widget_buttons_have_finger_sized_hit_areas():
     assert header.count(".widgetTapTarget(width: 42)") == 2
     empty = widget[widget.index("private var emptyPlanState"):]
     assert ".frame(minHeight: 32)" in empty
+
+
+def test_reminders_are_reachable_and_can_be_deleted_or_turned_into_tasks():
+    tasks = _read("App/AllTasksView.swift")
+    view = _read("App/RemindersView.swift")
+    api = _read("App/APIClient.swift")
+    models = _read("App/Models.swift")
+
+    assert 'accessibilityLabel("Напоминания")' in tasks
+    assert "RemindersView {" in tasks
+    assert 'Button("В задачу")' in view
+    assert 'Button("Удалить", role: .destructive)' in view
+    assert "client.loadReminders()" in view
+    assert '"/api/v1/reminders"' in api
+    assert 'let action = toTask ? "to-task" : "cancel"' in api
+    assert 'case repeatRule = "repeat"' in models
